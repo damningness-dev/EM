@@ -1,9 +1,13 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import Calibration from './components/Calibration';
 import AnnualPlan from './components/AnnualPlan';
 import MonthlyMonitoring from './components/MonthlyMonitoring';
 import ZoneStatus from './components/ZoneStatus';
+import { seedInitialData } from './lib/api';
+import { INITIAL_CALIBRATION, MONITORING_ZONES } from './data/initialData';
 
 const MENU = [
   { id: 'dashboard', label: '대시보드', icon: '📊' },
@@ -13,29 +17,41 @@ const MENU = [
   { id: 'calibration', label: '교정 관리', icon: '⚙️' },
 ];
 
-export default function App() {
+function AppInner() {
+  const { user, loading, signOut } = useAuth();
   const [page, setPage] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [seeded, setSeeded] = useState(false);
+
+  useEffect(() => {
+    if (user && !seeded) {
+      seedInitialData(INITIAL_CALIBRATION, MONITORING_ZONES)
+        .then(() => setSeeded(true))
+        .catch(console.error);
+    }
+  }, [user, seeded]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) return <Login />;
 
   const currentMenu = MENU.find(m => m.id === page);
 
   return (
     <div className="flex h-screen bg-gray-100 overflow-hidden">
-      {/* 모바일 오버레이 */}
-      {sidebarOpen && (
-        <div className="fixed inset-0 bg-black/40 z-20 lg:hidden" onClick={() => setSidebarOpen(false)} />
-      )}
+      {sidebarOpen && <div className="fixed inset-0 bg-black/40 z-20 lg:hidden" onClick={() => setSidebarOpen(false)} />}
 
-      {/* 사이드바 */}
-      <aside className={`
-        fixed lg:static inset-y-0 left-0 z-30
-        w-64 bg-gray-900 text-white flex flex-col
-        transform transition-transform duration-200
-        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
-      `}>
+      <aside className={`fixed lg:static inset-y-0 left-0 z-30 w-64 bg-gray-900 text-white flex flex-col transform transition-transform duration-200 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
         <div className="px-5 py-5 border-b border-gray-700">
           <h1 className="text-lg font-bold text-white">환경 모니터링</h1>
-          <p className="text-xs text-gray-400 mt-0.5">EM Management System</p>
+          <p className="text-xs text-gray-400 mt-0.5 truncate">{user.email}</p>
         </div>
 
         <nav className="flex-1 py-4 overflow-y-auto">
@@ -43,11 +59,7 @@ export default function App() {
             <button
               key={item.id}
               onClick={() => { setPage(item.id); setSidebarOpen(false); }}
-              className={`w-full text-left px-5 py-3 flex items-center gap-3 text-sm transition-colors ${
-                page === item.id
-                  ? 'bg-blue-600 text-white'
-                  : 'text-gray-300 hover:bg-gray-800 hover:text-white'
-              }`}
+              className={`w-full text-left px-5 py-3 flex items-center gap-3 text-sm transition-colors ${page === item.id ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white'}`}
             >
               <span className="text-base">{item.icon}</span>
               {item.label}
@@ -55,14 +67,12 @@ export default function App() {
           ))}
         </nav>
 
-        <div className="px-5 py-4 border-t border-gray-700 text-xs text-gray-500">
-          데이터: 브라우저 저장소
+        <div className="px-5 py-4 border-t border-gray-700">
+          <button onClick={signOut} className="w-full text-left text-xs text-gray-400 hover:text-white py-1">로그아웃</button>
         </div>
       </aside>
 
-      {/* 메인 */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* 헤더 */}
         <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 lg:hidden">
           <button onClick={() => setSidebarOpen(true)} className="p-1.5 rounded-lg hover:bg-gray-100">
             <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -72,15 +82,22 @@ export default function App() {
           <span className="font-semibold text-gray-800">{currentMenu?.icon} {currentMenu?.label}</span>
         </header>
 
-        {/* 컨텐츠 */}
         <main className="flex-1 overflow-y-auto">
-          {page === 'dashboard' && <Dashboard />}
-          {page === 'monthly' && <MonthlyMonitoring />}
-          {page === 'status' && <ZoneStatus />}
-          {page === 'annual' && <AnnualPlan />}
+          {page === 'dashboard' && <Dashboard year={year} />}
+          {page === 'monthly' && <MonthlyMonitoring year={year} onYearChange={setYear} />}
+          {page === 'status' && <ZoneStatus year={year} onYearChange={setYear} />}
+          {page === 'annual' && <AnnualPlan year={year} onYearChange={setYear} />}
           {page === 'calibration' && <Calibration />}
         </main>
       </div>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppInner />
+    </AuthProvider>
   );
 }

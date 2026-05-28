@@ -1,16 +1,16 @@
-import { useState, useMemo } from 'react';
-import { getMonitoringZones, saveMonitoringZones, getMonitoringData, saveMonitoringData, getMonitoringKey, getYear, setYear } from '../utils/storage';
+import { useState, useEffect, useMemo } from 'react';
+import { fetchZones, upsertZone, deleteZone, fetchMonitoringData, upsertMonitoringEntry } from '../lib/api';
 import { GRADE_TARGETS, GRADE_COLORS } from '../data/initialData';
 
 const MONTHS = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'];
 const CATEGORIES = ['공조', '질소가스', '압축공기'];
 const GRADES = ['P1', 'P2', 'P3', '유지관리', 'OQ', 'PQ'];
 
-export default function MonthlyMonitoring() {
-  const [year, setYearState] = useState(getYear);
+export default function MonthlyMonitoring({ year, onYearChange }) {
   const [month, setMonth] = useState(new Date().getMonth() + 1);
-  const [zones, setZones] = useState(getMonitoringZones);
-  const [monData, setMonData] = useState(getMonitoringData);
+  const [zones, setZones] = useState([]);
+  const [monData, setMonData] = useState({});
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [gradeFilter, setGradeFilter] = useState('all');
   const [editZone, setEditZone] = useState(null);
@@ -18,87 +18,123 @@ export default function MonthlyMonitoring() {
   const [zoneForm, setZoneForm] = useState({});
   const [editEntry, setEditEntry] = useState(null);
   const [entryForm, setEntryForm] = useState({});
-  const [view, setView] = useState('table'); // table | status
+  const [saving, setSaving] = useState(false);
 
-  function changeYear(y) {
-    setYearState(y);
-    setYear(y);
-  }
+  useEffect(() => {
+    fetchZones().then(setZones);
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    fetchMonitoringData(year, month).then(d => { setMonData(d); setLoading(false); });
+  }, [year, month]);
 
   const filteredZones = useMemo(() => {
     let list = zones;
-    if (search) {
-      const q = search.toLowerCase();
-      list = list.filter(z => z.name.toLowerCase().includes(q) || z.grade.toLowerCase().includes(q) || z.category.toLowerCase().includes(q));
-    }
+    if (search) list = list.filter(z => z.name.toLowerCase().includes(search.toLowerCase()) || z.grade.toLowerCase().includes(search.toLowerCase()));
     if (gradeFilter !== 'all') list = list.filter(z => z.grade === gradeFilter);
     return list;
   }, [zones, search, gradeFilter]);
 
   function getEntry(zoneId) {
-    const key = getMonitoringKey(year, month, zoneId);
-    return monData[key] || { airborne: '', settle: '', surface: '', particle: '', count: 0, note: '', startDate: '', done: false };
+    return monData[zoneId] || { airborne: '', settle: '', surface: '', particle: '', count: 0, note: '', start_date: '', done: false };
   }
 
   function openEntry(zone) {
-    const entry = getEntry(zone.id);
-    setEntryForm({ ...entry });
+    setEntryForm({ ...getEntry(zone.id) });
     setEditEntry(zone);
   }
 
-  function saveEntry() {
-    const key = getMonitoringKey(year, month, editEntry.id);
-    const updated = { ...monData, [key]: { ...entryForm } };
-    setMonData(updated);
-    saveMonitoringData(updated);
-    setEditEntry(null);
+  async function saveEntry() {
+    setSaving(true);
+    const payload = {
+      zone_id: editEntry.id, year, month,
+      airborne: entryForm.airborne || null,
+      settle: entryForm.settle || null,
+      surface: entryForm.surface || null,
+      particle: entryForm.particle || null,
+      count: parseInt(entryForm.count) || 0,
+      note: entryForm.note || null,
+      start_date: entryForm.start_date || null,
+      done: entryForm.done || false,
+      ...(entryForm.id ? { id: entryForm.id } : {}),
+    };
+    try {
+      const saved = await upsertMonitoringEntry(payload);
+      setMonData(p => ({ ...p, [editEntry.id]: saved }));
+      setEditEntry(null);
+    } catch (e) {
+      alert('저장 실패: ' + e.message);
+    }
+    setSaving(false);
   }
 
-  function quickToggleDone(zone) {
-    const key = getMonitoringKey(year, month, zone.id);
-    const current = monData[key] || {};
+  async function quickToggleDone(zone) {
+    const entry = getEntry(zone.id);
     const target = GRADE_TARGETS[zone.grade] || 1;
-    const newCount = current.done ? 0 : target;
-    const updated = { ...monData, [key]: { ...current, count: newCount, done: !current.done } };
-    setMonData(updated);
-    saveMonitoringData(updated);
+    const isNowDone = !entry.done;
+    const payload = {
+      zone_id: zone.id, year, month,
+      count: isNowDone ? target : 0,
+      done: isNowDone,
+      airborne: entry.airborne || null,
+      settle: entry.settle || null,
+      surface: entry.surface || null,
+      particle: entry.particle || null,
+      note: entry.note || null,
+      start_date: entry.start_date || null,
+      ...(entry.id ? { id: entry.id } : {}),
+    };
+    try {
+      const saved = await upsertMonitoringEntry(payload);
+      setMonData(p => ({ ...p, [zone.id]: saved }));
+    } catch (e) {
+      alert('저장 실패: ' + e.message);
+    }
   }
 
-  function addZone() {
+  async function handleAddZone() {
     if (!zoneForm.name || !zoneForm.grade) return;
-    const newZone = { id: Date.now(), name: zoneForm.name, grade: zoneForm.grade, category: zoneForm.category || '공조' };
-    const updated = [...zones, newZone];
-    setZones(updated);
-    saveMonitoringZones(updated);
-    setShowAddZone(false);
-    setZoneForm({});
+    setSaving(true);
+    try {
+      const saved = await upsertZone({ name: zoneForm.name, grade: zoneForm.grade, category: zoneForm.category || '공조', sort_order: zones.length });
+      setZones(p => [...p, saved]);
+      setShowAddZone(false);
+      setZoneForm({});
+    } catch (e) {
+      alert('추가 실패: ' + e.message);
+    }
+    setSaving(false);
   }
 
-  function deleteZone(id) {
+  async function handleDeleteZone(id) {
     if (!confirm('구역을 삭제하시겠습니까?')) return;
-    const updated = zones.filter(z => z.id !== id);
-    setZones(updated);
-    saveMonitoringZones(updated);
+    await deleteZone(id);
+    setZones(p => p.filter(z => z.id !== id));
   }
 
-  function saveZoneEdit() {
-    const updated = zones.map(z => z.id === editZone.id ? { ...z, ...zoneForm } : z);
-    setZones(updated);
-    saveMonitoringZones(updated);
-    setEditZone(null);
+  async function saveZoneEdit() {
+    setSaving(true);
+    try {
+      const saved = await upsertZone({ id: editZone.id, name: zoneForm.name, grade: zoneForm.grade, category: zoneForm.category });
+      setZones(p => p.map(z => z.id === editZone.id ? saved : z));
+      setEditZone(null);
+    } catch (e) {
+      alert('저장 실패: ' + e.message);
+    }
+    setSaving(false);
   }
 
-  // 이번 달 전체 진행률
   const progress = useMemo(() => {
     let total = 0, done = 0;
     filteredZones.forEach(zone => {
       const target = GRADE_TARGETS[zone.grade] || 1;
       total += target;
-      const entry = monData[getMonitoringKey(year, month, zone.id)];
+      const entry = monData[zone.id];
       if (entry) done += Math.min(entry.count || 0, target);
     });
     return { total, done, pct: total > 0 ? Math.round((done / total) * 100) : 0 };
-  }, [filteredZones, monData, year, month]);
+  }, [filteredZones, monData]);
 
   return (
     <div className="p-6 space-y-4">
@@ -106,25 +142,18 @@ export default function MonthlyMonitoring() {
         <h1 className="text-2xl font-bold text-gray-800">월별 환경 모니터링</h1>
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex gap-1">
-            <button onClick={() => changeYear(year - 1)} className="px-2 py-1.5 border rounded-l-lg text-sm hover:bg-gray-50">◀</button>
+            <button onClick={() => onYearChange(year - 1)} className="px-2 py-1.5 border rounded-l-lg text-sm hover:bg-gray-50">◀</button>
             <span className="px-4 py-1.5 border-y text-sm font-semibold">{year}년</span>
-            <button onClick={() => changeYear(year + 1)} className="px-2 py-1.5 border rounded-r-lg text-sm hover:bg-gray-50">▶</button>
+            <button onClick={() => onYearChange(year + 1)} className="px-2 py-1.5 border rounded-r-lg text-sm hover:bg-gray-50">▶</button>
           </div>
           <div className="flex rounded-lg border border-gray-200 overflow-hidden">
             {MONTHS.map((m, i) => (
-              <button
-                key={i}
-                onClick={() => setMonth(i + 1)}
-                className={`px-3 py-1.5 text-sm transition-colors ${month === i + 1 ? 'bg-blue-600 text-white' : 'hover:bg-gray-50 text-gray-600'}`}
-              >
-                {i + 1}
-              </button>
+              <button key={i} onClick={() => setMonth(i + 1)} className={`px-3 py-1.5 text-sm transition-colors ${month === i + 1 ? 'bg-blue-600 text-white' : 'hover:bg-gray-50 text-gray-600'}`}>{i + 1}</button>
             ))}
           </div>
         </div>
       </div>
 
-      {/* 진행률 바 */}
       <div className="bg-white rounded-xl border border-gray-200 p-4">
         <div className="flex items-center justify-between mb-2">
           <span className="text-sm font-medium text-gray-600">{year}년 {month}월 진행률</span>
@@ -135,130 +164,91 @@ export default function MonthlyMonitoring() {
         </div>
       </div>
 
-      {/* 필터/검색 */}
       <div className="flex flex-wrap gap-3 items-center">
-        <input
-          type="text"
-          placeholder="구역명 검색..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="flex-1 min-w-48 px-3 py-2 border border-gray-200 rounded-lg text-sm"
-        />
+        <input type="text" placeholder="구역명 검색..." value={search} onChange={e => setSearch(e.target.value)} className="flex-1 min-w-48 px-3 py-2 border border-gray-200 rounded-lg text-sm" />
         <div className="flex gap-2 flex-wrap">
-          <button
-            onClick={() => setGradeFilter('all')}
-            className={`px-3 py-1.5 rounded-lg text-sm border ${gradeFilter === 'all' ? 'bg-gray-700 text-white border-gray-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
-          >
-            전체
-          </button>
+          <button onClick={() => setGradeFilter('all')} className={`px-3 py-1.5 rounded-lg text-sm border ${gradeFilter === 'all' ? 'bg-gray-700 text-white border-gray-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>전체</button>
           {GRADES.map(g => (
-            <button
-              key={g}
-              onClick={() => setGradeFilter(g)}
-              className={`px-3 py-1.5 rounded-lg text-sm border ${gradeFilter === g ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
-            >
-              {g}
-            </button>
+            <button key={g} onClick={() => setGradeFilter(g)} className={`px-3 py-1.5 rounded-lg text-sm border ${gradeFilter === g ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>{g}</button>
           ))}
         </div>
-        <button
-          onClick={() => { setShowAddZone(true); setZoneForm({}); }}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 ml-auto"
-        >
-          + 구역 추가
-        </button>
+        <button onClick={() => { setShowAddZone(true); setZoneForm({}); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 ml-auto">+ 구역 추가</button>
       </div>
 
-      {/* 메인 테이블 */}
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="text-left px-4 py-3 text-gray-500 font-medium">구역명</th>
-                <th className="text-center px-3 py-3 text-gray-500 font-medium">등급</th>
-                <th className="text-center px-3 py-3 text-gray-500 font-medium">분류</th>
-                <th className="text-center px-3 py-3 text-gray-500 font-medium">목표</th>
-                <th className="text-center px-3 py-3 text-gray-500 font-medium">완료횟수</th>
-                <th className="text-center px-3 py-3 text-gray-500 font-medium">부유균</th>
-                <th className="text-center px-3 py-3 text-gray-500 font-medium">낙하균</th>
-                <th className="text-center px-3 py-3 text-gray-500 font-medium">표면균</th>
-                <th className="text-center px-3 py-3 text-gray-500 font-medium">부유입자</th>
-                <th className="text-center px-3 py-3 text-gray-500 font-medium">상태</th>
-                <th className="text-center px-3 py-3 text-gray-500 font-medium">관리</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {filteredZones.map(zone => {
-                const entry = getEntry(zone.id);
-                const target = GRADE_TARGETS[zone.grade] || 1;
-                const countNum = parseInt(entry.count) || 0;
-                const pct = Math.min(Math.round((countNum / target) * 100), 100);
-                const isComplete = countNum >= target;
-                return (
-                  <tr key={zone.id} className={`hover:bg-gray-50 ${isComplete ? 'bg-green-50/30' : ''}`}>
-                    {editZone?.id === zone.id ? (
-                      <>
-                        <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm" value={zoneForm.name || ''} onChange={e => setZoneForm(f => ({ ...f, name: e.target.value }))} /></td>
-                        <td className="px-3 py-2">
-                          <select className="border rounded px-1 py-1 text-sm w-full" value={zoneForm.grade || ''} onChange={e => setZoneForm(f => ({ ...f, grade: e.target.value }))}>
-                            {GRADES.map(g => <option key={g}>{g}</option>)}
-                          </select>
-                        </td>
-                        <td className="px-3 py-2">
-                          <select className="border rounded px-1 py-1 text-sm w-full" value={zoneForm.category || ''} onChange={e => setZoneForm(f => ({ ...f, category: e.target.value }))}>
-                            {CATEGORIES.map(c => <option key={c}>{c}</option>)}
-                          </select>
-                        </td>
-                        <td colSpan={7} className="px-3 py-2 text-center">
-                          <button onClick={saveZoneEdit} className="px-2 py-1 bg-blue-600 text-white rounded text-xs mr-1">저장</button>
-                          <button onClick={() => setEditZone(null)} className="px-2 py-1 bg-gray-200 rounded text-xs">취소</button>
-                        </td>
-                      </>
-                    ) : (
-                      <>
-                        <td className="px-4 py-3 font-medium text-gray-800">{zone.name}</td>
-                        <td className="px-3 py-3 text-center">
-                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${GRADE_COLORS[zone.grade] || 'bg-gray-100 text-gray-600'}`}>{zone.grade}</span>
-                        </td>
-                        <td className="px-3 py-3 text-center text-xs text-gray-500">{zone.category}</td>
-                        <td className="px-3 py-3 text-center text-gray-600">{target}</td>
-                        <td className="px-3 py-3 text-center">
-                          <div className="flex flex-col items-center">
-                            <span className={`font-semibold ${isComplete ? 'text-green-600' : 'text-gray-700'}`}>{countNum}/{target}</span>
-                            <div className="w-16 h-1 bg-gray-100 rounded-full mt-1">
-                              <div className={`h-full rounded-full ${isComplete ? 'bg-green-500' : 'bg-blue-400'}`} style={{ width: `${pct}%` }} />
+      {loading ? <LoadingSpinner /> : (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200">
+                  <th className="text-left px-4 py-3 text-gray-500 font-medium">구역명</th>
+                  <th className="text-center px-3 py-3 text-gray-500 font-medium">등급</th>
+                  <th className="text-center px-3 py-3 text-gray-500 font-medium">분류</th>
+                  <th className="text-center px-3 py-3 text-gray-500 font-medium">목표</th>
+                  <th className="text-center px-3 py-3 text-gray-500 font-medium">완료횟수</th>
+                  <th className="text-center px-3 py-3 text-gray-500 font-medium">부유균</th>
+                  <th className="text-center px-3 py-3 text-gray-500 font-medium">낙하균</th>
+                  <th className="text-center px-3 py-3 text-gray-500 font-medium">표면균</th>
+                  <th className="text-center px-3 py-3 text-gray-500 font-medium">부유입자</th>
+                  <th className="text-center px-3 py-3 text-gray-500 font-medium">상태</th>
+                  <th className="text-center px-3 py-3 text-gray-500 font-medium">관리</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {filteredZones.map(zone => {
+                  const entry = getEntry(zone.id);
+                  const target = GRADE_TARGETS[zone.grade] || 1;
+                  const countNum = parseInt(entry.count) || 0;
+                  const pct = Math.min(Math.round((countNum / target) * 100), 100);
+                  const isComplete = countNum >= target;
+                  return (
+                    <tr key={zone.id} className={`hover:bg-gray-50 ${isComplete ? 'bg-green-50/30' : ''}`}>
+                      {editZone?.id === zone.id ? (
+                        <>
+                          <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm" value={zoneForm.name || ''} onChange={e => setZoneForm(f => ({ ...f, name: e.target.value }))} /></td>
+                          <td className="px-3 py-2"><select className="border rounded px-1 py-1 text-sm w-full" value={zoneForm.grade || ''} onChange={e => setZoneForm(f => ({ ...f, grade: e.target.value }))}>{GRADES.map(g => <option key={g}>{g}</option>)}</select></td>
+                          <td className="px-3 py-2"><select className="border rounded px-1 py-1 text-sm w-full" value={zoneForm.category || ''} onChange={e => setZoneForm(f => ({ ...f, category: e.target.value }))}>{CATEGORIES.map(c => <option key={c}>{c}</option>)}</select></td>
+                          <td colSpan={7} className="px-3 py-2 text-center">
+                            <button onClick={saveZoneEdit} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs mr-1 disabled:opacity-50">저장</button>
+                            <button onClick={() => setEditZone(null)} className="px-2 py-1 bg-gray-200 rounded text-xs">취소</button>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td className="px-4 py-3 font-medium text-gray-800">{zone.name}</td>
+                          <td className="px-3 py-3 text-center"><span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${GRADE_COLORS[zone.grade] || 'bg-gray-100 text-gray-600'}`}>{zone.grade}</span></td>
+                          <td className="px-3 py-3 text-center text-xs text-gray-500">{zone.category}</td>
+                          <td className="px-3 py-3 text-center text-gray-600">{target}</td>
+                          <td className="px-3 py-3 text-center">
+                            <div className="flex flex-col items-center">
+                              <span className={`font-semibold ${isComplete ? 'text-green-600' : 'text-gray-700'}`}>{countNum}/{target}</span>
+                              <div className="w-16 h-1 bg-gray-100 rounded-full mt-1"><div className={`h-full rounded-full ${isComplete ? 'bg-green-500' : 'bg-blue-400'}`} style={{ width: `${pct}%` }} /></div>
                             </div>
-                          </div>
-                        </td>
-                        <td className="px-3 py-3 text-center text-xs text-gray-500">{entry.airborne || '-'}</td>
-                        <td className="px-3 py-3 text-center text-xs text-gray-500">{entry.settle || '-'}</td>
-                        <td className="px-3 py-3 text-center text-xs text-gray-500">{entry.surface || '-'}</td>
-                        <td className="px-3 py-3 text-center text-xs text-gray-500">{entry.particle || '-'}</td>
-                        <td className="px-3 py-3 text-center">
-                          <button
-                            onClick={() => quickToggleDone(zone)}
-                            className={`text-xs px-2 py-1 rounded-full font-medium ${
-                              isComplete ? 'bg-green-100 text-green-700' : countNum > 0 ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'
-                            }`}
-                          >
-                            {isComplete ? '완료' : countNum > 0 ? '진행중' : '예정'}
-                          </button>
-                        </td>
-                        <td className="px-3 py-3 text-center">
-                          <button onClick={() => openEntry(zone)} className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-50 rounded mr-1">입력</button>
-                          <button onClick={() => { setEditZone(zone); setZoneForm({ ...zone }); }} className="text-xs px-2 py-1 text-gray-500 hover:bg-gray-100 rounded mr-1">수정</button>
-                          <button onClick={() => deleteZone(zone.id)} className="text-xs px-2 py-1 text-red-400 hover:bg-red-50 rounded">삭제</button>
-                        </td>
-                      </>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                          </td>
+                          <td className="px-3 py-3 text-center text-xs text-gray-500">{entry.airborne || '-'}</td>
+                          <td className="px-3 py-3 text-center text-xs text-gray-500">{entry.settle || '-'}</td>
+                          <td className="px-3 py-3 text-center text-xs text-gray-500">{entry.surface || '-'}</td>
+                          <td className="px-3 py-3 text-center text-xs text-gray-500">{entry.particle || '-'}</td>
+                          <td className="px-3 py-3 text-center">
+                            <button onClick={() => quickToggleDone(zone)} className={`text-xs px-2 py-1 rounded-full font-medium ${isComplete ? 'bg-green-100 text-green-700' : countNum > 0 ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                              {isComplete ? '완료' : countNum > 0 ? '진행중' : '예정'}
+                            </button>
+                          </td>
+                          <td className="px-3 py-3 text-center whitespace-nowrap">
+                            <button onClick={() => openEntry(zone)} className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-50 rounded mr-1">입력</button>
+                            <button onClick={() => { setEditZone(zone); setZoneForm({ ...zone }); }} className="text-xs px-2 py-1 text-gray-500 hover:bg-gray-100 rounded mr-1">수정</button>
+                            <button onClick={() => handleDeleteZone(zone.id)} className="text-xs px-2 py-1 text-red-400 hover:bg-red-50 rounded">삭제</button>
+                          </td>
+                        </>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* 데이터 입력 모달 */}
       {editEntry && (
@@ -269,20 +259,15 @@ export default function MonthlyMonitoring() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-gray-500">시작일</label>
-                <input type="date" className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={entryForm.startDate || ''} onChange={e => setEntryForm(f => ({ ...f, startDate: e.target.value }))} />
+                <input type="date" className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={entryForm.start_date || ''} onChange={e => setEntryForm(f => ({ ...f, start_date: e.target.value }))} />
               </div>
               <div>
                 <label className="text-xs text-gray-500">완료 횟수 (목표: {GRADE_TARGETS[editEntry.grade] || 1}회)</label>
-                <input type="number" min="0" max={GRADE_TARGETS[editEntry.grade] || 1} className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={entryForm.count || ''} onChange={e => setEntryForm(f => ({ ...f, count: parseInt(e.target.value) || 0 }))} />
+                <input type="number" min="0" className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={entryForm.count || ''} onChange={e => setEntryForm(f => ({ ...f, count: parseInt(e.target.value) || 0 }))} />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              {[
-                { key: 'airborne', label: '부유균' },
-                { key: 'settle', label: '낙하균' },
-                { key: 'surface', label: '표면균' },
-                { key: 'particle', label: '부유입자' },
-              ].map(({ key, label }) => (
+              {[{ key: 'airborne', label: '부유균' }, { key: 'settle', label: '낙하균' }, { key: 'surface', label: '표면균' }, { key: 'particle', label: '부유입자' }].map(({ key, label }) => (
                 <div key={key}>
                   <label className="text-xs text-gray-500">{label}</label>
                   <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" placeholder="측정값" value={entryForm[key] || ''} onChange={e => setEntryForm(f => ({ ...f, [key]: e.target.value }))} />
@@ -294,7 +279,7 @@ export default function MonthlyMonitoring() {
               <textarea className="w-full border rounded px-2 py-1.5 text-sm mt-0.5 h-16 resize-none" value={entryForm.note || ''} onChange={e => setEntryForm(f => ({ ...f, note: e.target.value }))} />
             </div>
             <div className="flex gap-2 pt-2">
-              <button onClick={saveEntry} className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">저장</button>
+              <button onClick={saveEntry} disabled={saving} className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">저장</button>
               <button onClick={() => setEditEntry(null)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">취소</button>
             </div>
           </div>
@@ -326,12 +311,16 @@ export default function MonthlyMonitoring() {
               </div>
             </div>
             <div className="flex gap-2 pt-2">
-              <button onClick={addZone} className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">추가</button>
-              <button onClick={() => setShowAddZone(false)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">취소</button>
+              <button onClick={handleAddZone} disabled={saving} className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">추가</button>
+              <button onClick={() => setShowAddZone(false)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600">취소</button>
             </div>
           </div>
         </div>
       )}
     </div>
   );
+}
+
+function LoadingSpinner() {
+  return <div className="flex items-center justify-center h-64"><div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" /></div>;
 }
