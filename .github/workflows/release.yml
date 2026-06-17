@@ -51,7 +51,7 @@ jobs:
         run: npm run build
 
       - name: 앱 디렉토리 빌드 (ASAR 추출용)
-        run: npx electron-builder --win --dir
+        run: npx electron-builder --win --dir --publish=never
 
       - name: ASAR 패치 파일 준비
         shell: bash
