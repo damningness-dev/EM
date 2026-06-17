@@ -55,6 +55,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: 릴리즈 게시 (draft → published)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ steps.version.outputs.tag }}" --draft=false --repo "${{ github.repository }}" || true
+
       - name: 릴리즈 설명 업데이트
         shell: bash
         env:
