@@ -55,6 +55,34 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: ASAR 패치 파일 준비
+        shell: bash
+        run: |
+          node -e "
+            const fs = require('fs');
+            const crypto = require('crypto');
+            const asar = fs.readFileSync('release/win-unpacked/resources/app.asar');
+            const sha256 = crypto.createHash('sha256').update(asar).digest('hex');
+            fs.copyFileSync('release/win-unpacked/resources/app.asar', 'release/app.asar');
+            fs.writeFileSync('release/app-meta.json', JSON.stringify({
+              version: '${{ steps.version.outputs.version }}',
+              sha256
+            }));
+            console.log('app.asar size:', (asar.length / 1024 / 1024).toFixed(1) + 'MB');
+            console.log('sha256:', sha256);
+          "
+
+      - name: ASAR 패치 파일 릴리즈에 업로드
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ steps.version.outputs.tag }}" \
+            release/app.asar \
+            release/app-meta.json \
+            --clobber \
+            --repo "${{ github.repository }}"
+
       - name: 릴리즈 게시 (draft → published)
         shell: bash
         env:

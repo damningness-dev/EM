@@ -2,68 +2,172 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const { autoUpdater } = require('electron-updater');
+const https = require('https');
+const http = require('http');
+const { spawn } = require('child_process');
 
 const isDev = !app.isPackaged;
 
-// ─── 자동 업데이트 설정 ────────────────────────────────────────────────────────
+// ─── ASAR 업데이터 ─────────────────────────────────────────────────────────────
 
-function setupAutoUpdater(win) {
-  if (isDev) return; // 개발 모드에서는 자동 업데이트 비활성화
+const META_URL = 'https://github.com/damningness-dev/EM/releases/latest/download/app-meta.json';
+const ASAR_URL = 'https://github.com/damningness-dev/EM/releases/latest/download/app.asar';
 
-  autoUpdater.autoDownload = false; // 사용자가 다운로드 시점 결정
+let mainWin = null;
 
-  autoUpdater.on('checking-for-update', () => {
-    win.webContents.send('update:status', { type: 'checking' });
+function sendStatus(status) {
+  if (mainWin && !mainWin.isDestroyed()) {
+    mainWin.webContents.send('update:status', status);
+  }
+}
+
+function getUpdatePath() {
+  return path.join(app.getPath('userData'), 'app.asar.update');
+}
+
+function httpGet(url) {
+  return new Promise((resolve, reject) => {
+    const mod = url.startsWith('https:') ? https : http;
+    mod.get(url, { headers: { 'User-Agent': 'em-updater/1.0' } }, (res) => {
+      if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
+        res.resume();
+        resolve(httpGet(res.headers.location));
+      } else {
+        resolve(res);
+      }
+    }).on('error', reject);
   });
+}
 
-  autoUpdater.on('update-available', (info) => {
-    win.webContents.send('update:status', {
-      type: 'available',
-      version: info.version,
-      releaseNotes: info.releaseNotes || '',
+async function fetchJSON(url) {
+  const res = await httpGet(url);
+  if (res.statusCode !== 200) { res.resume(); throw new Error(`HTTP ${res.statusCode}`); }
+  return new Promise((resolve, reject) => {
+    let body = '';
+    res.on('data', chunk => { body += chunk; });
+    res.on('end', () => { try { resolve(JSON.parse(body)); } catch (e) { reject(e); } });
+    res.on('error', reject);
+  });
+}
+
+async function downloadAsar(url, dest) {
+  const res = await httpGet(url);
+  if (res.statusCode !== 200) { res.resume(); throw new Error(`HTTP ${res.statusCode}`); }
+
+  const total = parseInt(res.headers['content-length'] || '0', 10);
+  let downloaded = 0;
+  let lastEmitTime = Date.now();
+  let lastEmitBytes = 0;
+  const hash = crypto.createHash('sha256');
+  const out = fs.createWriteStream(dest);
+
+  return new Promise((resolve, reject) => {
+    res.on('data', (chunk) => {
+      downloaded += chunk.length;
+      hash.update(chunk);
+      out.write(chunk);
+
+      const now = Date.now();
+      const elapsed = now - lastEmitTime;
+      if (elapsed >= 300) {
+        const speed = Math.round((downloaded - lastEmitBytes) / (elapsed / 1000) / 1024);
+        lastEmitTime = now;
+        lastEmitBytes = downloaded;
+        sendStatus({
+          type: 'downloading',
+          percent: total > 0 ? Math.round(downloaded / total * 100) : 0,
+          transferred: Math.round(downloaded / 1024 / 1024 * 10) / 10,
+          total: Math.round(total / 1024 / 1024 * 10) / 10,
+          speed,
+        });
+      }
     });
+
+    res.on('end', () => { out.end(() => resolve(hash.digest('hex'))); });
+
+    const cleanup = (err) => { out.destroy(); try { fs.unlinkSync(dest); } catch {} reject(err); };
+    res.on('error', cleanup);
+    out.on('error', cleanup);
   });
+}
 
-  autoUpdater.on('update-not-available', () => {
-    win.webContents.send('update:status', { type: 'latest' });
-  });
+async function checkForUpdate() {
+  sendStatus({ type: 'checking' });
+  try {
+    const meta = await fetchJSON(META_URL);
+    if (meta.version === app.getVersion()) {
+      sendStatus({ type: 'latest' });
+    } else {
+      sendStatus({ type: 'available', version: meta.version });
+    }
+  } catch (err) {
+    sendStatus({ type: 'error', message: `업데이트 확인 실패: ${err.message}` });
+  }
+}
 
-  autoUpdater.on('download-progress', (progress) => {
-    win.webContents.send('update:status', {
-      type: 'downloading',
-      percent: Math.round(progress.percent),
-      transferred: Math.round(progress.transferred / 1024 / 1024 * 10) / 10,
-      total: Math.round(progress.total / 1024 / 1024 * 10) / 10,
-      speed: Math.round(progress.bytesPerSecond / 1024),
-    });
-  });
+async function downloadUpdate() {
+  const dest = getUpdatePath();
+  try {
+    const meta = await fetchJSON(META_URL);
+    const sha256 = await downloadAsar(ASAR_URL, dest);
 
-  autoUpdater.on('update-downloaded', (info) => {
-    win.webContents.send('update:status', {
-      type: 'downloaded',
-      version: info.version,
-    });
-  });
+    if (meta.sha256 && sha256 !== meta.sha256) {
+      try { fs.unlinkSync(dest); } catch {}
+      throw new Error('파일 검증 실패 (체크섬 불일치)');
+    }
 
-  autoUpdater.on('error', (err) => {
-    win.webContents.send('update:status', {
-      type: 'error',
-      message: err.message,
-    });
-  });
+    sendStatus({ type: 'downloaded', version: meta.version });
+  } catch (err) {
+    try { fs.unlinkSync(dest); } catch {}
+    sendStatus({ type: 'error', message: err.message });
+  }
+}
 
-  // 앱 시작 후 5초 뒤 업데이트 확인
-  setTimeout(() => autoUpdater.checkForUpdates(), 5000);
+function applyUpdateAndRestart() {
+  const updateSrc = getUpdatePath();
+  const asarDest = path.join(process.resourcesPath, 'app.asar');
+  const exePath = process.execPath;
 
-  // IPC: 다운로드 시작
-  ipcMain.handle('update:download', () => autoUpdater.downloadUpdate());
+  if (!fs.existsSync(updateSrc)) {
+    sendStatus({ type: 'error', message: '업데이트 파일이 없습니다. 다시 다운로드해 주세요.' });
+    return;
+  }
 
-  // IPC: 재시작 후 설치
-  ipcMain.handle('update:install', () => autoUpdater.quitAndInstall());
+  if (process.platform === 'win32') {
+    // 앱 종료 후 PowerShell이 파일을 교체하고 재시작
+    const script = [
+      '$src = "' + updateSrc.replace(/"/g, '`"') + '"',
+      '$dst = "' + asarDest.replace(/"/g, '`"') + '"',
+      '$exe = "' + exePath.replace(/"/g, '`"') + '"',
+      'Start-Sleep -Seconds 2',
+      'try {',
+      '  Copy-Item -Path $src -Destination $dst -Force',
+      '  Remove-Item -Path $src -Force',
+      '  Start-Process -FilePath $exe',
+      '} catch {',
+      '  Add-Type -AssemblyName PresentationFramework',
+      '  [System.Windows.MessageBox]::Show("업데이트 적용 실패: " + $_.Exception.Message + "`n`n설치 경로에 쓰기 권한이 없을 수 있습니다.", "업데이트 오류")',
+      '}',
+    ].join('\r\n');
 
-  // IPC: 수동 업데이트 확인
-  ipcMain.handle('update:check', () => autoUpdater.checkForUpdates());
+    const psPath = path.join(app.getPath('temp'), 'em-update.ps1');
+    fs.writeFileSync(psPath, script, 'utf-8');
+
+    spawn('powershell.exe', [
+      '-ExecutionPolicy', 'Bypass',
+      '-WindowStyle', 'Hidden',
+      '-NonInteractive',
+      '-File', psPath,
+    ], { detached: true, stdio: 'ignore' }).unref();
+  }
+
+  app.quit();
+}
+
+function setupAsarUpdater(win) {
+  if (isDev) return;
+  mainWin = win;
+  setTimeout(checkForUpdate, 5000);
 }
 
 // ─── 로컬 데이터 저장 ──────────────────────────────────────────────────────────
@@ -117,9 +221,8 @@ function createWindow() {
 
   win.removeMenu();
 
-  // 렌더러가 로드된 후 autoUpdater 이벤트 연결
   win.webContents.on('did-finish-load', () => {
-    setupAutoUpdater(win);
+    setupAsarUpdater(win);
   });
 }
 
@@ -138,6 +241,11 @@ app.on('activate', () => {
 // ─── IPC 핸들러 ────────────────────────────────────────────────────────────────
 
 function registerHandlers() {
+
+  // ── 업데이트 ──
+  ipcMain.handle('update:check', checkForUpdate);
+  ipcMain.handle('update:download', downloadUpdate);
+  ipcMain.handle('update:install', applyUpdateAndRestart);
 
   // ── 교정 ──
   ipcMain.handle('calibration:getAll', () => {
@@ -186,7 +294,6 @@ function registerHandlers() {
   ipcMain.handle('zones:delete', (_e, id) => {
     const data = loadData();
     data.zones = data.zones.filter(z => z.id !== id);
-    // 해당 구역 모니터링 데이터도 삭제
     Object.keys(data.monitoringData).forEach(key => {
       if (key.startsWith(`${id}_`)) delete data.monitoringData[key];
     });
@@ -200,8 +307,7 @@ function registerHandlers() {
     const result = {};
     Object.entries(data.monitoringData).forEach(([key, val]) => {
       if (key.startsWith(prefix)) {
-        const zoneId = key.slice(prefix.length);
-        result[zoneId] = val;
+        result[key.slice(prefix.length)] = val;
       }
     });
     return result;
@@ -213,8 +319,7 @@ function registerHandlers() {
     const result = {};
     Object.entries(data.monitoringData).forEach(([key, val]) => {
       if (key.startsWith(prefix)) {
-        // key: year_month_zoneId → result key: zoneId_month
-        const rest = key.slice(prefix.length);              // month_zoneId
+        const rest = key.slice(prefix.length);
         const underIdx = rest.indexOf('_');
         const month = rest.slice(0, underIdx);
         const zoneId = rest.slice(underIdx + 1);
@@ -239,9 +344,7 @@ function registerHandlers() {
     const result = {};
     Object.entries(data.annualPlan).forEach(([key, val]) => {
       if (key.startsWith(prefix)) {
-        // key: year_ahuName_month → result key: ahuName_month
-        const rest = key.slice(prefix.length);
-        result[rest] = val;
+        result[key.slice(prefix.length)] = val;
       }
     });
     return result;
@@ -276,6 +379,5 @@ function registerHandlers() {
     saveData(data);
   });
 
-  // ── 데이터 경로 조회 (디버그용) ──
   ipcMain.handle('data:getPath', () => getDataPath());
 }
