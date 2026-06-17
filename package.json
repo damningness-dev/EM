@@ -8,9 +8,7 @@
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "build": "vite build",
-    "dist": "vite build && electron-builder --publish=never",
     "dist:win": "vite build && electron-builder --win --publish=never",
-    "release": "node scripts/release.mjs",
     "lint": "eslint ."
   },
   "dependencies": {
