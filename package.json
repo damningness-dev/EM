@@ -39,6 +39,7 @@
   "build": {
     "appId": "com.em.monitoring",
     "productName": "환경 모니터링",
+    "artifactName": "em-setup-${version}.${ext}",
     "publish": {
       "provider": "github",
       "owner": "damningness-dev",
