@@ -50,10 +50,8 @@ jobs:
       - name: 프론트엔드 빌드 (Vite)
         run: npm run build
 
-      - name: Windows 설치파일 빌드 & GitHub Release 업로드
-        run: npx electron-builder --win --publish=always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: 앱 디렉토리 빌드 (ASAR 추출용)
+        run: npx electron-builder --win --dir
 
       - name: ASAR 패치 파일 준비
         shell: bash
@@ -61,10 +59,16 @@ jobs:
           node -e "
             const fs = require('fs');
             const crypto = require('crypto');
-            const asar = fs.readFileSync('release/win-unpacked/resources/app.asar');
+            const asarSrc = 'release/win-unpacked/resources/app.asar';
+            if (!fs.existsSync(asarSrc)) {
+              console.error('app.asar not found:', asarSrc);
+              console.error('release/ contents:', fs.readdirSync('release').join(', '));
+              process.exit(1);
+            }
+            const asar = fs.readFileSync(asarSrc);
             const sha256 = crypto.createHash('sha256').update(asar).digest('hex');
-            fs.copyFileSync('release/win-unpacked/resources/app.asar', 'release/app.asar');
-            fs.writeFileSync('release/app-meta.json', JSON.stringify({
+            fs.copyFileSync(asarSrc, 'app-patch.asar');
+            fs.writeFileSync('app-meta.json', JSON.stringify({
               version: '${{ steps.version.outputs.version }}',
               sha256
             }));
@@ -72,14 +76,19 @@ jobs:
             console.log('sha256:', sha256);
           "
 
+      - name: Windows 설치파일 빌드 & GitHub Release 업로드
+        run: npx electron-builder --win --publish=always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: ASAR 패치 파일 릴리즈에 업로드
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "${{ steps.version.outputs.tag }}" \
-            release/app.asar \
-            release/app-meta.json \
+            app-patch.asar \
+            app-meta.json \
             --clobber \
             --repo "${{ github.repository }}"
 

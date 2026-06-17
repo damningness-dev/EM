@@ -11,7 +11,7 @@ const isDev = !app.isPackaged;
 // ─── ASAR 업데이터 ─────────────────────────────────────────────────────────────
 
 const META_URL = 'https://github.com/damningness-dev/EM/releases/latest/download/app-meta.json';
-const ASAR_URL = 'https://github.com/damningness-dev/EM/releases/latest/download/app.asar';
+const ASAR_URL = 'https://github.com/damningness-dev/EM/releases/latest/download/app-patch.asar';
 
 let mainWin = null;
 
@@ -101,6 +101,8 @@ async function checkForUpdate() {
       sendStatus({ type: 'available', version: meta.version });
     }
   } catch (err) {
+    // 404 = 아직 게시된 릴리즈에 app-meta.json이 없음 (정상, 조용히 무시)
+    if (err.message.startsWith('HTTP 404')) return;
     sendStatus({ type: 'error', message: `업데이트 확인 실패: ${err.message}` });
   }
 }
