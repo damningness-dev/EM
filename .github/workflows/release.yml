@@ -35,9 +35,6 @@ jobs:
       - name: 프론트엔드 빌드 (Vite)
         run: npm run build
 
-      - name: Windows 설치파일 빌드
-        run: npx electron-builder --win --publish=never
-
       - name: 릴리즈 태그 결정
         id: tag
         shell: bash
@@ -48,7 +45,20 @@ jobs:
             echo "name=${{ github.ref_name }}" >> $GITHUB_OUTPUT
           fi
 
-      - name: GitHub Release 생성 및 업로드
+      - name: package.json 버전 동기화 (workflow_dispatch 시)
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          VERSION="${{ steps.tag.outputs.name }}"
+          VERSION="${VERSION#v}"
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('package.json','utf-8'));
+            p.version = '$VERSION';
+            fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+
+      - name: 릴리즈 생성 (설명 포함)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.name }}
@@ -57,18 +67,21 @@ jobs:
             ## 환경 모니터링 관리 시스템 ${{ steps.tag.outputs.name }}
 
             ### 설치 방법
-            1. 아래 **`환경 모니터링 Setup x.x.x.exe`** 파일을 클릭하여 다운로드
+            1. 아래 **`환경 모니터링 Setup x.x.x.exe`** 파일 다운로드
             2. 실행 후 설치 (Windows 보안 경고 시 → "추가 정보" → "실행")
             3. 바탕화면 단축아이콘으로 실행
 
+            ### 업데이트
+            앱 실행 시 자동으로 새 버전을 감지하고 알림이 표시됩니다.
+
             ### 데이터 저장 위치
             `C:\Users\{사용자}\AppData\Roaming\환경 모니터링\em-data.json`
-
-            > 데이터 백업 시 위 파일을 복사하세요.
           draft: false
           prerelease: false
-          files: |
-            release/**/*.exe
-          generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Windows 설치파일 빌드 및 GitHub Release 업로드
+        run: npx electron-builder --win --publish=always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

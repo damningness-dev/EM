@@ -2,8 +2,69 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const { autoUpdater } = require('electron-updater');
 
 const isDev = !app.isPackaged;
+
+// ─── 자동 업데이트 설정 ────────────────────────────────────────────────────────
+
+function setupAutoUpdater(win) {
+  if (isDev) return; // 개발 모드에서는 자동 업데이트 비활성화
+
+  autoUpdater.autoDownload = false; // 사용자가 다운로드 시점 결정
+
+  autoUpdater.on('checking-for-update', () => {
+    win.webContents.send('update:status', { type: 'checking' });
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    win.webContents.send('update:status', {
+      type: 'available',
+      version: info.version,
+      releaseNotes: info.releaseNotes || '',
+    });
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    win.webContents.send('update:status', { type: 'latest' });
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    win.webContents.send('update:status', {
+      type: 'downloading',
+      percent: Math.round(progress.percent),
+      transferred: Math.round(progress.transferred / 1024 / 1024 * 10) / 10,
+      total: Math.round(progress.total / 1024 / 1024 * 10) / 10,
+      speed: Math.round(progress.bytesPerSecond / 1024),
+    });
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    win.webContents.send('update:status', {
+      type: 'downloaded',
+      version: info.version,
+    });
+  });
+
+  autoUpdater.on('error', (err) => {
+    win.webContents.send('update:status', {
+      type: 'error',
+      message: err.message,
+    });
+  });
+
+  // 앱 시작 후 5초 뒤 업데이트 확인
+  setTimeout(() => autoUpdater.checkForUpdates(), 5000);
+
+  // IPC: 다운로드 시작
+  ipcMain.handle('update:download', () => autoUpdater.downloadUpdate());
+
+  // IPC: 재시작 후 설치
+  ipcMain.handle('update:install', () => autoUpdater.quitAndInstall());
+
+  // IPC: 수동 업데이트 확인
+  ipcMain.handle('update:check', () => autoUpdater.checkForUpdates());
+}
 
 // ─── 로컬 데이터 저장 ──────────────────────────────────────────────────────────
 
@@ -55,6 +116,11 @@ function createWindow() {
   }
 
   win.removeMenu();
+
+  // 렌더러가 로드된 후 autoUpdater 이벤트 연결
+  win.webContents.on('did-finish-load', () => {
+    setupAutoUpdater(win);
+  });
 }
 
 app.whenReady().then(() => {

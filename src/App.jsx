@@ -4,6 +4,7 @@ import Calibration from './components/Calibration';
 import AnnualPlan from './components/AnnualPlan';
 import MonthlyMonitoring from './components/MonthlyMonitoring';
 import ZoneStatus from './components/ZoneStatus';
+import UpdateNotifier from './components/UpdateNotifier';
 import { seedInitialData } from './lib/api';
 import { INITIAL_CALIBRATION, MONITORING_ZONES } from './data/initialData';
 
@@ -65,6 +66,8 @@ export default function App() {
             </button>
           ))}
         </nav>
+
+        <UpdateNotifier />
 
         <div className="px-5 py-4 border-t border-gray-700 text-xs text-gray-500">
           데이터: 로컬 파일 저장

@@ -16,6 +16,7 @@
   "dependencies": {
     "@heroicons/react": "^2.2.0",
     "date-fns": "^4.3.0",
+    "electron-updater": "^6.8.9",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },
@@ -40,6 +41,11 @@
   "build": {
     "appId": "com.em.monitoring",
     "productName": "환경 모니터링",
+    "publish": {
+      "provider": "github",
+      "owner": "damningness-dev",
+      "repo": "EM"
+    },
     "files": [
       "dist/**/*",
       "electron/**/*"
