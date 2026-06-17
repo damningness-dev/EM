@@ -136,23 +136,32 @@ function applyUpdateAndRestart() {
   }
 
   if (process.platform === 'win32') {
-    // 앱 종료 후 PowerShell이 파일을 교체하고 재시작
+    const tempDir = app.getPath('temp');
+    // 한글 경로를 JSON에 UTF-8로 저장 (PS1 스크립트에 직접 넣으면 인코딩 깨짐)
+    const configPath = path.join(tempDir, 'em-update-config.json');
+    fs.writeFileSync(configPath, JSON.stringify({ src: updateSrc, dst: asarDest, exe: exePath }), 'utf-8');
+
+    // PS1 스크립트는 ASCII만 사용 — 한글 경로는 런타임에 JSON에서 읽음
+    const esc = (p) => p.replace(/'/g, "''");
+    const pid = process.pid;
     const script = [
-      '$src = "' + updateSrc.replace(/"/g, '`"') + '"',
-      '$dst = "' + asarDest.replace(/"/g, '`"') + '"',
-      '$exe = "' + exePath.replace(/"/g, '`"') + '"',
-      'Start-Sleep -Seconds 2',
-      'try {',
-      '  Copy-Item -Path $src -Destination $dst -Force',
-      '  Remove-Item -Path $src -Force',
-      '  Start-Process -FilePath $exe',
-      '} catch {',
-      '  Add-Type -AssemblyName PresentationFramework',
-      '  [System.Windows.MessageBox]::Show("업데이트 적용 실패: " + $_.Exception.Message + "`n`n설치 경로에 쓰기 권한이 없을 수 있습니다.", "업데이트 오류")',
-      '}',
+      `$cfg = [System.IO.File]::ReadAllText('${esc(configPath)}', [System.Text.Encoding]::UTF8) | ConvertFrom-Json`,
+      // 프로세스가 완전히 종료될 때까지 대기 (고정 sleep 대신 PID로 정확히 감지)
+      `$proc = Get-Process -Id ${pid} -ErrorAction SilentlyContinue`,
+      `if ($proc) { $proc.WaitForExit(15000) }`,
+      `Start-Sleep -Milliseconds 500`,
+      `try {`,
+      `  Copy-Item -Path $cfg.src -Destination $cfg.dst -Force`,
+      `  Remove-Item -Path $cfg.src -Force -ErrorAction SilentlyContinue`,
+      `  Remove-Item -Path '${esc(configPath)}' -Force -ErrorAction SilentlyContinue`,
+      `  Start-Process -FilePath $cfg.exe`,
+      `} catch {`,
+      `  Add-Type -AssemblyName System.Windows.Forms`,
+      `  [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Update Error')`,
+      `}`,
     ].join('\r\n');
 
-    const psPath = path.join(app.getPath('temp'), 'em-update.ps1');
+    const psPath = path.join(tempDir, 'em-update.ps1');
     fs.writeFileSync(psPath, script, 'utf-8');
 
     spawn('powershell.exe', [
