@@ -76,6 +76,17 @@ jobs:
             console.log('sha256:', sha256);
           "
 
+      - name: GitHub Release 초안 미리 생성
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --draft \
+            --title "환경 모니터링 ${{ steps.version.outputs.tag }}" \
+            --notes "빌드 중..." \
+            --repo "${{ github.repository }}" || true
+
       - name: Windows 설치파일 빌드 & GitHub Release 업로드
         run: npx electron-builder --win --publish=always
         env:
