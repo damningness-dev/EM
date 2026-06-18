@@ -113,6 +113,20 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     return map;
   }, [zones]);
 
+  // Group zones by (category, name) for settings drawer
+  const zoneGroups = useMemo(() => {
+    const groupMap = {};
+    zones.forEach(zone => {
+      const key = `${zone.category}|||${zone.name}`;
+      if (!groupMap[key]) groupMap[key] = { name: zone.name, category: zone.category, zones: [] };
+      groupMap[key].zones.push(zone);
+    });
+    Object.values(groupMap).forEach(g => {
+      g.zones.sort((a, b) => (GRADE_PRIORITY[b.grade] || 0) - (GRADE_PRIORITY[a.grade] || 0));
+    });
+    return Object.values(groupMap);
+  }, [zones]);
+
   // Monitoring stats
   const completedCount = zones.filter(z => monitoring[z.id]).length;
   const monRate = zones.length ? Math.round(completedCount / zones.length * 100) : 0;
@@ -228,6 +242,21 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   async function handleDeleteGroup(id) {
     await deleteGroup(id);
     setGroups(prev => prev.filter(g => g.id !== id));
+  }
+
+  async function handleSetZonePoints(groupName, groupCategory, field, value) {
+    const groupZones = zones.filter(z => z.name === groupName && z.category === groupCategory);
+    const updates = await Promise.all(
+      groupZones.map(async z => {
+        const updated = { ...z, [field]: value };
+        await upsertZone(updated);
+        return updated;
+      })
+    );
+    setZones(prev => prev.map(z => {
+      const u = updates.find(u => u.id === z.id);
+      return u || z;
+    }));
   }
 
   async function handleSyncGroup(groupId) {
@@ -361,139 +390,138 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                       key={cat}
                       onClick={() => setZonesCatFilter(cat)}
                       className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                        zonesCatFilter === cat
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                        zonesCatFilter === cat ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
                       }`}
                     >{cat}</button>
                   ))}
                 </div>
                 <div className="flex-1 overflow-y-auto">
-                {(zonesCatFilter === '전체' ? ['공조', '압축공기', '질소가스'] : [zonesCatFilter]).map(cat => {
-                  const catZones = zones
-                    .filter(z => z.category === cat && ['P1', 'P2', 'P3'].includes(z.grade))
-                    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-                  if (!catZones.length) return null;
-                  return (
-                    <div key={cat}>
-                      <div className="px-5 py-2 bg-gray-50 border-b border-gray-100 sticky top-0 z-10">
-                        <span className="text-xs font-bold text-gray-500">{cat}</span>
-                        <span className="ml-2 text-xs text-gray-400">{catZones.length}개</span>
-                      </div>
-                      {catZones.map(zone => {
-                        const ms = calcMeasurements(zone);
-                        const endDate = ms.length ? ms[ms.length - 1].baseDate : null;
-                        const count = totalCount(zone);
-                        const todayMidnight = new Date(); todayMidnight.setHours(0,0,0,0);
-                        const isPastDue = endDate && endDate < todayMidnight && NEXT_GRADE[zone.grade];
-                        const syncCandidates = zones.filter(z =>
-                          z.id !== zone.id && z.schedule_start && ['P1','P2','P3'].includes(z.grade)
-                        );
-                        const myGroup = groups.find(g => g.zoneIds.includes(zone.id));
-                        return (
-                          <div key={zone.id} className={`px-5 py-3 border-b border-gray-50 transition-colors ${isPastDue ? 'bg-amber-50 hover:bg-amber-50/80' : 'hover:bg-gray-50'}`}>
-                            <div className="flex items-start gap-3">
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-                                  <span className={`text-xs font-bold px-1.5 py-0.5 rounded shrink-0 ${GRADE_COLORS[zone.grade] || 'bg-gray-100 text-gray-600'}`}>
-                                    {zone.grade}
-                                  </span>
-                                  <span className="text-sm text-gray-700 truncate">{zone.name}</span>
-                                  {myGroup && (
-                                    <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded shrink-0">{myGroup.name}</span>
-                                  )}
-                                </div>
-                                <p className="text-xs text-gray-400">{count}회 측정</p>
-                                {zone.schedule_start && endDate && (
-                                  <p className="text-xs text-blue-600 mt-0.5">종료: {format(endDate, 'yyyy.MM.dd')}</p>
+                  {(zonesCatFilter === '전체' ? ['공조', '압축공기', '질소가스'] : [zonesCatFilter]).map(cat => {
+                    const catGroups = zoneGroups.filter(g => g.category === cat);
+                    if (!catGroups.length) return null;
+                    return (
+                      <div key={cat}>
+                        <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 sticky top-0 z-10">
+                          <span className="text-xs font-bold text-gray-500">{cat}</span>
+                          <span className="ml-2 text-xs text-gray-400">{catGroups.length}개 구역</span>
+                        </div>
+                        {catGroups.map(group => {
+                          const refZone = group.zones[0];
+                          const myGroup = groups.find(g => group.zones.some(z => g.zoneIds.includes(z.id)));
+                          const todayMidnight = new Date(); todayMidnight.setHours(0, 0, 0, 0);
+                          return (
+                            <div key={`${group.category}_${group.name}`} className="border-b border-gray-100">
+                              {/* Group header */}
+                              <div className="px-4 pt-3 pb-1 flex items-center gap-2">
+                                <span className="text-sm font-semibold text-gray-800 flex-1 truncate">{group.name}</span>
+                                {myGroup && (
+                                  <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded shrink-0">{myGroup.name}</span>
                                 )}
-                                {isPastDue && (
-                                  <button
-                                    onClick={() => setPhasePrompt({
-                                      zoneId: zone.id,
-                                      zoneName: zone.name,
-                                      nextGrade: NEXT_GRADE[zone.grade],
-                                      dateStr: '',
-                                    })}
-                                    className="mt-1.5 text-xs bg-amber-500 text-white px-2.5 py-1 rounded-lg hover:bg-amber-600 font-medium"
-                                  >→ {NEXT_GRADE[zone.grade]} 전환</button>
-                                )}
-                                {/* Monthly weekday rule (P3 only) */}
-                                {zone.grade === 'P3' && (
-                                  <div className="flex items-center gap-1 mt-1.5 flex-wrap">
-                                    <span className="text-xs text-gray-400">매월</span>
-                                    <select
-                                      value={zone.monthly_weekday_rule?.nth ?? ''}
-                                      onChange={e => {
-                                        const nth = e.target.value ? Number(e.target.value) : null;
-                                        const rule = nth ? { nth, dow: zone.monthly_weekday_rule?.dow ?? 1 } : null;
-                                        handleSetWeekdayRule(zone.id, rule);
-                                      }}
-                                      className="text-xs border border-gray-200 rounded px-1 py-0.5 bg-white"
-                                    >
-                                      <option value="">날짜</option>
-                                      <option value="1">1째</option>
-                                      <option value="2">2째</option>
-                                      <option value="3">3째</option>
-                                      <option value="4">4째</option>
-                                      <option value="5">마지막</option>
-                                    </select>
-                                    {zone.monthly_weekday_rule?.nth && (
-                                      <>
-                                        <span className="text-xs text-gray-400">주</span>
-                                        <select
-                                          value={zone.monthly_weekday_rule?.dow ?? 1}
-                                          onChange={e => handleSetWeekdayRule(zone.id, { ...zone.monthly_weekday_rule, dow: Number(e.target.value) })}
-                                          className="text-xs border border-gray-200 rounded px-1 py-0.5 bg-white"
-                                        >
-                                          {DOW_LABEL.map((d, i) => <option key={i} value={i}>{d}요일</option>)}
-                                        </select>
-                                      </>
-                                    )}
+                              </div>
+                              {/* Sampling points row */}
+                              <div className="px-4 pb-2 flex gap-2 flex-wrap">
+                                {[
+                                  ['points_surface', '표면균'],
+                                  ['points_float', '부유균'],
+                                  ['points_fall', '낙하균'],
+                                  ['points_particle', '부유입자'],
+                                ].map(([field, label]) => (
+                                  <div key={field} className="flex items-center gap-0.5">
+                                    <span className="text-xs text-gray-400">{label}</span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      max="99"
+                                      defaultValue={refZone?.[field] ?? ''}
+                                      onBlur={e => handleSetZonePoints(group.name, group.category, field, parseInt(e.target.value) || 0)}
+                                      className="w-10 text-xs border border-gray-200 rounded px-1 py-0.5 text-center focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                      placeholder="0"
+                                    />
+                                    <span className="text-xs text-gray-400">pt</span>
                                   </div>
-                                )}
+                                ))}
                               </div>
-                              <div className="shrink-0 flex flex-col gap-1.5 items-end">
-                                <input
-                                  type="date"
-                                  value={zone.schedule_start || ''}
-                                  onChange={(e) => handleSetZoneStart(zone.id, e.target.value)}
-                                  className="text-xs border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                />
-                                {syncCandidates.length > 0 && (
-                                  <select
-                                    defaultValue=""
-                                    onChange={(e) => {
-                                      const src = zones.find(z => String(z.id) === e.target.value);
-                                      if (src?.schedule_start) handleSetZoneStart(zone.id, src.schedule_start);
-                                      e.target.value = '';
-                                    }}
-                                    className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[148px]"
-                                  >
-                                    <option value="">같이가기...</option>
-                                    {['공조','압축공기','질소가스'].map(c => {
-                                      const opts = syncCandidates.filter(z => z.category === c);
-                                      if (!opts.length) return null;
-                                      return (
-                                        <optgroup key={c} label={c}>
-                                          {opts.map(z => (
-                                            <option key={z.id} value={String(z.id)}>
-                                              {z.name.length > 10 ? z.name.slice(0,10)+'…' : z.name}[{z.grade}] {z.schedule_start}
-                                            </option>
-                                          ))}
-                                        </optgroup>
-                                      );
-                                    })}
-                                  </select>
-                                )}
-                              </div>
+                              {/* Grade rows */}
+                              {group.zones.map(zone => {
+                                const ms = calcMeasurements(zone);
+                                const done = ms.filter(m => m.date <= todayMidnight).length;
+                                const total = ms.length || totalCount(zone);
+                                const endDate = ms.length ? ms[ms.length - 1].baseDate : null;
+                                const isPastDue = endDate && endDate < todayMidnight && NEXT_GRADE[zone.grade];
+                                return (
+                                  <div key={zone.id} className={`px-4 pb-2 ${isPastDue ? 'bg-amber-50/60' : ''}`}>
+                                    <div className="flex items-start gap-2">
+                                      {/* Grade + progress */}
+                                      <div className="flex flex-col items-start gap-0.5 w-20 shrink-0 pt-1">
+                                        <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${GRADE_COLORS[zone.grade] || 'bg-gray-100 text-gray-600'}`}>
+                                          {zone.grade}
+                                        </span>
+                                        <span className={`text-xs tabular-nums ${isPastDue ? 'text-amber-600 font-semibold' : 'text-gray-400'}`}>
+                                          {done}/{total}회
+                                        </span>
+                                      </div>
+                                      {/* Date + weekday rule */}
+                                      <div className="flex-1 flex flex-col gap-0.5 min-w-0">
+                                        <input
+                                          type="date"
+                                          value={zone.schedule_start || ''}
+                                          onChange={e => handleSetZoneStart(zone.id, e.target.value)}
+                                          className="text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 w-full"
+                                        />
+                                        {endDate && (
+                                          <span className="text-xs text-blue-600">→ {format(endDate, 'yyyy.MM.dd')}</span>
+                                        )}
+                                        {zone.grade === 'P3' && (
+                                          <div className="flex items-center gap-1 flex-wrap mt-0.5">
+                                            <span className="text-xs text-gray-400">매월</span>
+                                            <select
+                                              value={zone.monthly_weekday_rule?.nth ?? ''}
+                                              onChange={e => {
+                                                const nth = e.target.value ? Number(e.target.value) : null;
+                                                handleSetWeekdayRule(zone.id, nth ? { nth, dow: zone.monthly_weekday_rule?.dow ?? 1 } : null);
+                                              }}
+                                              className="text-xs border border-gray-200 rounded px-1 py-0.5 bg-white"
+                                            >
+                                              <option value="">날짜</option>
+                                              <option value="1">1째</option>
+                                              <option value="2">2째</option>
+                                              <option value="3">3째</option>
+                                              <option value="4">4째</option>
+                                              <option value="5">마지막</option>
+                                            </select>
+                                            {zone.monthly_weekday_rule?.nth && (
+                                              <>
+                                                <span className="text-xs text-gray-400">주</span>
+                                                <select
+                                                  value={zone.monthly_weekday_rule?.dow ?? 1}
+                                                  onChange={e => handleSetWeekdayRule(zone.id, { ...zone.monthly_weekday_rule, dow: Number(e.target.value) })}
+                                                  className="text-xs border border-gray-200 rounded px-1 py-0.5 bg-white"
+                                                >
+                                                  {DOW_LABEL.map((d, i) => <option key={i} value={i}>{d}요일</option>)}
+                                                </select>
+                                              </>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                      {/* Phase transition */}
+                                      {isPastDue && (
+                                        <button
+                                          onClick={() => setPhasePrompt({ zoneId: zone.id, zoneName: zone.name, nextGrade: NEXT_GRADE[zone.grade], dateStr: '' })}
+                                          className="text-xs bg-amber-500 text-white px-2 py-1 rounded-lg hover:bg-amber-600 shrink-0 mt-0.5"
+                                        >→{NEXT_GRADE[zone.grade]}</button>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              <div className="h-1" />
                             </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
