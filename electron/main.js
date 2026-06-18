@@ -4,7 +4,6 @@ const fs = require('fs');
 const crypto = require('crypto');
 const https = require('https');
 const http = require('http');
-const { spawn } = require('child_process');
 
 const isDev = !app.isPackaged;
 
@@ -127,67 +126,14 @@ async function downloadUpdate() {
 
 function applyUpdateAndRestart() {
   const updateSrc = getUpdatePath();
-  const asarDest = path.join(process.resourcesPath, 'app.asar');
-  const exePath = process.execPath;
-
   if (!fs.existsSync(updateSrc)) {
     sendStatus({ type: 'error', message: '업데이트 파일이 없습니다. 다시 다운로드해 주세요.' });
     return;
   }
-
-  if (process.platform === 'win32') {
-    const pid = process.pid;
-    const tempDir = app.getPath('temp');
-
-    // Script is pure ASCII — Unicode paths are injected via environment variables.
-    // This sidesteps PowerShell's file-encoding issues entirely.
-    const script = [
-      '$src = $env:EM_SRC',
-      '$dst = $env:EM_DST',
-      '$exe = $env:EM_EXE',
-      // Wait for the main process to fully exit
-      '$p = Get-Process -Id ' + pid + ' -ErrorAction SilentlyContinue',
-      'if ($p) { $p.WaitForExit(15000) }',
-      'Start-Sleep -Milliseconds 2000',
-      // Also wait for ALL helper processes (GPU, renderer, etc.) — they hold app.asar locked
-      '$appName = [IO.Path]::GetFileNameWithoutExtension($exe)',
-      'foreach ($r in (Get-Process -Name $appName -ErrorAction SilentlyContinue)) {',
-      '  try { $r.WaitForExit(5000) } catch {}',
-      '}',
-      'Start-Sleep -Milliseconds 1000',
-      // Retry copy up to 5 times in case the file is still briefly locked
-      'for ($i = 0; $i -lt 5; $i++) {',
-      '  try {',
-      '    Copy-Item -Path $src -Destination $dst -Force -ErrorAction Stop',
-      '    Remove-Item -Path $src -Force -ErrorAction SilentlyContinue',
-      '    Start-Process -FilePath $exe',
-      '    break',
-      '  } catch {',
-      '    if ($i -eq 4) {',
-      '      Add-Type -AssemblyName System.Windows.Forms',
-      "      [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Update Error')",
-      '    }',
-      '    Start-Sleep -Milliseconds 1000',
-      '  }',
-      '}',
-    ].join('\r\n');
-
-    const psPath = path.join(tempDir, 'em-update.ps1');
-    fs.writeFileSync(psPath, script, 'ascii');
-
-    spawn('powershell.exe', [
-      '-ExecutionPolicy', 'Bypass',
-      '-WindowStyle', 'Hidden',
-      '-NonInteractive',
-      '-File', psPath,
-    ], {
-      detached: true,
-      stdio: 'ignore',
-      env: { ...process.env, EM_SRC: updateSrc, EM_DST: asarDest, EM_EXE: exePath },
-    }).unref();
-  }
-
-  app.quit();
+  // Relaunch with --apply-update arg; the new instance applies the update before showing any UI.
+  // This avoids the Windows Job Object problem (spawned scripts get killed with the parent).
+  app.relaunch({ args: [`--apply-update=${updateSrc}`] });
+  app.exit(0);
 }
 
 function setupAsarUpdater(win) {
@@ -254,17 +200,49 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(() => {
-  registerHandlers();
-  createWindow();
-});
+// ─── 앱 시작 ────────────────────────────────────────────────────────────────────
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
-app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow();
-});
+const applyUpdateArg = !isDev && process.argv.find(a => a.startsWith('--apply-update='));
+
+if (applyUpdateArg) {
+  // Update-apply mode: copy asar, then relaunch normally (no window shown)
+  app.on('ready', async () => {
+    const updateSrc = applyUpdateArg.slice('--apply-update='.length);
+    const asarDest = path.join(process.resourcesPath, 'app.asar');
+    let applied = false;
+
+    for (let i = 0; i < 20 && !applied; i++) {
+      try {
+        fs.copyFileSync(updateSrc, asarDest);
+        applied = true;
+      } catch {
+        // app.asar may still be locked by the previous instance; wait and retry
+        await new Promise(r => setTimeout(r, 1500));
+      }
+    }
+
+    try { fs.unlinkSync(updateSrc); } catch {}
+
+    // Relaunch without the --apply-update arg
+    const cleanArgs = process.argv.slice(1).filter(a => !a.startsWith('--apply-update='));
+    app.relaunch({ args: cleanArgs });
+    app.exit(0);
+  });
+
+} else {
+  // Normal startup
+  app.whenReady().then(() => {
+    registerHandlers();
+    createWindow();
+  });
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit();
+  });
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+}
 
 // ─── IPC 핸들러 ────────────────────────────────────────────────────────────────
 
