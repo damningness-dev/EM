@@ -58,6 +58,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   const [groups, setGroups] = useState([]);
   const [phasePrompt, setPhasePrompt] = useState(null); // { zoneId, zoneName, nextGrade, dateStr }
   const [newGroupName, setNewGroupName] = useState('');
+  const [zonesCatFilter, setZonesCatFilter] = useState('전체');
 
   useEffect(() => {
     setLoading(true);
@@ -117,17 +118,24 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   const monRate = zones.length ? Math.round(completedCount / zones.length * 100) : 0;
 
   // AHU tasks this month
-  const ahuTasks = Object.entries(annualPlan)
-    .filter(([key]) => {
-      const parts = key.split('_');
-      return parts[parts.length - 1] === String(month);
-    })
+  const allAhuEntries = Object.entries(annualPlan)
+    .filter(([, val]) => val.planned)
     .map(([key, val]) => {
       const parts = key.split('_');
-      parts.pop();
-      return { ahuName: parts.join('_'), ...val };
-    })
-    .filter(t => t.planned);
+      const taskMonth = parseInt(parts[parts.length - 1]);
+      const ahuName = parts.slice(0, -1).join('_');
+      return { ahuName, month: taskMonth, done: val.done };
+    });
+  const ahuTasksWithNth = allAhuEntries.map(t => ({
+    ...t,
+    nth: allAhuEntries.filter(e => e.ahuName === t.ahuName && e.month <= t.month).length,
+  }));
+  const ahuTasks = ahuTasksWithNth.sort((a, b) => {
+    const aOff = a.month >= month ? a.month - month : a.month + 12 - month;
+    const bOff = b.month >= month ? b.month - month : b.month + 12 - month;
+    return aOff - bOff || a.ahuName.localeCompare(b.ahuName);
+  });
+  const currentMonthAhuTasks = ahuTasks.filter(t => t.month === month);
 
   const curMonthPrefix = `${year}-${String(month).padStart(2, '0')}-`;
   const totalMonthSchedule = Object.entries(scheduleByDate)
@@ -345,8 +353,23 @@ export default function CalendarView({ year: initYear, onYearChange }) {
 
             {/* ── 구역 일정 탭 ── */}
             {settingsTab === 'zones' && (
-              <div className="flex-1 overflow-y-auto">
-                {['공조', '압축공기', '질소가스'].map(cat => {
+              <div className="flex-1 overflow-y-auto flex flex-col">
+                {/* Category sub-tabs */}
+                <div className="flex gap-1.5 px-4 py-2.5 border-b border-gray-100 shrink-0">
+                  {['전체', '공조', '질소가스', '압축공기'].map(cat => (
+                    <button
+                      key={cat}
+                      onClick={() => setZonesCatFilter(cat)}
+                      className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                        zonesCatFilter === cat
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                      }`}
+                    >{cat}</button>
+                  ))}
+                </div>
+                <div className="flex-1 overflow-y-auto">
+                {(zonesCatFilter === '전체' ? ['공조', '압축공기', '질소가스'] : [zonesCatFilter]).map(cat => {
                   const catZones = zones
                     .filter(z => z.category === cat && ['P1', 'P2', 'P3'].includes(z.grade))
                     .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
@@ -471,6 +494,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                     </div>
                   );
                 })}
+                </div>
               </div>
             )}
 
@@ -621,8 +645,8 @@ export default function CalendarView({ year: initYear, onYearChange }) {
         </div>
         <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center gap-3">
           <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${
-            ahuTasks.length > 0 ? 'bg-purple-100 text-purple-600' : 'bg-gray-100 text-gray-400'
-          }`}>{ahuTasks.filter(t => t.done).length}/{ahuTasks.length}</div>
+            currentMonthAhuTasks.length > 0 ? 'bg-purple-100 text-purple-600' : 'bg-gray-100 text-gray-400'
+          }`}>{currentMonthAhuTasks.filter(t => t.done).length}/{currentMonthAhuTasks.length}</div>
           <div>
             <p className="text-xs text-gray-500">AHU 계획</p>
             <p className="text-sm font-semibold text-gray-700">완료/예정</p>
@@ -653,25 +677,25 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                 const dateStr = `${cell.year}-${String(cell.month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
                 const calibEvts = calibByDate[dateStr] || [];
                 const schedEvts = scheduleByDate[dateStr] || [];
-                const maxVisible = 3;
+                const maxVisible = 5;
                 const shownCalib = Math.min(calibEvts.length, maxVisible);
                 const shownSched = Math.min(schedEvts.length, Math.max(0, maxVisible - calibEvts.length));
                 const overflow = calibEvts.length + schedEvts.length - shownCalib - shownSched;
 
                 const isToday = !isOther && isCurrentMonth && day === todayDate;
                 const isSelected = dateStr === selectedDay;
-                const isDragOver = !isOther && dragOverDay === dateStr;
+                const isDragOver = dragOverDay === dateStr;
                 const dow = idx % 7;
 
                 return (
                   <div
                     key={idx}
                     onClick={() => setSelectedDay(dateStr === selectedDay ? null : dateStr)}
-                    onDragOver={isOther ? undefined : (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverDay(dateStr); }}
-                    onDragLeave={isOther ? undefined : (e) => {
+                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverDay(dateStr); }}
+                    onDragLeave={(e) => {
                       if (!e.relatedTarget || !e.currentTarget.contains(e.relatedTarget)) setDragOverDay(null);
                     }}
-                    onDrop={isOther ? undefined : (e) => {
+                    onDrop={(e) => {
                       e.preventDefault();
                       setDragOverDay(null);
                       try {
@@ -679,9 +703,9 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                         if (data.zoneId !== undefined) handleDropOnDay(dateStr, data);
                       } catch {}
                     }}
-                    className={`h-28 p-1.5 border-r border-b border-gray-100 cursor-pointer transition-colors ${
-                      isOther ? 'bg-gray-50/80' :
+                    className={`h-36 p-1.5 border-r border-b border-gray-100 cursor-pointer transition-colors ${
                       isDragOver ? 'bg-blue-100 ring-2 ring-inset ring-blue-400' :
+                      isOther ? 'bg-gray-50/80' :
                       isSelected ? 'bg-blue-50' :
                       isToday ? 'bg-blue-50/50' : 'hover:bg-gray-50'
                     }`}
@@ -707,8 +731,8 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                         return (
                           <div
                             key={`s${i}`}
-                            draggable={!isOther}
-                            onDragStart={isOther ? undefined : (e) => {
+                            draggable={true}
+                            onDragStart={(e) => {
                               e.stopPropagation();
                               e.dataTransfer.effectAllowed = 'move';
                               e.dataTransfer.setData('text/plain', JSON.stringify({
@@ -719,9 +743,9 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                                 maxDateStr: format(bounds.max, 'yyyy-MM-dd'),
                               }));
                             }}
-                            onDragEnd={isOther ? undefined : () => setDragOverDay(null)}
+                            onDragEnd={() => setDragOverDay(null)}
                             onClick={(e) => e.stopPropagation()}
-                            className={`text-xs px-1 py-0.5 rounded truncate ${TYPE_COLORS[measurement.type]} ${isOther ? '' : 'cursor-grab active:cursor-grabbing'}`}
+                            className={`text-xs px-1 py-0.5 rounded truncate ${TYPE_COLORS[measurement.type]} cursor-grab active:cursor-grabbing`}
                             style={{
                               borderLeft: measurement.isFirst ? '3px solid #22c55e' : undefined,
                               borderRight: measurement.isLast ? '3px solid #ef4444' : undefined,
@@ -851,16 +875,21 @@ export default function CalendarView({ year: initYear, onYearChange }) {
           {ahuTasks.length > 0 && (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50">
-                <p className="text-xs font-semibold text-gray-600">🔧 {MONTH_KR[month - 1]} AHU 계획</p>
+                <p className="text-xs font-semibold text-gray-600">🔧 AHU 계획</p>
               </div>
-              <div className="divide-y divide-gray-50">
+              <div className="divide-y divide-gray-50 max-h-52 overflow-y-auto">
                 {ahuTasks.map((t, i) => (
                   <div key={i} className="flex items-center gap-2 px-4 py-2.5">
-                    <span className={`text-sm ${t.done ? 'text-green-500' : 'text-gray-300'}`}>{t.done ? '✓' : '○'}</span>
-                    <span className={`text-sm flex-1 ${t.done ? 'text-gray-400 line-through' : 'text-gray-700'}`}>{t.ahuName}</span>
-                    <span className={`text-xs px-1.5 py-0.5 rounded-full ${
-                      t.done ? 'bg-green-100 text-green-600' : 'bg-yellow-100 text-yellow-700'
-                    }`}>{t.done ? '완료' : '예정'}</span>
+                    <span className={`text-sm shrink-0 ${t.done ? 'text-green-500' : 'text-gray-300'}`}>{t.done ? '✓' : '○'}</span>
+                    <div className="flex-1 min-w-0">
+                      <span className={`text-sm block truncate ${t.done ? 'text-gray-400 line-through' : 'text-gray-700'}`}>{t.ahuName}</span>
+                      <span className="text-xs text-gray-400">{t.month}월 · 올해 {t.nth}번째</span>
+                    </div>
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full shrink-0 ${
+                      t.done ? 'bg-green-100 text-green-600' :
+                      t.month === month ? 'bg-yellow-100 text-yellow-700' :
+                      t.month > month ? 'bg-blue-50 text-blue-500' : 'bg-gray-100 text-gray-400'
+                    }`}>{t.done ? '완료' : t.month === month ? '이번달' : `${t.month}월`}</span>
                   </div>
                 ))}
               </div>
