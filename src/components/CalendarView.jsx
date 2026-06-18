@@ -461,7 +461,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                                           className="text-xs border border-gray-200 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 w-full"
                                         />
                                         {endDate && (
-                                          <span className="text-xs text-blue-600">→ {format(endDate, 'MM.dd')}</span>
+                                          <span className="text-xs text-blue-600">→ {format(endDate, 'yyyy.MM.dd')}</span>
                                         )}
                                         {zone.grade === 'P3' && (
                                           <div className="flex items-center gap-1 flex-wrap mt-0.5">
@@ -496,8 +496,8 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                                           </div>
                                         )}
                                       </div>
-                                      {/* Sampling points 2×2 */}
-                                      <div className="flex-1 grid grid-cols-2 gap-x-1 gap-y-1 min-w-0">
+                                      {/* Sampling points 4×1 */}
+                                      <div className="flex flex-col gap-1 shrink-0">
                                         {[
                                           ['points_surface', '표면균'],
                                           ['points_float', '부유균'],
@@ -729,6 +729,14 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                 const isDragOver = dragOverDay === dateStr;
                 const dow = idx % 7;
 
+                const pts = schedEvts.reduce((acc, { zone }) => ({
+                  surface: acc.surface + (zone.points_surface || 0),
+                  float: acc.float + (zone.points_float || 0),
+                  fall: acc.fall + (zone.points_fall || 0),
+                  particle: acc.particle + (zone.points_particle || 0),
+                }), { surface: 0, float: 0, fall: 0, particle: 0 });
+                const hasPts = pts.surface + pts.float + pts.fall + pts.particle > 0;
+
                 return (
                   <div
                     key={idx}
@@ -752,12 +760,22 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                       isToday ? 'bg-blue-50/50' : 'hover:bg-gray-50'
                     }`}
                   >
-                    <div className={`text-xs font-semibold mb-1 w-6 h-6 flex items-center justify-center rounded-full ${
-                      isOther ? 'text-gray-300' :
-                      isToday ? 'bg-blue-600 text-white' :
-                      dow === 0 ? 'text-red-500' :
-                      dow === 6 ? 'text-blue-500' : 'text-gray-700'
-                    }`}>{day}</div>
+                    <div className="flex items-center justify-between mb-1 gap-0.5">
+                      <div className={`text-xs font-semibold w-6 h-6 flex items-center justify-center rounded-full shrink-0 ${
+                        isOther ? 'text-gray-300' :
+                        isToday ? 'bg-blue-600 text-white' :
+                        dow === 0 ? 'text-red-500' :
+                        dow === 6 ? 'text-blue-500' : 'text-gray-700'
+                      }`}>{day}</div>
+                      {hasPts && (
+                        <div className={`flex gap-0.5 flex-wrap justify-end overflow-hidden ${isOther ? 'opacity-40' : ''}`}>
+                          {pts.surface > 0 && <span className="text-[9px] leading-none bg-green-50 text-green-700 px-0.5 py-0.5 rounded">표{pts.surface}</span>}
+                          {pts.float > 0 && <span className="text-[9px] leading-none bg-blue-50 text-blue-700 px-0.5 py-0.5 rounded">부{pts.float}</span>}
+                          {pts.fall > 0 && <span className="text-[9px] leading-none bg-orange-50 text-orange-700 px-0.5 py-0.5 rounded">낙{pts.fall}</span>}
+                          {pts.particle > 0 && <span className="text-[9px] leading-none bg-purple-50 text-purple-700 px-0.5 py-0.5 rounded">입{pts.particle}</span>}
+                        </div>
+                      )}
+                    </div>
 
                     <div className={`flex flex-col gap-0.5 overflow-hidden ${isOther ? 'opacity-40' : ''}`}>
                       {calibEvts.slice(0, shownCalib).map((c, i) => (
@@ -900,6 +918,14 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                           <p className="text-xs text-gray-400 mt-0.5">
                             이동: {format(bounds.min, 'MM/dd')}~{format(bounds.max, 'MM/dd')}
                           </p>
+                          {(zone.points_surface || zone.points_float || zone.points_fall || zone.points_particle) ? (
+                            <div className="flex gap-1 mt-1 flex-wrap">
+                              {zone.points_surface > 0 && <span className="text-[10px] bg-green-50 text-green-600 px-1 py-0.5 rounded">표면균 {zone.points_surface}pt</span>}
+                              {zone.points_float > 0 && <span className="text-[10px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">부유균 {zone.points_float}pt</span>}
+                              {zone.points_fall > 0 && <span className="text-[10px] bg-orange-50 text-orange-600 px-1 py-0.5 rounded">낙하균 {zone.points_fall}pt</span>}
+                              {zone.points_particle > 0 && <span className="text-[10px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">부유입자 {zone.points_particle}pt</span>}
+                            </div>
+                          ) : null}
                         </div>
                       );
                     })}
