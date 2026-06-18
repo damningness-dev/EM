@@ -5,7 +5,7 @@ export function getScheduleSpec(category, grade) {
   const isHVAC = category === '공조';
 
   if (grade === 'P1') {
-    return [{ count: 52, intervalDays: 7, type: 'weekly' }];
+    return [{ count: 7, intervalDays: 1, type: 'daily' }];
   }
   if (grade === 'P2') {
     if (isHVAC) {
@@ -31,14 +31,25 @@ export function calcMeasurements(zone) {
   const measurements = [];
   let num = 1;
   let baseDate = new Date(zone.schedule_start + 'T00:00:00');
+  let lastBaseDate = null;
 
-  for (const phase of spec) {
+  for (let phaseIdx = 0; phaseIdx < spec.length; phaseIdx++) {
+    const phase = spec[phaseIdx];
+
+    // Phase transition: first measurement of new phase is (new phase's interval) after last measurement
+    if (phaseIdx > 0 && lastBaseDate !== null) {
+      baseDate = phase.type === 'monthly'
+        ? addMonths(lastBaseDate, 1)
+        : addDays(lastBaseDate, phase.intervalDays);
+    }
+
     for (let i = 0; i < phase.count; i++) {
       const key = String(num);
       const scheduledDate = overrides[key]
         ? new Date(overrides[key] + 'T00:00:00')
         : new Date(baseDate);
 
+      lastBaseDate = new Date(baseDate);
       measurements.push({
         num,
         date: scheduledDate,
@@ -70,14 +81,16 @@ export function totalCount(zone) {
 export function getDragBounds(measurement) {
   const { type, baseDate } = measurement;
 
-  if (type === 'weekly') {
+  if (type === 'daily') {
+    // Daily measurements are fixed — cannot move to another day
+    return { min: baseDate, max: baseDate };
+  }
+  if (type === 'weekly' || type === 'biweekly') {
+    // Both weekly and biweekly must stay within the same ISO week (Mon–Sun)
     return {
       min: startOfWeek(baseDate, { weekStartsOn: 1 }),
       max: endOfWeek(baseDate, { weekStartsOn: 1 }),
     };
-  }
-  if (type === 'biweekly') {
-    return { min: addDays(baseDate, -7), max: addDays(baseDate, 7) };
   }
   if (type === 'monthly') {
     return { min: startOfMonth(baseDate), max: endOfMonth(baseDate) };

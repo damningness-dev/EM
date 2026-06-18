@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds } from '../lib/schedule';
@@ -8,12 +8,13 @@ const DOW_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 const MONTH_KR = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
 
 const TYPE_COLORS = {
+  daily:    'bg-red-100 text-red-700 border border-red-200',
   weekly:   'bg-blue-100 text-blue-700 border border-blue-200',
   biweekly: 'bg-emerald-100 text-emerald-700 border border-emerald-200',
   monthly:  'bg-violet-100 text-violet-700 border border-violet-200',
 };
 
-const TYPE_LABEL = { weekly: '주1회', biweekly: '격주', monthly: '월1회' };
+const TYPE_LABEL = { daily: '일1회', weekly: '주1회', biweekly: '격주', monthly: '월1회' };
 
 function buildGrid(year, month) {
   const firstDow = new Date(year, month - 1, 1).getDay();
@@ -37,6 +38,8 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [dragOverDay, setDragOverDay] = useState(null);
+  const [toast, setToast] = useState(null);
+  const toastTimer = useRef(null);
 
   useEffect(() => {
     setLoading(true);
@@ -139,6 +142,12 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     } catch { return ''; }
   }
 
+  function showError(message) {
+    setToast(message);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 3500);
+  }
+
   async function handleSetZoneStart(zoneId, dateStr) {
     const zone = zones.find(z => z.id === zoneId);
     if (!zone) return;
@@ -155,7 +164,14 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     const d = String(day).padStart(2, '0');
     const newDateStr = `${year}-${m}-${d}`;
 
-    if (newDateStr < dragData.minDateStr || newDateStr > dragData.maxDateStr) return;
+    if (newDateStr < dragData.minDateStr || newDateStr > dragData.maxDateStr) {
+      const typeMsg = dragData.type === 'weekly' ? '해당 주간 내'
+        : dragData.type === 'biweekly' ? '해당 주간 내'
+        : dragData.type === 'monthly' ? '해당 월 내'
+        : '동일 날짜';
+      showError(`이동 불가: ${typeMsg}에서만 일정을 변경할 수 있습니다. (${dragData.minDateStr} ~ ${dragData.maxDateStr})`);
+      return;
+    }
 
     const updated = {
       ...zone,
@@ -170,6 +186,15 @@ export default function CalendarView({ year: initYear, onYearChange }) {
 
   return (
     <div className="p-6 space-y-5">
+
+      {/* Error toast */}
+      {toast && (
+        <div className="fixed top-4 right-4 z-[200] bg-red-500 text-white px-4 py-3 rounded-xl shadow-xl flex items-start gap-3 max-w-sm">
+          <span className="text-base shrink-0 mt-0.5">⚠</span>
+          <span className="text-sm font-medium flex-1 leading-snug">{toast}</span>
+          <button onClick={() => setToast(null)} className="text-red-200 hover:text-white text-lg leading-none shrink-0">✕</button>
+        </div>
+      )}
 
       {/* Schedule settings drawer */}
       {showSettings && (
@@ -201,6 +226,9 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                     {catZones.map(zone => {
                       const endDate = calcEndDate(zone);
                       const count = totalCount(zone);
+                      const syncCandidates = zones.filter(z =>
+                        z.id !== zone.id && z.schedule_start && ['P1','P2','P3'].includes(z.grade)
+                      );
                       return (
                         <div key={zone.id} className="px-5 py-3 border-b border-gray-50 hover:bg-gray-50 transition-colors">
                           <div className="flex items-start gap-3">
@@ -218,13 +246,39 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                                 </p>
                               )}
                             </div>
-                            <div className="shrink-0">
+                            <div className="shrink-0 flex flex-col gap-1.5 items-end">
                               <input
                                 type="date"
                                 value={zone.schedule_start || ''}
                                 onChange={(e) => handleSetZoneStart(zone.id, e.target.value)}
                                 className="text-xs border border-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
                               />
+                              {syncCandidates.length > 0 && (
+                                <select
+                                  defaultValue=""
+                                  onChange={(e) => {
+                                    const src = zones.find(z => String(z.id) === e.target.value);
+                                    if (src?.schedule_start) handleSetZoneStart(zone.id, src.schedule_start);
+                                    e.target.value = '';
+                                  }}
+                                  className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[148px]"
+                                >
+                                  <option value="">같이가기...</option>
+                                  {['공조','압축공기','질소가스'].map(c => {
+                                    const opts = syncCandidates.filter(z => z.category === c);
+                                    if (!opts.length) return null;
+                                    return (
+                                      <optgroup key={c} label={c}>
+                                        {opts.map(z => (
+                                          <option key={z.id} value={String(z.id)}>
+                                            {z.name.length > 10 ? z.name.slice(0,10)+'…' : z.name}[{z.grade}] {z.schedule_start}
+                                          </option>
+                                        ))}
+                                      </optgroup>
+                                    );
+                                  })}
+                                </select>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -410,6 +464,9 @@ export default function CalendarView({ year: initYear, onYearChange }) {
             </div>
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
               <span className="w-3 h-3 rounded bg-yellow-50 border border-yellow-200 inline-block" />이번달 교정
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-gray-500">
+              <span className="w-3 h-3 rounded bg-red-100 border border-red-200 inline-block" />일1회(P1)
             </div>
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
               <span className="w-3 h-3 rounded bg-blue-100 border border-blue-200 inline-block" />주1회
