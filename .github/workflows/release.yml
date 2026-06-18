@@ -113,24 +113,40 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STEP_TAG: ${{ steps.version.outputs.tag }}
+          STEP_VERSION: ${{ steps.version.outputs.version }}
+          STEP_BRANCH: ${{ github.ref_name }}
+          STEP_SHA: ${{ github.sha }}
+          STEP_COMMIT: ${{ github.event.head_commit.message }}
         run: |
-          TAG="${{ steps.version.outputs.tag }}"
-          VERSION="${{ steps.version.outputs.version }}"
-          BODY="## 환경 모니터링 $TAG
-
-          - **버전**: $VERSION
-          - **브랜치**: ${{ github.ref_name }}
-          - **커밋**: ${{ github.sha }}
-
-          ### 변경 내용
-          ${{ github.event.head_commit.message }}
-
-          ---
-
-          ### 설치 방법
-          \`em-setup-$VERSION.exe\` 다운로드 후 실행
-
-          > 이미 설치된 경우 앱 실행 시 자동으로 업데이트 알림이 표시됩니다."
-
-          gh release edit "$TAG" --title "환경 모니터링 $TAG" --notes "$BODY" \
+          # Use node to build the body — commit message may contain shell-special chars
+          node -e "
+            const fs = require('fs');
+            const tag = process.env.STEP_TAG;
+            const ver = process.env.STEP_VERSION;
+            const branch = process.env.STEP_BRANCH;
+            const sha = process.env.STEP_SHA;
+            const msg = (process.env.STEP_COMMIT || '').trim();
+            const body = [
+              '## 환경 모니터링 ' + tag,
+              '',
+              '- **버전**: ' + ver,
+              '- **브랜치**: ' + branch,
+              '- **커밋**: ' + sha,
+              '',
+              '### 변경 내용',
+              msg,
+              '',
+              '---',
+              '',
+              '### 설치 방법',
+              '\`em-setup-' + ver + '.exe\` 다운로드 후 실행',
+              '',
+              '> 이미 설치된 경우 앱 실행 시 자동으로 업데이트 알림이 표시됩니다.',
+            ].join('\n');
+            fs.writeFileSync('release-notes.md', body);
+          "
+          gh release edit "$STEP_TAG" \
+            --title "환경 모니터링 $STEP_TAG" \
+            --notes-file release-notes.md \
             --repo "${{ github.repository }}" || true
