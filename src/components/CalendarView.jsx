@@ -19,9 +19,23 @@ const TYPE_LABEL = { daily: '일1회', weekly: '주1회', biweekly: '격주', mo
 function buildGrid(year, month) {
   const firstDow = new Date(year, month - 1, 1).getDay();
   const daysInMonth = new Date(year, month, 0).getDate();
-  const cells = Array(firstDow).fill(null);
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-  while (cells.length % 7 !== 0) cells.push(null);
+  const prevYear = month === 1 ? year - 1 : year;
+  const prevMonth = month === 1 ? 12 : month - 1;
+  const prevMonthDays = new Date(prevYear, prevMonth, 0).getDate();
+  const nextYear = month === 12 ? year + 1 : year;
+  const nextMonth = month === 12 ? 1 : month + 1;
+
+  const cells = [];
+  for (let i = firstDow - 1; i >= 0; i--) {
+    cells.push({ day: prevMonthDays - i, year: prevYear, month: prevMonth, isOther: true });
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    cells.push({ day: d, year, month, isOther: false });
+  }
+  let nextDay = 1;
+  while (cells.length % 7 !== 0) {
+    cells.push({ day: nextDay++, year: nextYear, month: nextMonth, isOther: true });
+  }
   return cells;
 }
 
@@ -67,35 +81,30 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     else setMonth(m => m + 1);
   }
 
-  // Calibration events by day
-  const calibByDay = {};
+  // Calibration events by date string
+  const calibByDate = {};
   calibration.forEach(c => {
     if (!c.next_calib_date) return;
     try {
-      const d = parseISO(c.next_calib_date);
-      if (d.getFullYear() === year && d.getMonth() + 1 === month) {
-        const day = d.getDate();
-        if (!calibByDay[day]) calibByDay[day] = [];
-        calibByDay[day].push(c);
-      }
+      const key = c.next_calib_date.slice(0, 10);
+      if (!calibByDate[key]) calibByDate[key] = [];
+      calibByDate[key].push(c);
     } catch {}
   });
 
-  // Schedule events by day
-  const scheduleByDay = useMemo(() => {
+  // Schedule events by date string (all dates, no month filter)
+  const scheduleByDate = useMemo(() => {
     const map = {};
     zones.forEach(zone => {
       if (!zone.schedule_start) return;
       calcMeasurements(zone).forEach(m => {
-        if (m.date.getFullYear() === year && m.date.getMonth() + 1 === month) {
-          const day = m.date.getDate();
-          if (!map[day]) map[day] = [];
-          map[day].push({ zone, measurement: m });
-        }
+        const key = format(m.date, 'yyyy-MM-dd');
+        if (!map[key]) map[key] = [];
+        map[key].push({ zone, measurement: m });
       });
     });
     return map;
-  }, [zones, year, month]);
+  }, [zones]);
 
   // Monitoring stats
   const completedCount = zones.filter(z => monitoring[z.id]).length;
@@ -114,15 +123,19 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     })
     .filter(t => t.planned);
 
-  const totalMonthSchedule = Object.values(scheduleByDay).reduce((sum, arr) => sum + arr.length, 0);
+  const curMonthPrefix = `${year}-${String(month).padStart(2, '0')}-`;
+  const totalMonthSchedule = Object.entries(scheduleByDate)
+    .filter(([k]) => k.startsWith(curMonthPrefix))
+    .reduce((sum, [, arr]) => sum + arr.length, 0);
+  const calibThisMonthCount = Object.keys(calibByDate).filter(k => k.startsWith(curMonthPrefix)).length;
   const scheduledZonesCount = zones.filter(z => z.schedule_start && ['P1','P2','P3'].includes(z.grade)).length;
 
   const grid = buildGrid(year, month);
   const isCurrentMonth = today.getFullYear() === year && today.getMonth() + 1 === month;
   const todayDate = today.getDate();
 
-  const selectedCalibEvents = selectedDay ? (calibByDay[selectedDay] || []) : [];
-  const selectedScheduleEvents = selectedDay ? (scheduleByDay[selectedDay] || []) : [];
+  const selectedCalibEvents = selectedDay ? (calibByDate[selectedDay] || []) : [];
+  const selectedScheduleEvents = selectedDay ? (scheduleByDate[selectedDay] || []) : [];
 
   function dDayColor(dateStr) {
     try {
@@ -156,15 +169,11 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     setZones(prev => prev.map(z => z.id === zoneId ? updated : z));
   }
 
-  async function handleDropOnDay(day, dragData) {
+  async function handleDropOnDay(dateStr, dragData) {
     const zone = zones.find(z => z.id === dragData.zoneId);
     if (!zone) return;
 
-    const m = String(month).padStart(2, '0');
-    const d = String(day).padStart(2, '0');
-    const newDateStr = `${year}-${m}-${d}`;
-
-    if (newDateStr < dragData.minDateStr || newDateStr > dragData.maxDateStr) {
+    if (dateStr < dragData.minDateStr || dateStr > dragData.maxDateStr) {
       const typeMsg = dragData.type === 'weekly' ? '해당 주간 내'
         : dragData.type === 'biweekly' ? '해당 주간 내'
         : dragData.type === 'monthly' ? '해당 월 내'
@@ -177,7 +186,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
       ...zone,
       schedule_overrides: {
         ...(zone.schedule_overrides || {}),
-        [String(dragData.num)]: newDateStr,
+        [String(dragData.num)]: dateStr,
       },
     };
     await upsertZone(updated);
@@ -330,8 +339,8 @@ export default function CalendarView({ year: initYear, onYearChange }) {
         </div>
         <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center gap-3">
           <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${
-            Object.keys(calibByDay).length > 0 ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-400'
-          }`}>{Object.keys(calibByDay).length}</div>
+            calibThisMonthCount > 0 ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-400'
+          }`}>{calibThisMonthCount}</div>
           <div>
             <p className="text-xs text-gray-500">교정 예정일</p>
             <p className="text-sm font-semibold text-gray-700">이번달</p>
@@ -366,52 +375,52 @@ export default function CalendarView({ year: initYear, onYearChange }) {
             </div>
           ) : (
             <div className="grid grid-cols-7">
-              {grid.map((day, idx) => {
-                if (!day) {
-                  return <div key={idx} className="h-28 bg-gray-50/50 border-r border-b border-gray-100 last:border-r-0" />;
-                }
-
-                const calibEvts = calibByDay[day] || [];
-                const schedEvts = scheduleByDay[day] || [];
+              {grid.map((cell, idx) => {
+                const { day, isOther } = cell;
+                const dateStr = `${cell.year}-${String(cell.month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                const calibEvts = calibByDate[dateStr] || [];
+                const schedEvts = scheduleByDate[dateStr] || [];
                 const maxVisible = 3;
                 const shownCalib = Math.min(calibEvts.length, maxVisible);
                 const shownSched = Math.min(schedEvts.length, Math.max(0, maxVisible - calibEvts.length));
                 const overflow = calibEvts.length + schedEvts.length - shownCalib - shownSched;
 
-                const isToday = isCurrentMonth && day === todayDate;
-                const isSelected = day === selectedDay;
-                const isDragOver = dragOverDay === day;
+                const isToday = !isOther && isCurrentMonth && day === todayDate;
+                const isSelected = dateStr === selectedDay;
+                const isDragOver = !isOther && dragOverDay === dateStr;
                 const dow = idx % 7;
 
                 return (
                   <div
                     key={idx}
-                    onClick={() => setSelectedDay(day === selectedDay ? null : day)}
-                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverDay(day); }}
-                    onDragLeave={(e) => {
+                    onClick={() => setSelectedDay(dateStr === selectedDay ? null : dateStr)}
+                    onDragOver={isOther ? undefined : (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverDay(dateStr); }}
+                    onDragLeave={isOther ? undefined : (e) => {
                       if (!e.relatedTarget || !e.currentTarget.contains(e.relatedTarget)) setDragOverDay(null);
                     }}
-                    onDrop={(e) => {
+                    onDrop={isOther ? undefined : (e) => {
                       e.preventDefault();
                       setDragOverDay(null);
                       try {
                         const data = JSON.parse(e.dataTransfer.getData('text/plain'));
-                        if (data.zoneId !== undefined) handleDropOnDay(day, data);
+                        if (data.zoneId !== undefined) handleDropOnDay(dateStr, data);
                       } catch {}
                     }}
                     className={`h-28 p-1.5 border-r border-b border-gray-100 cursor-pointer transition-colors ${
+                      isOther ? 'bg-gray-50/80' :
                       isDragOver ? 'bg-blue-100 ring-2 ring-inset ring-blue-400' :
                       isSelected ? 'bg-blue-50' :
                       isToday ? 'bg-blue-50/50' : 'hover:bg-gray-50'
                     }`}
                   >
                     <div className={`text-xs font-semibold mb-1 w-6 h-6 flex items-center justify-center rounded-full ${
+                      isOther ? 'text-gray-300' :
                       isToday ? 'bg-blue-600 text-white' :
                       dow === 0 ? 'text-red-500' :
                       dow === 6 ? 'text-blue-500' : 'text-gray-700'
                     }`}>{day}</div>
 
-                    <div className="flex flex-col gap-0.5 overflow-hidden">
+                    <div className={`flex flex-col gap-0.5 overflow-hidden ${isOther ? 'opacity-40' : ''}`}>
                       {calibEvts.slice(0, shownCalib).map((c, i) => (
                         <div
                           key={`c${i}`}
@@ -425,8 +434,8 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                         return (
                           <div
                             key={`s${i}`}
-                            draggable
-                            onDragStart={(e) => {
+                            draggable={!isOther}
+                            onDragStart={isOther ? undefined : (e) => {
                               e.stopPropagation();
                               e.dataTransfer.effectAllowed = 'move';
                               e.dataTransfer.setData('text/plain', JSON.stringify({
@@ -437,9 +446,9 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                                 maxDateStr: format(bounds.max, 'yyyy-MM-dd'),
                               }));
                             }}
-                            onDragEnd={() => setDragOverDay(null)}
+                            onDragEnd={isOther ? undefined : () => setDragOverDay(null)}
                             onClick={(e) => e.stopPropagation()}
-                            className={`text-xs px-1 py-0.5 rounded truncate cursor-grab active:cursor-grabbing ${TYPE_COLORS[measurement.type]}`}
+                            className={`text-xs px-1 py-0.5 rounded truncate ${TYPE_COLORS[measurement.type]} ${isOther ? '' : 'cursor-grab active:cursor-grabbing'}`}
                             title={label}
                           >{label}</div>
                         );
@@ -486,8 +495,8 @@ export default function CalendarView({ year: initYear, onYearChange }) {
           {selectedDay && (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <div className="px-4 py-3 bg-blue-600 text-white">
-                <p className="text-xs text-blue-200">{year}년 {MONTH_KR[month - 1]}</p>
-                <p className="text-lg font-bold">{selectedDay}일 일정</p>
+                <p className="text-xs text-blue-200">{selectedDay.slice(0,4)}년 {MONTH_KR[parseInt(selectedDay.slice(5,7)) - 1]}</p>
+                <p className="text-lg font-bold">{parseInt(selectedDay.slice(8,10))}일 일정</p>
               </div>
 
               {selectedCalibEvents.length > 0 && (

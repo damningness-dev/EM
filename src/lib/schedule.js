@@ -1,5 +1,21 @@
 import { addDays, addMonths, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 
+function isOverrideValid(overrideDate, baseDate, type) {
+  if (type === 'daily') {
+    return overrideDate.toDateString() === baseDate.toDateString();
+  }
+  if (type === 'weekly' || type === 'biweekly') {
+    const min = startOfWeek(baseDate, { weekStartsOn: 1 });
+    const max = endOfWeek(baseDate, { weekStartsOn: 1 });
+    return overrideDate >= min && overrideDate <= max;
+  }
+  if (type === 'monthly') {
+    return overrideDate.getFullYear() === baseDate.getFullYear() &&
+           overrideDate.getMonth() === baseDate.getMonth();
+  }
+  return false;
+}
+
 export function getScheduleSpec(category, grade) {
   if (!['P1', 'P2', 'P3'].includes(grade)) return null;
   const isHVAC = category === '공조';
@@ -45,8 +61,9 @@ export function calcMeasurements(zone) {
 
     for (let i = 0; i < phase.count; i++) {
       const key = String(num);
-      const scheduledDate = overrides[key]
-        ? new Date(overrides[key] + 'T00:00:00')
+      const rawOverride = overrides[key] ? new Date(overrides[key] + 'T00:00:00') : null;
+      const scheduledDate = (rawOverride && isOverrideValid(rawOverride, new Date(baseDate), phase.type))
+        ? rawOverride
         : new Date(baseDate);
 
       lastBaseDate = new Date(baseDate);
