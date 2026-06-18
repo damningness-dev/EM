@@ -496,23 +496,23 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                                           </div>
                                         )}
                                       </div>
-                                      {/* Sampling points 4×1 */}
-                                      <div className="flex flex-col gap-1 shrink-0">
+                                      {/* Sampling points 2-col (label over input) */}
+                                      <div className="grid grid-cols-2 gap-x-2 gap-y-1.5 shrink-0">
                                         {[
                                           ['points_surface', '표면균'],
                                           ['points_float', '부유균'],
                                           ['points_fall', '낙하균'],
                                           ['points_particle', '부유입자'],
                                         ].map(([field, label]) => (
-                                          <div key={field} className="flex items-center gap-0.5">
-                                            <span className="text-xs text-gray-400 shrink-0">{label}</span>
+                                          <div key={field} className="flex flex-col items-center gap-0.5">
+                                            <span className="text-[10px] leading-none text-gray-400">{label}</span>
                                             <input
                                               type="number"
                                               min="0"
                                               max="99"
                                               defaultValue={zone[field] ?? ''}
                                               onBlur={e => handleSetZonePoint(zone.id, field, parseInt(e.target.value) || 0)}
-                                              className="w-8 text-xs border border-gray-200 rounded px-0.5 py-0.5 text-center focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                              className="w-9 text-xs border border-gray-200 rounded px-0.5 py-0.5 text-center focus:outline-none focus:ring-1 focus:ring-blue-400"
                                               placeholder="0"
                                             />
                                           </div>
