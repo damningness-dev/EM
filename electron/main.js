@@ -137,32 +137,54 @@ function applyUpdateAndRestart() {
 
   if (process.platform === 'win32') {
     const pid = process.pid;
-    const esc = (p) => p.replace(/'/g, "''");
+    const tempDir = app.getPath('temp');
 
-    // 경로를 스크립트에 직접 임베딩 후 UTF-16LE base64로 인코딩
-    // -EncodedCommand는 유니코드(한글 포함)를 네이티브 처리 — 파일 인코딩 문제 없음
+    // Script is pure ASCII — Unicode paths are injected via environment variables.
+    // This sidesteps PowerShell's file-encoding issues entirely.
     const script = [
-      `$proc = Get-Process -Id ${pid} -ErrorAction SilentlyContinue`,
-      `if ($proc) { $proc.WaitForExit(15000) }`,
-      `Start-Sleep -Milliseconds 1000`,
-      `try {`,
-      `  Copy-Item -Path '${esc(updateSrc)}' -Destination '${esc(asarDest)}' -Force`,
-      `  Remove-Item -Path '${esc(updateSrc)}' -Force -ErrorAction SilentlyContinue`,
-      `  Start-Process -FilePath '${esc(exePath)}'`,
-      `} catch {`,
-      `  Add-Type -AssemblyName System.Windows.Forms`,
-      `  [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Update Error')`,
-      `}`,
-    ].join('\n');
+      '$src = $env:EM_SRC',
+      '$dst = $env:EM_DST',
+      '$exe = $env:EM_EXE',
+      // Wait for the main process to fully exit
+      '$p = Get-Process -Id ' + pid + ' -ErrorAction SilentlyContinue',
+      'if ($p) { $p.WaitForExit(15000) }',
+      'Start-Sleep -Milliseconds 2000',
+      // Also wait for ALL helper processes (GPU, renderer, etc.) — they hold app.asar locked
+      '$appName = [IO.Path]::GetFileNameWithoutExtension($exe)',
+      'foreach ($r in (Get-Process -Name $appName -ErrorAction SilentlyContinue)) {',
+      '  try { $r.WaitForExit(5000) } catch {}',
+      '}',
+      'Start-Sleep -Milliseconds 1000',
+      // Retry copy up to 5 times in case the file is still briefly locked
+      'for ($i = 0; $i -lt 5; $i++) {',
+      '  try {',
+      '    Copy-Item -Path $src -Destination $dst -Force -ErrorAction Stop',
+      '    Remove-Item -Path $src -Force -ErrorAction SilentlyContinue',
+      '    Start-Process -FilePath $exe',
+      '    break',
+      '  } catch {',
+      '    if ($i -eq 4) {',
+      '      Add-Type -AssemblyName System.Windows.Forms',
+      "      [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Update Error')",
+      '    }',
+      '    Start-Sleep -Milliseconds 1000',
+      '  }',
+      '}',
+    ].join('\r\n');
 
-    const encoded = Buffer.from(script, 'utf16le').toString('base64');
+    const psPath = path.join(tempDir, 'em-update.ps1');
+    fs.writeFileSync(psPath, script, 'ascii');
 
     spawn('powershell.exe', [
       '-ExecutionPolicy', 'Bypass',
       '-WindowStyle', 'Hidden',
       '-NonInteractive',
-      '-EncodedCommand', encoded,
-    ], { detached: true, stdio: 'ignore' }).unref();
+      '-File', psPath,
+    ], {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env, EM_SRC: updateSrc, EM_DST: asarDest, EM_EXE: exePath },
+    }).unref();
   }
 
   app.quit();
