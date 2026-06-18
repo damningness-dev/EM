@@ -136,39 +136,32 @@ function applyUpdateAndRestart() {
   }
 
   if (process.platform === 'win32') {
-    const tempDir = app.getPath('temp');
-    // 한글 경로를 JSON에 UTF-8로 저장 (PS1 스크립트에 직접 넣으면 인코딩 깨짐)
-    const configPath = path.join(tempDir, 'em-update-config.json');
-    fs.writeFileSync(configPath, JSON.stringify({ src: updateSrc, dst: asarDest, exe: exePath }), 'utf-8');
-
-    // PS1 스크립트는 ASCII만 사용 — 한글 경로는 런타임에 JSON에서 읽음
-    const esc = (p) => p.replace(/'/g, "''");
     const pid = process.pid;
+    const esc = (p) => p.replace(/'/g, "''");
+
+    // 경로를 스크립트에 직접 임베딩 후 UTF-16LE base64로 인코딩
+    // -EncodedCommand는 유니코드(한글 포함)를 네이티브 처리 — 파일 인코딩 문제 없음
     const script = [
-      `$cfg = [System.IO.File]::ReadAllText('${esc(configPath)}', [System.Text.Encoding]::UTF8) | ConvertFrom-Json`,
-      // 프로세스가 완전히 종료될 때까지 대기 (고정 sleep 대신 PID로 정확히 감지)
       `$proc = Get-Process -Id ${pid} -ErrorAction SilentlyContinue`,
       `if ($proc) { $proc.WaitForExit(15000) }`,
-      `Start-Sleep -Milliseconds 500`,
+      `Start-Sleep -Milliseconds 1000`,
       `try {`,
-      `  Copy-Item -Path $cfg.src -Destination $cfg.dst -Force`,
-      `  Remove-Item -Path $cfg.src -Force -ErrorAction SilentlyContinue`,
-      `  Remove-Item -Path '${esc(configPath)}' -Force -ErrorAction SilentlyContinue`,
-      `  Start-Process -FilePath $cfg.exe`,
+      `  Copy-Item -Path '${esc(updateSrc)}' -Destination '${esc(asarDest)}' -Force`,
+      `  Remove-Item -Path '${esc(updateSrc)}' -Force -ErrorAction SilentlyContinue`,
+      `  Start-Process -FilePath '${esc(exePath)}'`,
       `} catch {`,
       `  Add-Type -AssemblyName System.Windows.Forms`,
       `  [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Update Error')`,
       `}`,
-    ].join('\r\n');
+    ].join('\n');
 
-    const psPath = path.join(tempDir, 'em-update.ps1');
-    fs.writeFileSync(psPath, script, 'utf-8');
+    const encoded = Buffer.from(script, 'utf16le').toString('base64');
 
     spawn('powershell.exe', [
       '-ExecutionPolicy', 'Bypass',
       '-WindowStyle', 'Hidden',
       '-NonInteractive',
-      '-File', psPath,
+      '-EncodedCommand', encoded,
     ], { detached: true, stdio: 'ignore' }).unref();
   }
 
