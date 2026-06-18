@@ -192,6 +192,29 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   async function handleSetZoneStart(zoneId, dateStr) {
     const zone = zones.find(z => z.id === zoneId);
     if (!zone) return;
+
+    // Validate: start date must not be before the previous grade's end date
+    const PREV_GRADE = { P2: 'P1', P3: 'P2', '유지관리': 'P3' };
+    const prevGrade = PREV_GRADE[zone.grade];
+    if (dateStr && prevGrade) {
+      const prevZone = zones.find(z =>
+        z.name === zone.name && z.category === zone.category && z.grade === prevGrade
+      );
+      if (prevZone?.schedule_start) {
+        const prevMs = calcMeasurements(prevZone);
+        if (prevMs.length) {
+          const prevEndDate = prevMs[prevMs.length - 1].baseDate;
+          const newStart = new Date(dateStr + 'T00:00:00');
+          if (newStart < prevEndDate) {
+            showError(
+              `${zone.grade} 시작일은 ${prevGrade} 종료예정일(${format(prevEndDate, 'yyyy.MM.dd')}) 이후로 설정해야 합니다.`
+            );
+            return;
+          }
+        }
+      }
+    }
+
     // Propagate to all zones in the same group
     const group = groups.find(g => g.zoneIds.includes(zoneId));
     if (group) {
