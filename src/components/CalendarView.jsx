@@ -496,8 +496,8 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                                           </div>
                                         )}
                                       </div>
-                                      {/* Sampling points 2-col (label over input) */}
-                                      <div className="grid grid-cols-2 gap-x-2 gap-y-1.5 shrink-0">
+                                      {/* Sampling points 4-col (label over input) */}
+                                      <div className="grid grid-cols-4 gap-x-1.5 gap-y-1 shrink-0">
                                         {[
                                           ['points_surface', '표면균'],
                                           ['points_float', '부유균'],
