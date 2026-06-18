@@ -205,12 +205,14 @@ function getDataPath() {
 function loadData() {
   const p = getDataPath();
   if (!fs.existsSync(p)) {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {} };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [] };
   }
   try {
-    return JSON.parse(fs.readFileSync(p, 'utf-8'));
+    const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+    if (!data.groups) data.groups = [];
+    return data;
   } catch {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {} };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [] };
   }
 }
 
@@ -323,6 +325,36 @@ function registerHandlers() {
     Object.keys(data.monitoringData).forEach(key => {
       if (key.startsWith(`${id}_`)) delete data.monitoringData[key];
     });
+    // Remove zone from any groups it belongs to
+    data.groups = (data.groups || []).map(g => ({
+      ...g,
+      zoneIds: g.zoneIds.filter(zid => zid !== id),
+    }));
+    saveData(data);
+  });
+
+  // ── 그룹 ──
+  ipcMain.handle('groups:getAll', () => {
+    return loadData().groups;
+  });
+
+  ipcMain.handle('groups:upsert', (_e, group) => {
+    const data = loadData();
+    if (group.id) {
+      const idx = data.groups.findIndex(g => g.id === group.id);
+      if (idx >= 0) data.groups[idx] = group;
+      else data.groups.push(group);
+    } else {
+      group.id = newId();
+      data.groups.push(group);
+    }
+    saveData(data);
+    return group;
+  });
+
+  ipcMain.handle('groups:delete', (_e, id) => {
+    const data = loadData();
+    data.groups = data.groups.filter(g => g.id !== id);
     saveData(data);
   });
 

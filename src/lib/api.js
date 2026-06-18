@@ -57,3 +57,17 @@ export async function upsertAnnualPlan(entry) {
 export async function seedInitialData(calibrationData, zonesData) {
   return api.invoke('data:seed', calibrationData, zonesData);
 }
+
+// ─── 그룹 ─────────────────────────────────────────────────────────────────────
+
+export async function fetchGroups() {
+  return api.invoke('groups:getAll');
+}
+
+export async function upsertGroup(group) {
+  return api.invoke('groups:upsert', group);
+}
+
+export async function deleteGroup(id) {
+  return api.invoke('groups:delete', id);
+}

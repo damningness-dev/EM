@@ -1,5 +1,28 @@
 import { addDays, addMonths, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 
+// Grade progression order: P1 → P2 → P3 → 유지관리
+export const NEXT_GRADE = { P1: 'P2', P2: 'P3', P3: '유지관리' };
+
+// Higher = more frequent (used to determine group master zone)
+export const GRADE_PRIORITY = { P1: 4, P2: 3, P3: 2, '유지관리': 1 };
+
+export const NTH_LABEL = ['', '1', '2', '3', '4', '마지막'];
+export const DOW_LABEL = ['일', '월', '화', '수', '목', '금', '토'];
+
+function getNthWeekdayOfMonth(year, month, nth, dow) {
+  // nth: 1-4 or 5 (last), dow: 0=Sun...6=Sat
+  const firstDow = new Date(year, month - 1, 1).getDay();
+  let day = 1 + ((dow - firstDow + 7) % 7);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  if (nth === 5) {
+    while (day + 7 <= daysInMonth) day += 7;
+  } else {
+    day += (nth - 1) * 7;
+    if (day > daysInMonth) day -= 7;
+  }
+  return new Date(year, month - 1, day);
+}
+
 function isOverrideValid(overrideDate, baseDate, type) {
   if (type === 'daily') {
     return overrideDate.toDateString() === baseDate.toDateString();
@@ -44,15 +67,17 @@ export function calcMeasurements(zone) {
   if (!spec) return [];
 
   const overrides = zone.schedule_overrides || {};
+  const weekdayRule = zone.monthly_weekday_rule || null;
   const measurements = [];
   let num = 1;
   let baseDate = new Date(zone.schedule_start + 'T00:00:00');
   let lastBaseDate = null;
+  const total = spec.reduce((s, p) => s + p.count, 0);
 
   for (let phaseIdx = 0; phaseIdx < spec.length; phaseIdx++) {
     const phase = spec[phaseIdx];
 
-    // Phase transition: first measurement of new phase is (new phase's interval) after last measurement
+    // Phase transition: advance baseDate by new phase's interval after last measurement
     if (phaseIdx > 0 && lastBaseDate !== null) {
       baseDate = phase.type === 'monthly'
         ? addMonths(lastBaseDate, 1)
@@ -60,18 +85,29 @@ export function calcMeasurements(zone) {
     }
 
     for (let i = 0; i < phase.count; i++) {
+      // Apply weekday rule for monthly measurements
+      let effectiveBaseDate = new Date(baseDate);
+      if (phase.type === 'monthly' && weekdayRule) {
+        effectiveBaseDate = getNthWeekdayOfMonth(
+          baseDate.getFullYear(), baseDate.getMonth() + 1,
+          weekdayRule.nth, weekdayRule.dow
+        );
+      }
+
       const key = String(num);
       const rawOverride = overrides[key] ? new Date(overrides[key] + 'T00:00:00') : null;
-      const scheduledDate = (rawOverride && isOverrideValid(rawOverride, new Date(baseDate), phase.type))
+      const scheduledDate = (rawOverride && isOverrideValid(rawOverride, effectiveBaseDate, phase.type))
         ? rawOverride
-        : new Date(baseDate);
+        : effectiveBaseDate;
 
       lastBaseDate = new Date(baseDate);
       measurements.push({
         num,
         date: scheduledDate,
-        baseDate: new Date(baseDate),
+        baseDate: effectiveBaseDate,
         type: phase.type,
+        isFirst: num === 1,
+        isLast: num === total,
       });
       num++;
 
@@ -99,11 +135,9 @@ export function getDragBounds(measurement) {
   const { type, baseDate } = measurement;
 
   if (type === 'daily') {
-    // Daily measurements are fixed — cannot move to another day
     return { min: baseDate, max: baseDate };
   }
   if (type === 'weekly' || type === 'biweekly') {
-    // Both weekly and biweekly must stay within the same ISO week (Mon–Sun)
     return {
       min: startOfWeek(baseDate, { weekStartsOn: 1 }),
       max: endOfWeek(baseDate, { weekStartsOn: 1 }),
