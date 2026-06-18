@@ -244,19 +244,12 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     setGroups(prev => prev.filter(g => g.id !== id));
   }
 
-  async function handleSetZonePoints(groupName, groupCategory, field, value) {
-    const groupZones = zones.filter(z => z.name === groupName && z.category === groupCategory);
-    const updates = await Promise.all(
-      groupZones.map(async z => {
-        const updated = { ...z, [field]: value };
-        await upsertZone(updated);
-        return updated;
-      })
-    );
-    setZones(prev => prev.map(z => {
-      const u = updates.find(u => u.id === z.id);
-      return u || z;
-    }));
+  async function handleSetZonePoint(zoneId, field, value) {
+    const zone = zones.find(z => z.id === zoneId);
+    if (!zone) return;
+    const updated = { ...zone, [field]: value };
+    await upsertZone(updated);
+    setZones(prev => prev.map(z => z.id === zoneId ? updated : z));
   }
 
   async function handleSyncGroup(groupId) {
@@ -406,7 +399,6 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                           <span className="ml-2 text-xs text-gray-400">{catGroups.length}개 구역</span>
                         </div>
                         {catGroups.map(group => {
-                          const refZone = group.zones[0];
                           const myGroup = groups.find(g => group.zones.some(z => g.zoneIds.includes(z.id)));
                           const todayMidnight = new Date(); todayMidnight.setHours(0, 0, 0, 0);
                           return (
@@ -418,29 +410,6 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                                   <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded shrink-0">{myGroup.name}</span>
                                 )}
                               </div>
-                              {/* Sampling points row */}
-                              <div className="px-4 pb-2 flex gap-2 flex-wrap">
-                                {[
-                                  ['points_surface', '표면균'],
-                                  ['points_float', '부유균'],
-                                  ['points_fall', '낙하균'],
-                                  ['points_particle', '부유입자'],
-                                ].map(([field, label]) => (
-                                  <div key={field} className="flex items-center gap-0.5">
-                                    <span className="text-xs text-gray-400">{label}</span>
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      max="99"
-                                      defaultValue={refZone?.[field] ?? ''}
-                                      onBlur={e => handleSetZonePoints(group.name, group.category, field, parseInt(e.target.value) || 0)}
-                                      className="w-10 text-xs border border-gray-200 rounded px-1 py-0.5 text-center focus:outline-none focus:ring-1 focus:ring-blue-400"
-                                      placeholder="0"
-                                    />
-                                    <span className="text-xs text-gray-400">pt</span>
-                                  </div>
-                                ))}
-                              </div>
                               {/* Grade rows */}
                               {group.zones.map(zone => {
                                 const ms = calcMeasurements(zone);
@@ -449,10 +418,10 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                                 const endDate = ms.length ? ms[ms.length - 1].baseDate : null;
                                 const isPastDue = endDate && endDate < todayMidnight && NEXT_GRADE[zone.grade];
                                 return (
-                                  <div key={zone.id} className={`px-4 pb-2 ${isPastDue ? 'bg-amber-50/60' : ''}`}>
+                                  <div key={zone.id} className={`px-3 py-2 ${isPastDue ? 'bg-amber-50/60' : ''}`}>
                                     <div className="flex items-start gap-2">
                                       {/* Grade + progress */}
-                                      <div className="flex flex-col items-start gap-0.5 w-20 shrink-0 pt-1">
+                                      <div className="flex flex-col items-start gap-0.5 w-[68px] shrink-0">
                                         <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${GRADE_COLORS[zone.grade] || 'bg-gray-100 text-gray-600'}`}>
                                           {zone.grade}
                                         </span>
@@ -460,16 +429,16 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                                           {done}/{total}회
                                         </span>
                                       </div>
-                                      {/* Date + weekday rule */}
-                                      <div className="flex-1 flex flex-col gap-0.5 min-w-0">
+                                      {/* Date info */}
+                                      <div className="flex flex-col gap-0.5 w-[120px] shrink-0">
                                         <input
                                           type="date"
                                           value={zone.schedule_start || ''}
                                           onChange={e => handleSetZoneStart(zone.id, e.target.value)}
-                                          className="text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 w-full"
+                                          className="text-xs border border-gray-200 rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 w-full"
                                         />
                                         {endDate && (
-                                          <span className="text-xs text-blue-600">→ {format(endDate, 'yyyy.MM.dd')}</span>
+                                          <span className="text-xs text-blue-600">→ {format(endDate, 'MM.dd')}</span>
                                         )}
                                         {zone.grade === 'P3' && (
                                           <div className="flex items-center gap-1 flex-wrap mt-0.5">
@@ -504,11 +473,33 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                                           </div>
                                         )}
                                       </div>
+                                      {/* Sampling points 2×2 */}
+                                      <div className="flex-1 grid grid-cols-2 gap-x-1 gap-y-1 min-w-0">
+                                        {[
+                                          ['points_surface', '표면균'],
+                                          ['points_float', '부유균'],
+                                          ['points_fall', '낙하균'],
+                                          ['points_particle', '부유입자'],
+                                        ].map(([field, label]) => (
+                                          <div key={field} className="flex items-center gap-0.5">
+                                            <span className="text-xs text-gray-400 shrink-0">{label}</span>
+                                            <input
+                                              type="number"
+                                              min="0"
+                                              max="99"
+                                              defaultValue={zone[field] ?? ''}
+                                              onBlur={e => handleSetZonePoint(zone.id, field, parseInt(e.target.value) || 0)}
+                                              className="w-8 text-xs border border-gray-200 rounded px-0.5 py-0.5 text-center focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                              placeholder="0"
+                                            />
+                                          </div>
+                                        ))}
+                                      </div>
                                       {/* Phase transition */}
                                       {isPastDue && (
                                         <button
                                           onClick={() => setPhasePrompt({ zoneId: zone.id, zoneName: zone.name, nextGrade: NEXT_GRADE[zone.grade], dateStr: '' })}
-                                          className="text-xs bg-amber-500 text-white px-2 py-1 rounded-lg hover:bg-amber-600 shrink-0 mt-0.5"
+                                          className="text-xs bg-amber-500 text-white px-1.5 py-1 rounded-lg hover:bg-amber-600 shrink-0"
                                         >→{NEXT_GRADE[zone.grade]}</button>
                                       )}
                                     </div>
