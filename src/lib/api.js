@@ -71,3 +71,17 @@ export async function upsertGroup(group) {
 export async function deleteGroup(id) {
   return api.invoke('groups:delete', id);
 }
+
+// ─── 공휴일 ───────────────────────────────────────────────────────────────────
+
+export async function fetchHolidays() {
+  return api.invoke('holidays:getAll');
+}
+
+export async function upsertHoliday(holiday) {
+  return api.invoke('holidays:upsert', holiday);
+}
+
+export async function deleteHoliday(date) {
+  return api.invoke('holidays:delete', date);
+}

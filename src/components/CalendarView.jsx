@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup } from '../lib/api';
+import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
@@ -72,6 +72,9 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   const [newGroupName, setNewGroupName] = useState('');
   const [zonesCatFilter, setZonesCatFilter] = useState('전체');
   const [expandedGroups, setExpandedGroups] = useState(new Set());
+  const [holidays, setHolidays] = useState({});
+  const [newHolidayDate, setNewHolidayDate] = useState('');
+  const [newHolidayName, setNewHolidayName] = useState('');
 
   useEffect(() => {
     setLoading(true);
@@ -82,12 +85,16 @@ export default function CalendarView({ year: initYear, onYearChange }) {
       fetchMonitoringData(year, month),
       fetchAnnualPlan(year),
       fetchGroups(),
-    ]).then(([cal, zns, mon, plan, grps]) => {
+      fetchHolidays(),
+    ]).then(([cal, zns, mon, plan, grps, hols]) => {
       setCalibration(cal);
       setZones(zns);
       setMonitoring(mon);
       setAnnualPlan(plan);
       setGroups(grps);
+      const holMap = {};
+      hols.forEach(h => { holMap[h.date] = h.name; });
+      setHolidays(holMap);
       setLoading(false);
     });
   }, [year, month]);
@@ -396,7 +403,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
             </div>
             {/* Tabs */}
             <div className="flex border-b border-gray-200 shrink-0">
-              {[['zones','구역 일정'],['groups','그룹 관리']].map(([key, label]) => (
+              {[['zones','구역 일정'],['groups','그룹 관리'],['holidays','공휴일']].map(([key, label]) => (
                 <button
                   key={key}
                   onClick={() => setSettingsTab(key)}
@@ -678,6 +685,64 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                 })}
               </div>
             )}
+
+            {/* ── 공휴일 탭 ── */}
+            {settingsTab === 'holidays' && (
+              <div className="flex-1 overflow-y-auto flex flex-col">
+                <div className="px-4 py-3 border-b border-gray-100 shrink-0 space-y-2">
+                  <p className="text-xs text-gray-500">날짜와 이름을 입력하면 달력에 표시됩니다.</p>
+                  <div className="flex gap-2">
+                    <input
+                      type="date"
+                      value={newHolidayDate}
+                      onChange={e => setNewHolidayDate(e.target.value)}
+                      className="text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500 w-36"
+                    />
+                    <input
+                      type="text"
+                      placeholder="공휴일 이름"
+                      value={newHolidayName}
+                      onChange={e => setNewHolidayName(e.target.value)}
+                      onKeyDown={async e => {
+                        if (e.key === 'Enter' && newHolidayDate && newHolidayName.trim()) {
+                          await upsertHoliday({ date: newHolidayDate, name: newHolidayName.trim() });
+                          setHolidays(prev => ({ ...prev, [newHolidayDate]: newHolidayName.trim() }));
+                          setNewHolidayDate(''); setNewHolidayName('');
+                        }
+                      }}
+                      className="flex-1 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    <button
+                      onClick={async () => {
+                        if (!newHolidayDate || !newHolidayName.trim()) return;
+                        await upsertHoliday({ date: newHolidayDate, name: newHolidayName.trim() });
+                        setHolidays(prev => ({ ...prev, [newHolidayDate]: newHolidayName.trim() }));
+                        setNewHolidayDate(''); setNewHolidayName('');
+                      }}
+                      className="px-2.5 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 shrink-0"
+                    >추가</button>
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
+                  {Object.entries(holidays).length === 0 && (
+                    <p className="px-4 py-4 text-sm text-gray-400">등록된 공휴일이 없습니다.</p>
+                  )}
+                  {Object.entries(holidays).sort(([a],[b]) => a.localeCompare(b)).map(([date, name]) => (
+                    <div key={date} className="flex items-center gap-3 px-4 py-2.5">
+                      <span className="text-xs text-gray-500 w-24 shrink-0">{date}</span>
+                      <span className="text-sm text-red-600 font-medium flex-1">{name}</span>
+                      <button
+                        onClick={async () => {
+                          await deleteHoliday(date);
+                          setHolidays(prev => { const n = { ...prev }; delete n[date]; return n; });
+                        }}
+                        className="text-xs text-gray-400 hover:text-red-500 shrink-0"
+                      >✕</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -798,15 +863,20 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                       isToday ? 'bg-blue-50/50' : 'hover:bg-gray-50'
                     }`}
                   >
-                    <div className="flex items-center justify-between mb-1 gap-0.5">
-                      <div className={`text-xs font-semibold w-6 h-6 flex items-center justify-center rounded-full shrink-0 ${
-                        isOther ? 'text-gray-300' :
-                        isToday ? 'bg-blue-600 text-white' :
-                        dow === 0 ? 'text-red-500' :
-                        dow === 6 ? 'text-blue-500' : 'text-gray-700'
-                      }`}>{day}</div>
+                    <div className="mb-0.5">
+                      <div className="flex items-center gap-0.5">
+                        <div className={`text-xs font-semibold w-6 h-6 flex items-center justify-center rounded-full shrink-0 ${
+                          isOther ? 'text-gray-300' :
+                          isToday ? 'bg-blue-600 text-white' :
+                          dow === 0 ? 'text-red-500' :
+                          dow === 6 ? 'text-blue-500' : 'text-gray-700'
+                        }`}>{day}</div>
+                        {!isOther && holidays[dateStr] && (
+                          <span className="text-[9px] leading-none text-red-500 truncate">{holidays[dateStr]}</span>
+                        )}
+                      </div>
                       {hasPts && (
-                        <div className={`flex gap-0.5 flex-wrap justify-end overflow-hidden ${isOther ? 'opacity-40' : ''}`}>
+                        <div className={`flex gap-0.5 mt-0.5 ${isOther ? 'opacity-40' : ''}`}>
                           {pts.surface > 0 && <span className="text-[9px] leading-none bg-green-50 text-green-700 px-0.5 py-0.5 rounded">표{pts.surface}</span>}
                           {pts.float > 0 && <span className="text-[9px] leading-none bg-blue-50 text-blue-700 px-0.5 py-0.5 rounded">부{pts.float}</span>}
                           {pts.fall > 0 && <span className="text-[9px] leading-none bg-orange-50 text-orange-700 px-0.5 py-0.5 rounded">낙{pts.fall}</span>}
@@ -819,7 +889,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                       {calibEvts.map((c, i) => (
                         <div
                           key={`c${i}`}
-                          className={`text-xs px-1 py-0.5 rounded break-words ${dDayColor(c.next_calib_date)}`}
+                          className={`text-xs px-1 py-0.5 rounded truncate ${dDayColor(c.next_calib_date)}`}
                           title={`${c.name} (${dDayText(c.next_calib_date)})`}
                         >{c.name}</div>
                       ))}
@@ -843,7 +913,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                             }}
                             onDragEnd={() => setDragOverDay(null)}
                             onClick={(e) => e.stopPropagation()}
-                            className={`text-xs px-1 py-0.5 rounded break-words ${CAT_CHIP_BG[zone.category] || 'bg-gray-100 border border-gray-200'} ${GRADE_CHIP_TEXT[zone.grade] || 'text-gray-600'} cursor-grab active:cursor-grabbing`}
+                            className={`text-xs px-1 py-0.5 rounded truncate ${CAT_CHIP_BG[zone.category] || 'bg-gray-100 border border-gray-200'} ${GRADE_CHIP_TEXT[zone.grade] || 'text-gray-600'} cursor-grab active:cursor-grabbing`}
                             style={{
                               borderLeft: measurement.isFirst ? '3px solid #22c55e' : undefined,
                               borderRight: measurement.isLast ? '3px solid #ef4444' : undefined,
@@ -946,7 +1016,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                             </div>
                             <span className="text-xs text-gray-400">#{measurement.num}</span>
                           </div>
-                          <p className="text-sm font-medium text-gray-800 truncate">
+                          <p className="text-sm font-medium text-gray-800 break-words">
                             {zone.name}[{zone.grade}]
                           </p>
                           <p className="text-xs text-gray-400 mt-0.5">

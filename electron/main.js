@@ -151,14 +151,15 @@ function getDataPath() {
 function loadData() {
   const p = getDataPath();
   if (!fs.existsSync(p)) {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [] };
   }
   try {
     const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
     if (!data.groups) data.groups = [];
+    if (!data.holidays) data.holidays = [];
     return data;
   } catch {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [] };
   }
 }
 
@@ -416,4 +417,24 @@ function registerHandlers() {
   });
 
   ipcMain.handle('data:getPath', () => getDataPath());
+
+  // ── 공휴일 ──
+  ipcMain.handle('holidays:getAll', () => {
+    return loadData().holidays;
+  });
+
+  ipcMain.handle('holidays:upsert', (_e, holiday) => {
+    const data = loadData();
+    const idx = data.holidays.findIndex(h => h.date === holiday.date);
+    if (idx >= 0) data.holidays[idx] = holiday;
+    else data.holidays.push(holiday);
+    saveData(data);
+    return holiday;
+  });
+
+  ipcMain.handle('holidays:delete', (_e, date) => {
+    const data = loadData();
+    data.holidays = data.holidays.filter(h => h.date !== date);
+    saveData(data);
+  });
 }
