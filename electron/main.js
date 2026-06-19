@@ -151,15 +151,16 @@ function getDataPath() {
 function loadData() {
   const p = getDataPath();
   if (!fs.existsSync(p)) {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [] };
   }
   try {
     const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
     if (!data.groups) data.groups = [];
     if (!data.holidays) data.holidays = [];
+    if (!data.completions) data.completions = [];
     return data;
   } catch {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [] };
   }
 }
 
@@ -435,6 +436,23 @@ function registerHandlers() {
   ipcMain.handle('holidays:delete', (_e, date) => {
     const data = loadData();
     data.holidays = data.holidays.filter(h => h.date !== date);
+    saveData(data);
+  });
+
+  // ── 측정 완료 ──
+  ipcMain.handle('completions:getAll', () => loadData().completions);
+  ipcMain.handle('completions:set', (_e, zoneId, num) => {
+    const data = loadData();
+    const key = `${zoneId}_${num}`;
+    if (!data.completions.some(c => `${c.zoneId}_${c.num}` === key)) {
+      data.completions.push({ zoneId, num, completedAt: new Date().toISOString() });
+    }
+    saveData(data);
+  });
+  ipcMain.handle('completions:delete', (_e, zoneId, num) => {
+    const key = `${zoneId}_${num}`;
+    const data = loadData();
+    data.completions = data.completions.filter(c => `${c.zoneId}_${c.num}` !== key);
     saveData(data);
   });
 }

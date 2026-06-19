@@ -85,3 +85,17 @@ export async function upsertHoliday(holiday) {
 export async function deleteHoliday(date) {
   return api.invoke('holidays:delete', date);
 }
+
+// ─── 측정 완료 ────────────────────────────────────────────────────────────────
+
+export async function fetchCompletions() {
+  return api.invoke('completions:getAll');
+}
+
+export async function setCompletion(zoneId, num) {
+  return api.invoke('completions:set', zoneId, num);
+}
+
+export async function deleteCompletion(zoneId, num) {
+  return api.invoke('completions:delete', zoneId, num);
+}

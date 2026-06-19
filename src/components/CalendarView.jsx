@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday } from '../lib/api';
+import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
@@ -15,7 +15,7 @@ const TYPE_COLORS = {
 };
 
 const CAT_CHIP_BG = {
-  '공조':   'bg-gray-100 border border-gray-200',
+  '공조':   'bg-white border border-gray-300',
   '질소가스': 'bg-purple-100 border border-purple-200',
   '압축공기': 'bg-yellow-100 border border-yellow-200',
 };
@@ -79,6 +79,8 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   const [newHolidayRepeatType, setNewHolidayRepeatType] = useState('yearly');
   const [newHolidayNth, setNewHolidayNth] = useState(1);
   const [newHolidayDow, setNewHolidayDow] = useState(1);
+  const [completions, setCompletions] = useState(new Set());
+  const [completionPrompt, setCompletionPrompt] = useState(null); // {zoneId,zoneName,grade,num,dateStr,isCompleted}
 
   const holidays = useMemo(() => {
     const map = {};
@@ -129,13 +131,15 @@ export default function CalendarView({ year: initYear, onYearChange }) {
       fetchAnnualPlan(year),
       fetchGroups(),
       fetchHolidays(),
-    ]).then(([cal, zns, mon, plan, grps, hols]) => {
+      fetchCompletions(),
+    ]).then(([cal, zns, mon, plan, grps, hols, comps]) => {
       setCalibration(cal);
       setZones(zns);
       setMonitoring(mon);
       setAnnualPlan(plan);
       setGroups(grps);
       setHolidayDefs(hols);
+      setCompletions(new Set(comps.map(c => `${c.zoneId}_${c.num}`)));
       setLoading(false);
     });
   }, [year, month]);
@@ -383,6 +387,11 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     setZones(prev => prev.map(z => z.id === dragData.zoneId ? updated : z));
   }
 
+  const selDow = selectedDay ? new Date(selectedDay + 'T00:00:00').getDay() : 0;
+  const isSelHol = selectedDay ? !!holidays[selectedDay] : false;
+  const hdBg = (selDow === 0 || isSelHol) ? 'bg-red-500' : selDow === 6 ? 'bg-blue-600' : 'bg-gray-600';
+  const hdSub = (selDow === 0 || isSelHol) ? 'text-red-200' : selDow === 6 ? 'text-blue-200' : 'text-gray-300';
+
   return (
     <div className="p-6 space-y-5">
 
@@ -424,6 +433,41 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                 disabled={!phasePrompt.dateStr}
                 className="px-4 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40"
               >{phasePrompt.nextGrade}로 전환</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Completion confirm modal */}
+      {completionPrompt && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/40" onClick={() => setCompletionPrompt(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-80 p-6" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-gray-900 mb-1">
+              {completionPrompt.isCompleted ? '완료 취소' : '측정 완료 처리'}
+            </h3>
+            <p className="text-sm text-gray-500 mb-4">
+              <span className="font-semibold text-gray-800">{completionPrompt.zoneName}[{completionPrompt.grade}]</span><br/>
+              {completionPrompt.num}번째 측정을{' '}
+              {completionPrompt.isCompleted ? '완료 취소 하시겠습니까?' : '완료 처리 하시겠습니까?'}
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setCompletionPrompt(null)}
+                className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>
+              <button
+                onClick={async () => {
+                  const { zoneId, num, isCompleted } = completionPrompt;
+                  const key = `${zoneId}_${num}`;
+                  if (isCompleted) {
+                    await deleteCompletion(zoneId, num);
+                    setCompletions(prev => { const n = new Set(prev); n.delete(key); return n; });
+                  } else {
+                    await setCompletion(zoneId, num);
+                    setCompletions(prev => new Set([...prev, key]));
+                  }
+                  setCompletionPrompt(null);
+                }}
+                className={`px-4 py-2 text-sm text-white rounded-lg ${completionPrompt.isCompleted ? 'bg-red-500 hover:bg-red-600' : 'bg-green-600 hover:bg-green-700'}`}
+              >{completionPrompt.isCompleted ? '완료 취소' : '완료 처리'}</button>
             </div>
           </div>
         </div>
@@ -1050,8 +1094,8 @@ export default function CalendarView({ year: initYear, onYearChange }) {
           {/* Selected day events */}
           {selectedDay && (
             <div className="bg-white rounded-xl border border-gray-200 flex flex-col flex-1 min-h-0">
-              <div className="px-4 py-3 bg-blue-600 text-white shrink-0">
-                <p className="text-xs text-blue-200">{selectedDay.slice(0,4)}년 {MONTH_KR[parseInt(selectedDay.slice(5,7)) - 1]}</p>
+              <div className={`px-4 py-3 ${hdBg} text-white shrink-0`}>
+                <p className={`text-xs ${hdSub}`}>{selectedDay.slice(0,4)}년 {MONTH_KR[parseInt(selectedDay.slice(5,7)) - 1]}</p>
                 <p className="text-lg font-bold">{parseInt(selectedDay.slice(8,10))}일 일정</p>
               </div>
               <div className="flex-1 overflow-y-auto min-h-0">
@@ -1083,13 +1127,16 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                   <div className="divide-y divide-gray-50">
                     {selectedScheduleEvents.map(({ zone, measurement }) => {
                       const bounds = getDragBounds(measurement);
+                      const compKey = `${zone.id}_${measurement.num}`;
+                      const isDone = completions.has(compKey);
                       return (
                         <div
                           key={`${zone.id}-${measurement.num}`}
-                          className="px-4 py-2.5"
+                          className={`px-4 py-2.5 cursor-pointer select-none ${isDone ? 'bg-green-50/60' : 'hover:bg-gray-50/50'}`}
                           style={{
                             borderLeft: measurement.isFirst ? '3px solid #22c55e' : measurement.isLast ? '3px solid #ef4444' : undefined,
                           }}
+                          onDoubleClick={() => setCompletionPrompt({ zoneId: zone.id, zoneName: zone.name, grade: zone.grade, num: measurement.num, dateStr: selectedDay, isCompleted: isDone })}
                         >
                           <div className="flex items-center justify-between gap-1 mb-1">
                             <div className="flex items-center gap-1">
@@ -1098,10 +1145,11 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                               </span>
                               {measurement.isFirst && <span className="text-xs text-green-600 font-bold">첫측정</span>}
                               {measurement.isLast && <span className="text-xs text-red-600 font-bold">마지막</span>}
+                              {isDone && <span className="text-xs bg-green-500 text-white px-1 py-0.5 rounded font-bold">✓완료</span>}
                             </div>
                             <span className="text-xs text-gray-400">#{measurement.num}</span>
                           </div>
-                          <p className="text-sm font-medium text-gray-800 break-words">
+                          <p className={`text-sm font-medium break-words ${isDone ? 'text-gray-400 line-through' : 'text-gray-800'}`}>
                             {zone.name}[{zone.grade}]
                           </p>
                           <p className="text-xs text-gray-400 mt-0.5">
@@ -1115,6 +1163,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                               {zone.points_particle > 0 && <span className="text-[10px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">부유입자 {zone.points_particle}pt</span>}
                             </div>
                           ) : null}
+                          {!isDone && <p className="text-[10px] text-gray-300 mt-1">더블클릭으로 완료 처리</p>}
                         </div>
                       );
                     })}
