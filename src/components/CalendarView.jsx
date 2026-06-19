@@ -986,6 +986,12 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                   particle: acc.particle + (zone.points_particle || 0),
                 }), { surface: 0, float: 0, fall: 0, particle: 0 });
                 const hasPts = pts.surface + pts.float + pts.fall + pts.particle > 0;
+                const nextCellData = grid[idx + 1];
+                const belowCellData = grid[idx + 7];
+                const boundaryRight = (isOther && nextCellData && !nextCellData.isOther)
+                                   || (!isOther && nextCellData?.isOther);
+                const boundaryBottom = (isOther && belowCellData && !belowCellData.isOther)
+                                    || (!isOther && belowCellData?.isOther);
 
                 return (
                   <div
@@ -1003,14 +1009,14 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                         if (data.zoneId !== undefined) handleDropOnDay(dateStr, data);
                       } catch {}
                     }}
-                    className={`min-h-28 p-1.5 border-r border-b cursor-pointer transition-colors ${
-                      isOther ? 'border-gray-300' : 'border-gray-100'
-                    } ${
-                      isDragOver ? 'bg-blue-100 ring-2 ring-inset ring-blue-400' :
-                      isOther ? 'bg-gray-50/80' :
-                      isSelected ? 'bg-blue-50' :
-                      isToday ? 'bg-blue-50/50' : 'hover:bg-gray-50'
-                    }`}
+                    className={`min-h-28 p-1.5 cursor-pointer transition-colors
+                      ${boundaryRight ? 'border-r-2 border-r-gray-400' : 'border-r border-r-gray-100'}
+                      ${boundaryBottom ? 'border-b-2 border-b-gray-400' : 'border-b border-b-gray-100'}
+                      ${isDragOver ? 'bg-blue-100 ring-2 ring-inset ring-blue-400' :
+                        isOther ? 'bg-gray-100/90' :
+                        isSelected ? 'bg-blue-50' :
+                        isToday ? 'bg-blue-50/50' : 'hover:bg-gray-50'
+                      }`}
                   >
                     {(() => {
                       const isHol = !isOther && !!holidays[dateStr];
@@ -1021,7 +1027,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                         dow === 6 ? 'text-blue-500' : 'text-gray-700'
                       }`;
                       const ptsChips = hasPts ? (
-                        <div className={`flex flex-wrap gap-0.5 ${isOther ? 'opacity-40' : ''}`}>
+                        <div className={`flex flex-wrap gap-0.5 ${isOther ? 'opacity-50' : ''}`}>
                           {pts.surface > 0 && <span className="text-[9px] leading-none bg-green-50 text-green-700 px-0.5 py-0.5 rounded">표{pts.surface}</span>}
                           {pts.float > 0 && <span className="text-[9px] leading-none bg-blue-50 text-blue-700 px-0.5 py-0.5 rounded">부{pts.float}</span>}
                           {pts.fall > 0 && <span className="text-[9px] leading-none bg-orange-50 text-orange-700 px-0.5 py-0.5 rounded">낙{pts.fall}</span>}
@@ -1044,7 +1050,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                       );
                     })()}
 
-                    <div className={`flex flex-col gap-0.5 ${isOther ? 'opacity-40' : ''}`}>
+                    <div className={`flex flex-col gap-0.5 ${isOther ? 'opacity-50' : ''}`}>
                       {calibEvts.map((c, i) => (
                         <div
                           key={`c${i}`}
