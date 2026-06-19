@@ -761,10 +761,6 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                 const dateStr = `${cell.year}-${String(cell.month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
                 const calibEvts = calibByDate[dateStr] || [];
                 const schedEvts = scheduleByDate[dateStr] || [];
-                const maxVisible = 5;
-                const shownCalib = Math.min(calibEvts.length, maxVisible);
-                const shownSched = Math.min(schedEvts.length, Math.max(0, maxVisible - calibEvts.length));
-                const overflow = calibEvts.length + schedEvts.length - shownCalib - shownSched;
 
                 const isToday = !isOther && isCurrentMonth && day === todayDate;
                 const isSelected = dateStr === selectedDay;
@@ -795,7 +791,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                         if (data.zoneId !== undefined) handleDropOnDay(dateStr, data);
                       } catch {}
                     }}
-                    className={`h-36 p-1.5 border-r border-b border-gray-100 cursor-pointer transition-colors ${
+                    className={`min-h-28 p-1.5 border-r border-b border-gray-100 cursor-pointer transition-colors ${
                       isDragOver ? 'bg-blue-100 ring-2 ring-inset ring-blue-400' :
                       isOther ? 'bg-gray-50/80' :
                       isSelected ? 'bg-blue-50' :
@@ -819,15 +815,15 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                       )}
                     </div>
 
-                    <div className={`flex flex-col gap-0.5 overflow-hidden ${isOther ? 'opacity-40' : ''}`}>
-                      {calibEvts.slice(0, shownCalib).map((c, i) => (
+                    <div className={`flex flex-col gap-0.5 ${isOther ? 'opacity-40' : ''}`}>
+                      {calibEvts.map((c, i) => (
                         <div
                           key={`c${i}`}
                           className={`text-xs px-1 py-0.5 rounded truncate ${dDayColor(c.next_calib_date)}`}
                           title={`${c.name} (${dDayText(c.next_calib_date)})`}
                         >{c.name}</div>
                       ))}
-                      {schedEvts.slice(0, shownSched).map(({ zone, measurement }, i) => {
+                      {schedEvts.map(({ zone, measurement }, i) => {
                         const bounds = getDragBounds(measurement);
                         const label = `${zone.name}[${zone.grade}]-${measurement.num}`;
                         return (
@@ -857,9 +853,6 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                           >{label}</div>
                         );
                       })}
-                      {overflow > 0 && (
-                        <div className="text-xs text-gray-400 px-1">+{overflow}건 더</div>
-                      )}
                     </div>
                   </div>
                 );
