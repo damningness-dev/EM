@@ -14,6 +14,18 @@ const TYPE_COLORS = {
   monthly:  'bg-violet-100 text-violet-700 border border-violet-200',
 };
 
+const CAT_CHIP_BG = {
+  '공조':   'bg-green-100 border border-green-200',
+  '질소가스': 'bg-purple-100 border border-purple-200',
+  '압축공기': 'bg-yellow-100 border border-yellow-200',
+};
+const GRADE_CHIP_TEXT = {
+  'P1': 'text-red-700',
+  'P2': 'text-blue-700',
+  'P3': 'text-orange-700',
+  '유지관리': 'text-indigo-900',
+};
+
 const TYPE_LABEL = { daily: '일1회', weekly: '주1회', biweekly: '격주', monthly: '월1회' };
 
 function buildGrid(year, month) {
@@ -509,10 +521,10 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                                             <input
                                               type="number"
                                               min="0"
-                                              max="99"
+                                              max="999"
                                               defaultValue={zone[field] ?? ''}
                                               onBlur={e => handleSetZonePoint(zone.id, field, parseInt(e.target.value) || 0)}
-                                              className="w-9 text-xs border border-gray-200 rounded px-0.5 py-0.5 text-center focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                              className="w-12 text-xs border border-gray-200 rounded px-0.5 py-0.5 text-center focus:outline-none focus:ring-1 focus:ring-blue-400"
                                               placeholder="0"
                                             />
                                           </div>
@@ -805,7 +817,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                             }}
                             onDragEnd={() => setDragOverDay(null)}
                             onClick={(e) => e.stopPropagation()}
-                            className={`text-xs px-1 py-0.5 rounded truncate ${TYPE_COLORS[measurement.type]} cursor-grab active:cursor-grabbing`}
+                            className={`text-xs px-1 py-0.5 rounded truncate ${CAT_CHIP_BG[zone.category] || 'bg-gray-100 border border-gray-200'} ${GRADE_CHIP_TEXT[zone.grade] || 'text-gray-600'} cursor-grab active:cursor-grabbing`}
                             style={{
                               borderLeft: measurement.isFirst ? '3px solid #22c55e' : undefined,
                               borderRight: measurement.isLast ? '3px solid #ef4444' : undefined,
@@ -837,17 +849,15 @@ export default function CalendarView({ year: initYear, onYearChange }) {
               <span className="w-3 h-3 rounded bg-yellow-50 border border-yellow-200 inline-block" />이번달 교정
             </div>
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span className="w-3 h-3 rounded bg-red-100 border border-red-200 inline-block" />일1회(P1)
+              <span className="w-3 h-3 rounded bg-green-100 border border-green-200 inline-block" />공조
             </div>
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span className="w-3 h-3 rounded bg-blue-100 border border-blue-200 inline-block" />주1회
+              <span className="w-3 h-3 rounded bg-purple-100 border border-purple-200 inline-block" />질소가스
             </div>
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span className="w-3 h-3 rounded bg-emerald-100 border border-emerald-200 inline-block" />격주
+              <span className="w-3 h-3 rounded bg-yellow-100 border border-yellow-200 inline-block" />압축공기
             </div>
-            <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span className="w-3 h-3 rounded bg-violet-100 border border-violet-200 inline-block" />월1회
-            </div>
+            <div className="flex items-center gap-1.5 text-xs"><span className="text-red-700 font-semibold">P1</span><span className="text-blue-700 font-semibold">P2</span><span className="text-orange-700 font-semibold">P3</span><span className="text-indigo-900 font-semibold">유지관리</span></div>
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
               <span className="inline-block w-3 h-3 rounded" style={{ borderLeft: '3px solid #22c55e' }} />첫 측정
             </div>
@@ -904,8 +914,8 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                         >
                           <div className="flex items-center justify-between gap-1 mb-1">
                             <div className="flex items-center gap-1">
-                              <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${TYPE_COLORS[measurement.type]}`}>
-                                {TYPE_LABEL[measurement.type]}
+                              <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${CAT_CHIP_BG[zone.category] || 'bg-gray-100 border border-gray-200'} ${GRADE_CHIP_TEXT[zone.grade] || 'text-gray-600'}`}>
+                                {zone.grade}
                               </span>
                               {measurement.isFirst && <span className="text-xs text-green-600 font-bold">첫측정</span>}
                               {measurement.isLast && <span className="text-xs text-red-600 font-bold">마지막</span>}
