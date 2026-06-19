@@ -104,7 +104,7 @@ export const GRADE_TARGETS = {
 // 등급별 색상
 export const GRADE_COLORS = {
   'P1': 'bg-red-100 text-red-700',
-  'P2': 'bg-orange-100 text-orange-700',
+  'P2': 'bg-green-100 text-green-700',
   'P3': 'bg-blue-100 text-blue-700',
   '유지관리': 'bg-indigo-100 text-indigo-900',
   'OQ': 'bg-purple-100 text-purple-800',

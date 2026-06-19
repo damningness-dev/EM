@@ -21,7 +21,7 @@ const CAT_CHIP_BG = {
 };
 const GRADE_CHIP_TEXT = {
   'P1': 'text-red-700',
-  'P2': 'text-orange-700',
+  'P2': 'text-green-700',
   'P3': 'text-blue-700',
   '유지관리': 'text-indigo-900',
 };
@@ -819,7 +819,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                       {calibEvts.map((c, i) => (
                         <div
                           key={`c${i}`}
-                          className={`text-xs px-1 py-0.5 rounded truncate ${dDayColor(c.next_calib_date)}`}
+                          className={`text-xs px-1 py-0.5 rounded break-words ${dDayColor(c.next_calib_date)}`}
                           title={`${c.name} (${dDayText(c.next_calib_date)})`}
                         >{c.name}</div>
                       ))}
@@ -843,7 +843,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                             }}
                             onDragEnd={() => setDragOverDay(null)}
                             onClick={(e) => e.stopPropagation()}
-                            className={`text-xs px-1 py-0.5 rounded truncate ${CAT_CHIP_BG[zone.category] || 'bg-gray-100 border border-gray-200'} ${GRADE_CHIP_TEXT[zone.grade] || 'text-gray-600'} cursor-grab active:cursor-grabbing`}
+                            className={`text-xs px-1 py-0.5 rounded break-words ${CAT_CHIP_BG[zone.category] || 'bg-gray-100 border border-gray-200'} ${GRADE_CHIP_TEXT[zone.grade] || 'text-gray-600'} cursor-grab active:cursor-grabbing`}
                             style={{
                               borderLeft: measurement.isFirst ? '3px solid #22c55e' : undefined,
                               borderRight: measurement.isLast ? '3px solid #ef4444' : undefined,
@@ -880,7 +880,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
               <span className="w-3 h-3 rounded bg-yellow-100 border border-yellow-200 inline-block" />압축공기
             </div>
-            <div className="flex items-center gap-1.5 text-xs"><span className="text-red-700 font-semibold">P1</span><span className="text-orange-700 font-semibold">P2</span><span className="text-blue-700 font-semibold">P3</span><span className="text-indigo-900 font-semibold">유지관리</span></div>
+            <div className="flex items-center gap-1.5 text-xs"><span className="text-red-700 font-semibold">P1</span><span className="text-green-700 font-semibold">P2</span><span className="text-blue-700 font-semibold">P3</span><span className="text-indigo-900 font-semibold">유지관리</span></div>
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
               <span className="inline-block w-3 h-3 rounded" style={{ borderLeft: '3px solid #22c55e' }} />첫 측정
             </div>

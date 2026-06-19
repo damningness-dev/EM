@@ -8,7 +8,7 @@ const MONTHS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
 const GANTT_COLORS = {
   P1: 'bg-red-400',
-  P2: 'bg-orange-400',
+  P2: 'bg-green-400',
   P3: 'bg-blue-400',
 };
 
@@ -154,7 +154,7 @@ export default function ZoneStatus({ year, onYearChange }) {
             <h2 className="text-sm font-semibold text-gray-700">📊 측정 일정 간트 차트</h2>
             <div className="flex items-center gap-3 text-xs text-gray-500">
               <span className="flex items-center gap-1"><span className="w-3 h-2 rounded bg-red-400 inline-block" />P1</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-2 rounded bg-orange-400 inline-block" />P2</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-2 rounded bg-green-400 inline-block" />P2</span>
               <span className="flex items-center gap-1"><span className="w-3 h-2 rounded bg-blue-400 inline-block" />P3</span>
               {todayPct !== null && <span className="flex items-center gap-1"><span className="w-0.5 h-3 bg-red-500 inline-block" />오늘</span>}
             </div>
