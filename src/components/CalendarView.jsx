@@ -304,9 +304,28 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   async function handlePhaseTransition(zoneId, newGrade, newStartDate) {
     const zone = zones.find(z => z.id === zoneId);
     if (!zone || !newStartDate) return;
-    const updated = { ...zone, grade: newGrade, schedule_start: newStartDate, schedule_overrides: {} };
-    await upsertZone(updated);
-    setZones(prev => prev.map(z => z.id === zoneId ? updated : z));
+    // Find existing zone with same name+category+targetGrade
+    const existing = zones.find(z =>
+      z.name === zone.name && z.category === zone.category && z.grade === newGrade && z.id !== zoneId
+    );
+    if (existing) {
+      // Update start date only
+      const updated = { ...existing, schedule_start: newStartDate };
+      const saved = await upsertZone(updated);
+      setZones(prev => prev.map(z => z.id === saved.id ? saved : z));
+    } else {
+      // Create new zone row for the target grade
+      const newZone = {
+        name: zone.name,
+        category: zone.category,
+        grade: newGrade,
+        schedule_start: newStartDate,
+        schedule_overrides: {},
+        monthly_weekday_rule: null,
+      };
+      const saved = await upsertZone(newZone);
+      setZones(prev => [...prev, saved]);
+    }
     setPhasePrompt(null);
   }
 
@@ -408,13 +427,15 @@ export default function CalendarView({ year: initYear, onYearChange }) {
       {phasePrompt && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-2xl shadow-2xl w-80 p-6">
-            <h3 className="text-base font-bold text-gray-900 mb-1">단계 전환</h3>
+            <h3 className="text-base font-bold text-gray-900 mb-1">
+              {phasePrompt.label || `${phasePrompt.nextGrade} 단계 추가`}
+            </h3>
             <p className="text-sm text-gray-500 mb-4">
-              <span className="font-semibold text-gray-700">{phasePrompt.zoneName}</span> 구역의{' '}
+              <span className="font-semibold text-gray-700">{phasePrompt.zoneName}</span> 구역에{' '}
               <span className={`font-bold px-1.5 py-0.5 rounded text-xs ${GRADE_COLORS[phasePrompt.nextGrade] || 'bg-gray-100 text-gray-600'}`}>
                 {phasePrompt.nextGrade}
               </span>{' '}
-              시작일을 설정하세요.
+              행을 추가합니다. 이미 있으면 시작일만 업데이트됩니다.
             </p>
             <label className="block text-xs text-gray-500 mb-1">{phasePrompt.nextGrade} 시작일</label>
             <input
@@ -432,7 +453,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                 onClick={() => handlePhaseTransition(phasePrompt.zoneId, phasePrompt.nextGrade, phasePrompt.dateStr)}
                 disabled={!phasePrompt.dateStr}
                 className="px-4 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40"
-              >{phasePrompt.nextGrade}로 전환</button>
+              >{phasePrompt.nextGrade} 추가/업데이트</button>
             </div>
           </div>
         </div>
@@ -543,27 +564,34 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                           return (
                             <div key={groupKey} className="border-b border-gray-100">
                               {/* Group header */}
-                              <button
-                                className="w-full px-4 pt-3 pb-2 flex items-center gap-2 text-left hover:bg-gray-50/60 transition-colors"
-                                onClick={() => setExpandedGroups(prev => {
-                                  const next = new Set(prev);
-                                  if (next.has(groupKey)) next.delete(groupKey);
-                                  else next.add(groupKey);
-                                  return next;
-                                })}
-                              >
-                                <span className="text-sm font-semibold text-gray-800 flex-1 truncate">{group.name}</span>
-                                {myGroup && (
-                                  <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded shrink-0">{myGroup.name}</span>
-                                )}
-                                {!isExpanded && activeZone && (
-                                  <span className={`text-xs px-1.5 py-0.5 rounded shrink-0 ${GRADE_COLORS[activeZone.grade] || 'bg-gray-100 text-gray-600'}`}>{activeZone.grade}</span>
-                                )}
-                                {!isExpanded && !activeZone && (
-                                  <span className="text-xs text-gray-400 shrink-0">계획없음</span>
-                                )}
-                                <span className="text-gray-400 text-xs shrink-0">{isExpanded ? '▲' : '▼'}</span>
-                              </button>
+                              <div className="px-4 pt-3 pb-2 flex items-center gap-2">
+                                <div
+                                  className="flex-1 flex items-center gap-2 cursor-pointer hover:opacity-70 min-w-0"
+                                  onClick={() => setExpandedGroups(prev => {
+                                    const next = new Set(prev);
+                                    if (next.has(groupKey)) next.delete(groupKey);
+                                    else next.add(groupKey);
+                                    return next;
+                                  })}
+                                >
+                                  <span className="text-sm font-semibold text-gray-800 flex-1 truncate">{group.name}</span>
+                                  {myGroup && (
+                                    <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded shrink-0">{myGroup.name}</span>
+                                  )}
+                                  {!isExpanded && activeZone && (
+                                    <span className={`text-xs px-1.5 py-0.5 rounded shrink-0 ${GRADE_COLORS[activeZone.grade] || 'bg-gray-100 text-gray-600'}`}>{activeZone.grade}</span>
+                                  )}
+                                  {!isExpanded && !activeZone && (
+                                    <span className="text-xs text-gray-400 shrink-0">계획없음</span>
+                                  )}
+                                  <span className="text-gray-400 text-xs shrink-0">{isExpanded ? '▲' : '▼'}</span>
+                                </div>
+                                <button
+                                  onClick={() => setPhasePrompt({ zoneId: group.zones[0]?.id, zoneName: group.name, nextGrade: 'P1', dateStr: '', label: '일일측정(P1) 추가' })}
+                                  className="text-xs bg-red-100 text-red-700 px-1.5 py-1 rounded hover:bg-red-200 shrink-0"
+                                  title="일일측정(P1) 행 추가"
+                                >일1회</button>
+                              </div>
                               {!isExpanded && !activeZone && (
                                 <div className="px-4 pb-3 text-xs text-gray-400 italic">계획일정 없음</div>
                               )}
