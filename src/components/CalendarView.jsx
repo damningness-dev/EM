@@ -891,14 +891,15 @@ export default function CalendarView({ year: initYear, onYearChange }) {
         </div>
 
         {/* Sidebar */}
-        <div className="w-64 space-y-3 shrink-0">
+        <div className="w-64 shrink-0 flex flex-col gap-3">
           {/* Selected day events */}
           {selectedDay && (
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <div className="px-4 py-3 bg-blue-600 text-white">
+            <div className="bg-white rounded-xl border border-gray-200 flex flex-col flex-1 min-h-0">
+              <div className="px-4 py-3 bg-blue-600 text-white shrink-0">
                 <p className="text-xs text-blue-200">{selectedDay.slice(0,4)}년 {MONTH_KR[parseInt(selectedDay.slice(5,7)) - 1]}</p>
                 <p className="text-lg font-bold">{parseInt(selectedDay.slice(8,10))}일 일정</p>
               </div>
+              <div className="flex-1 overflow-y-auto min-h-0">
 
               {selectedCalibEvents.length > 0 && (
                 <>
@@ -924,7 +925,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                   <div className="px-4 py-1.5 bg-blue-50 border-b border-blue-100">
                     <span className="text-xs font-semibold text-blue-600">측정 일정 ({selectedScheduleEvents.length}건)</span>
                   </div>
-                  <div className="divide-y divide-gray-50 max-h-52 overflow-y-auto">
+                  <div className="divide-y divide-gray-50">
                     {selectedScheduleEvents.map(({ zone, measurement }) => {
                       const bounds = getDragBounds(measurement);
                       return (
@@ -969,6 +970,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
               {selectedCalibEvents.length === 0 && selectedScheduleEvents.length === 0 && (
                 <p className="px-4 py-3 text-sm text-gray-400">일정 없음</p>
               )}
+              </div>
             </div>
           )}
 
