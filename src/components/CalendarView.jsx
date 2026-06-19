@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL } from '../lib/schedule';
-import { GRADE_COLORS } from '../data/initialData';
+import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
 
 const DOW_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 const MONTH_KR = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
@@ -417,9 +417,9 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                     if (!catGroups.length) return null;
                     return (
                       <div key={cat}>
-                        <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 sticky top-0 z-10">
-                          <span className="text-xs font-bold text-gray-500">{cat}</span>
-                          <span className="ml-2 text-xs text-gray-400">{catGroups.length}개 구역</span>
+                        <div className={`px-4 py-2 border-b sticky top-0 z-10 ${CATEGORY_SECTION[cat]?.bg || 'bg-gray-50'} ${CATEGORY_SECTION[cat]?.border || 'border-gray-100'}`}>
+                          <span className={`text-xs font-bold ${CATEGORY_SECTION[cat]?.text || 'text-gray-500'}`}>{cat}</span>
+                          <span className={`ml-2 text-xs opacity-70 ${CATEGORY_SECTION[cat]?.text || 'text-gray-400'}`}>{catGroups.length}개 구역</span>
                         </div>
                         {catGroups.map(group => {
                           const myGroup = groups.find(g => group.zones.some(z => g.zoneIds.includes(z.id)));
