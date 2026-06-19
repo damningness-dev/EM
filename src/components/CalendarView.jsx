@@ -15,14 +15,14 @@ const TYPE_COLORS = {
 };
 
 const CAT_CHIP_BG = {
-  '공조':   'bg-green-100 border border-green-200',
+  '공조':   'bg-gray-100 border border-gray-200',
   '질소가스': 'bg-purple-100 border border-purple-200',
   '압축공기': 'bg-yellow-100 border border-yellow-200',
 };
 const GRADE_CHIP_TEXT = {
   'P1': 'text-red-700',
-  'P2': 'text-blue-700',
-  'P3': 'text-orange-700',
+  'P2': 'text-orange-700',
+  'P3': 'text-blue-700',
   '유지관리': 'text-indigo-900',
 };
 
@@ -71,6 +71,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   const [phasePrompt, setPhasePrompt] = useState(null); // { zoneId, zoneName, nextGrade, dateStr }
   const [newGroupName, setNewGroupName] = useState('');
   const [zonesCatFilter, setZonesCatFilter] = useState('전체');
+  const [expandedGroups, setExpandedGroups] = useState(new Set());
 
   useEffect(() => {
     setLoading(true);
@@ -434,19 +435,48 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                           <span className={`ml-2 text-xs opacity-70 ${CATEGORY_SECTION[cat]?.text || 'text-gray-400'}`}>{catGroups.length}개 구역</span>
                         </div>
                         {catGroups.map(group => {
+                          const groupKey = `${group.category}_${group.name}`;
+                          const isExpanded = expandedGroups.has(groupKey);
                           const myGroup = groups.find(g => group.zones.some(z => g.zoneIds.includes(z.id)));
                           const todayMidnight = new Date(); todayMidnight.setHours(0, 0, 0, 0);
+                          const activeZone = group.zones.find(zone => {
+                            if (!zone.schedule_start) return false;
+                            const startDate = new Date(zone.schedule_start + 'T00:00:00');
+                            if (startDate > todayMidnight) return false;
+                            const ms = calcMeasurements(zone);
+                            if (!ms.length) return true;
+                            return todayMidnight <= ms[ms.length - 1].baseDate;
+                          });
+                          const zonesToShow = isExpanded ? group.zones : (activeZone ? [activeZone] : []);
                           return (
-                            <div key={`${group.category}_${group.name}`} className="border-b border-gray-100">
+                            <div key={groupKey} className="border-b border-gray-100">
                               {/* Group header */}
-                              <div className="px-4 pt-3 pb-1 flex items-center gap-2">
+                              <button
+                                className="w-full px-4 pt-3 pb-2 flex items-center gap-2 text-left hover:bg-gray-50/60 transition-colors"
+                                onClick={() => setExpandedGroups(prev => {
+                                  const next = new Set(prev);
+                                  if (next.has(groupKey)) next.delete(groupKey);
+                                  else next.add(groupKey);
+                                  return next;
+                                })}
+                              >
                                 <span className="text-sm font-semibold text-gray-800 flex-1 truncate">{group.name}</span>
                                 {myGroup && (
                                   <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded shrink-0">{myGroup.name}</span>
                                 )}
-                              </div>
+                                {!isExpanded && activeZone && (
+                                  <span className={`text-xs px-1.5 py-0.5 rounded shrink-0 ${GRADE_COLORS[activeZone.grade] || 'bg-gray-100 text-gray-600'}`}>{activeZone.grade}</span>
+                                )}
+                                {!isExpanded && !activeZone && (
+                                  <span className="text-xs text-gray-400 shrink-0">계획없음</span>
+                                )}
+                                <span className="text-gray-400 text-xs shrink-0">{isExpanded ? '▲' : '▼'}</span>
+                              </button>
+                              {!isExpanded && !activeZone && (
+                                <div className="px-4 pb-3 text-xs text-gray-400 italic">계획일정 없음</div>
+                              )}
                               {/* Grade rows */}
-                              {group.zones.map(zone => {
+                              {zonesToShow.map(zone => {
                                 const ms = calcMeasurements(zone);
                                 const done = ms.filter(m => m.date <= todayMidnight).length;
                                 const total = ms.length || totalCount(zone);
@@ -849,7 +879,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
               <span className="w-3 h-3 rounded bg-yellow-50 border border-yellow-200 inline-block" />이번달 교정
             </div>
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span className="w-3 h-3 rounded bg-green-100 border border-green-200 inline-block" />공조
+              <span className="w-3 h-3 rounded bg-gray-100 border border-gray-200 inline-block" />공조
             </div>
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
               <span className="w-3 h-3 rounded bg-purple-100 border border-purple-200 inline-block" />질소가스
@@ -857,7 +887,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
               <span className="w-3 h-3 rounded bg-yellow-100 border border-yellow-200 inline-block" />압축공기
             </div>
-            <div className="flex items-center gap-1.5 text-xs"><span className="text-red-700 font-semibold">P1</span><span className="text-blue-700 font-semibold">P2</span><span className="text-orange-700 font-semibold">P3</span><span className="text-indigo-900 font-semibold">유지관리</span></div>
+            <div className="flex items-center gap-1.5 text-xs"><span className="text-red-700 font-semibold">P1</span><span className="text-orange-700 font-semibold">P2</span><span className="text-blue-700 font-semibold">P3</span><span className="text-indigo-900 font-semibold">유지관리</span></div>
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
               <span className="inline-block w-3 h-3 rounded" style={{ borderLeft: '3px solid #22c55e' }} />첫 측정
             </div>

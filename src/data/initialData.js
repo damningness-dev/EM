@@ -104,8 +104,8 @@ export const GRADE_TARGETS = {
 // 등급별 색상
 export const GRADE_COLORS = {
   'P1': 'bg-red-100 text-red-700',
-  'P2': 'bg-blue-100 text-blue-700',
-  'P3': 'bg-orange-100 text-orange-700',
+  'P2': 'bg-orange-100 text-orange-700',
+  'P3': 'bg-blue-100 text-blue-700',
   '유지관리': 'bg-indigo-100 text-indigo-900',
   'OQ': 'bg-purple-100 text-purple-800',
   'PQ': 'bg-pink-100 text-pink-800',
@@ -113,13 +113,13 @@ export const GRADE_COLORS = {
 
 // 카테고리별 색상
 export const CATEGORY_COLORS = {
-  '공조': 'bg-green-100 text-green-800',
+  '공조': 'bg-gray-100 text-gray-700',
   '질소가스': 'bg-purple-100 text-purple-800',
   '압축공기': 'bg-yellow-100 text-yellow-800',
 };
 
 export const CATEGORY_SECTION = {
-  '공조':   { bg: 'bg-green-50',  border: 'border-green-200',  text: 'text-green-800'  },
+  '공조':   { bg: 'bg-gray-50',   border: 'border-gray-200',   text: 'text-gray-700'   },
   '질소가스': { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-800' },
   '압축공기': { bg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-800' },
 };
