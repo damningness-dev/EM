@@ -1003,7 +1003,9 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                         if (data.zoneId !== undefined) handleDropOnDay(dateStr, data);
                       } catch {}
                     }}
-                    className={`min-h-28 p-1.5 border-r border-b border-gray-100 cursor-pointer transition-colors ${
+                    className={`min-h-28 p-1.5 border-r border-b cursor-pointer transition-colors ${
+                      isOther ? 'border-gray-300' : 'border-gray-100'
+                    } ${
                       isDragOver ? 'bg-blue-100 ring-2 ring-inset ring-blue-400' :
                       isOther ? 'bg-gray-50/80' :
                       isSelected ? 'bg-blue-50' :
@@ -1181,7 +1183,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                             {zone.name}[{zone.grade}]
                           </p>
                           <p className="text-xs text-gray-400 mt-0.5">
-                            이동: {format(bounds.min, 'MM/dd')}~{format(bounds.max, 'MM/dd')}
+                            측정주기: {format(bounds.min, 'MM/dd')}~{format(bounds.max, 'MM/dd')}
                           </p>
                           {(zone.points_surface || zone.points_float || zone.points_fall || zone.points_particle) ? (
                             <div className="flex gap-1 mt-1 flex-wrap">

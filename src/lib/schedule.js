@@ -25,7 +25,9 @@ function getNthWeekdayOfMonth(year, month, nth, dow) {
 
 function isOverrideValid(overrideDate, baseDate, type) {
   if (type === 'daily') {
-    return overrideDate.toDateString() === baseDate.toDateString();
+    const min = startOfWeek(baseDate, { weekStartsOn: 1 });
+    const max = endOfWeek(baseDate, { weekStartsOn: 1 });
+    return overrideDate >= min && overrideDate <= max;
   }
   if (type === 'weekly' || type === 'biweekly') {
     const min = startOfWeek(baseDate, { weekStartsOn: 1 });
@@ -111,9 +113,16 @@ export function calcMeasurements(zone) {
       });
       num++;
 
-      baseDate = phase.type === 'monthly'
-        ? addMonths(baseDate, 1)
-        : addDays(baseDate, phase.intervalDays);
+      if (phase.type === 'monthly') {
+        baseDate = addMonths(baseDate, 1);
+      } else if (phase.type === 'daily') {
+        // Advance to next weekday, skipping Sat/Sun
+        let next = addDays(baseDate, 1);
+        while (next.getDay() === 0 || next.getDay() === 6) next = addDays(next, 1);
+        baseDate = next;
+      } else {
+        baseDate = addDays(baseDate, phase.intervalDays);
+      }
     }
   }
 
@@ -135,7 +144,10 @@ export function getDragBounds(measurement) {
   const { type, baseDate } = measurement;
 
   if (type === 'daily') {
-    return { min: baseDate, max: baseDate };
+    return {
+      min: startOfWeek(baseDate, { weekStartsOn: 1 }),
+      max: endOfWeek(baseDate, { weekStartsOn: 1 }),
+    };
   }
   if (type === 'weekly' || type === 'biweekly') {
     return {
