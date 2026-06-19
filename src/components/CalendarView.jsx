@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion } from '../lib/api';
+import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
@@ -81,6 +81,10 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   const [newHolidayDow, setNewHolidayDow] = useState(1);
   const [completions, setCompletions] = useState(new Set());
   const [completionPrompt, setCompletionPrompt] = useState(null); // {zoneId,zoneName,grade,num,dateStr,isCompleted}
+  const [tempSchedules, setTempSchedules] = useState([]);
+  const [addSchedPopup, setAddSchedPopup] = useState(null); // { date }
+  const [addSchedName, setAddSchedName] = useState('');
+  const [addSchedPts, setAddSchedPts] = useState({ surface: '', float: '', fall: '', particle: '' });
 
   const holidays = useMemo(() => {
     const map = {};
@@ -132,7 +136,8 @@ export default function CalendarView({ year: initYear, onYearChange }) {
       fetchGroups(),
       fetchHolidays(),
       fetchCompletions(),
-    ]).then(([cal, zns, mon, plan, grps, hols, comps]) => {
+      fetchTempSchedules(),
+    ]).then(([cal, zns, mon, plan, grps, hols, comps, temps]) => {
       setCalibration(cal);
       setZones(zns);
       setMonitoring(mon);
@@ -140,6 +145,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
       setGroups(grps);
       setHolidayDefs(hols);
       setCompletions(new Set(comps.map(c => `${c.zoneId}_${c.num}`)));
+      setTempSchedules(temps);
       setLoading(false);
     });
   }, [year, month]);
@@ -177,6 +183,15 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     });
     return map;
   }, [zones]);
+
+  const tempByDate = useMemo(() => {
+    const map = {};
+    tempSchedules.forEach(t => {
+      if (!map[t.date]) map[t.date] = [];
+      map[t.date].push(t);
+    });
+    return map;
+  }, [tempSchedules]);
 
   // Group zones by (category, name) for settings drawer
   const zoneGroups = useMemo(() => {
@@ -229,6 +244,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
 
   const selectedCalibEvents = selectedDay ? (calibByDate[selectedDay] || []) : [];
   const selectedScheduleEvents = selectedDay ? (scheduleByDate[selectedDay] || []) : [];
+  const selectedTempEvents = selectedDay ? (tempByDate[selectedDay] || []) : [];
 
   function dDayColor(dateStr) {
     try {
@@ -494,6 +510,67 @@ export default function CalendarView({ year: initYear, onYearChange }) {
         </div>
       )}
 
+      {/* Add temp schedule popup */}
+      {addSchedPopup && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/40" onClick={() => setAddSchedPopup(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-80 p-6" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-gray-900 mb-1">임시 일정 추가</h3>
+            <p className="text-sm text-gray-400 mb-4">{addSchedPopup.date}</p>
+            <label className="block text-xs text-gray-500 mb-1">이름</label>
+            <input
+              type="text"
+              value={addSchedName}
+              onChange={e => setAddSchedName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && addSchedName.trim()) document.getElementById('add-sched-submit')?.click(); }}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 mb-4"
+              placeholder="일정 이름 입력..."
+              autoFocus
+            />
+            <label className="block text-xs text-gray-500 mb-2">측정 포인트 수</label>
+            <div className="grid grid-cols-4 gap-2 mb-5">
+              {[['surface','표면균'],['float','부유균'],['fall','낙하균'],['particle','부유입자']].map(([key, label]) => (
+                <div key={key} className="flex flex-col items-center gap-1">
+                  <span className="text-[10px] text-gray-400">{label}</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="999"
+                    value={addSchedPts[key]}
+                    onChange={e => setAddSchedPts(prev => ({ ...prev, [key]: e.target.value }))}
+                    className="w-full text-xs border border-gray-200 rounded px-1 py-1 text-center focus:outline-none focus:ring-1 focus:ring-orange-400"
+                    placeholder="0"
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setAddSchedPopup(null)} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>
+              <button
+                id="add-sched-submit"
+                disabled={!addSchedName.trim()}
+                onClick={async () => {
+                  if (!addSchedName.trim()) return;
+                  const entry = {
+                    date: addSchedPopup.date,
+                    name: addSchedName.trim(),
+                    points_surface: parseInt(addSchedPts.surface) || 0,
+                    points_float: parseInt(addSchedPts.float) || 0,
+                    points_fall: parseInt(addSchedPts.fall) || 0,
+                    points_particle: parseInt(addSchedPts.particle) || 0,
+                  };
+                  const saved = await addTempSchedule(entry);
+                  setTempSchedules(prev => [...prev, saved]);
+                  setAddSchedPopup(null);
+                  setAddSchedName('');
+                  setAddSchedPts({ surface: '', float: '', fall: '', particle: '' });
+                }}
+                className="px-4 py-2 text-sm text-white bg-orange-500 rounded-lg hover:bg-orange-600 disabled:opacity-40"
+              >추가</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Schedule settings drawer */}
       {showSettings && (
         <div className="fixed inset-0 z-50 flex">
@@ -564,33 +641,26 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                           return (
                             <div key={groupKey} className="border-b border-gray-100">
                               {/* Group header */}
-                              <div className="px-4 pt-3 pb-2 flex items-center gap-2">
-                                <div
-                                  className="flex-1 flex items-center gap-2 cursor-pointer hover:opacity-70 min-w-0"
-                                  onClick={() => setExpandedGroups(prev => {
-                                    const next = new Set(prev);
-                                    if (next.has(groupKey)) next.delete(groupKey);
-                                    else next.add(groupKey);
-                                    return next;
-                                  })}
-                                >
-                                  <span className="text-sm font-semibold text-gray-800 flex-1 truncate">{group.name}</span>
-                                  {myGroup && (
-                                    <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded shrink-0">{myGroup.name}</span>
-                                  )}
-                                  {!isExpanded && activeZone && (
-                                    <span className={`text-xs px-1.5 py-0.5 rounded shrink-0 ${GRADE_COLORS[activeZone.grade] || 'bg-gray-100 text-gray-600'}`}>{activeZone.grade}</span>
-                                  )}
-                                  {!isExpanded && !activeZone && (
-                                    <span className="text-xs text-gray-400 shrink-0">계획없음</span>
-                                  )}
-                                  <span className="text-gray-400 text-xs shrink-0">{isExpanded ? '▲' : '▼'}</span>
-                                </div>
-                                <button
-                                  onClick={() => setPhasePrompt({ zoneId: group.zones[0]?.id, zoneName: group.name, nextGrade: 'P1', dateStr: '', label: '일일측정(P1) 추가' })}
-                                  className="text-xs bg-red-100 text-red-700 px-1.5 py-1 rounded hover:bg-red-200 shrink-0"
-                                  title="일일측정(P1) 행 추가"
-                                >일1회</button>
+                              <div
+                                className="px-4 pt-3 pb-2 flex items-center gap-2 cursor-pointer hover:opacity-70"
+                                onClick={() => setExpandedGroups(prev => {
+                                  const next = new Set(prev);
+                                  if (next.has(groupKey)) next.delete(groupKey);
+                                  else next.add(groupKey);
+                                  return next;
+                                })}
+                              >
+                                <span className="text-sm font-semibold text-gray-800 flex-1 truncate">{group.name}</span>
+                                {myGroup && (
+                                  <span className="text-xs bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded shrink-0">{myGroup.name}</span>
+                                )}
+                                {!isExpanded && activeZone && (
+                                  <span className={`text-xs px-1.5 py-0.5 rounded shrink-0 ${GRADE_COLORS[activeZone.grade] || 'bg-gray-100 text-gray-600'}`}>{activeZone.grade}</span>
+                                )}
+                                {!isExpanded && !activeZone && (
+                                  <span className="text-xs text-gray-400 shrink-0">계획없음</span>
+                                )}
+                                <span className="text-gray-400 text-xs shrink-0">{isExpanded ? '▲' : '▼'}</span>
                               </div>
                               {!isExpanded && !activeZone && (
                                 <div className="px-4 pb-3 text-xs text-gray-400 italic">계획일정 없음</div>
@@ -973,17 +1043,18 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                 const dateStr = `${cell.year}-${String(cell.month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
                 const calibEvts = calibByDate[dateStr] || [];
                 const schedEvts = scheduleByDate[dateStr] || [];
+                const tempEvts = tempByDate[dateStr] || [];
 
                 const isToday = !isOther && isCurrentMonth && day === todayDate;
                 const isSelected = dateStr === selectedDay;
                 const isDragOver = dragOverDay === dateStr;
                 const dow = idx % 7;
 
-                const pts = schedEvts.reduce((acc, { zone }) => ({
-                  surface: acc.surface + (zone.points_surface || 0),
-                  float: acc.float + (zone.points_float || 0),
-                  fall: acc.fall + (zone.points_fall || 0),
-                  particle: acc.particle + (zone.points_particle || 0),
+                const pts = [...schedEvts.map(({ zone }) => zone), ...tempEvts].reduce((acc, item) => ({
+                  surface: acc.surface + (item.points_surface || 0),
+                  float: acc.float + (item.points_float || 0),
+                  fall: acc.fall + (item.points_fall || 0),
+                  particle: acc.particle + (item.points_particle || 0),
                 }), { surface: 0, float: 0, fall: 0, particle: 0 });
                 const hasPts = pts.surface + pts.float + pts.fall + pts.particle > 0;
                 const nextCellData = grid[idx + 1];
@@ -1088,6 +1159,14 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                           >{label}</div>
                         );
                       })}
+                      {tempEvts.map((t, i) => (
+                        <div
+                          key={`t${i}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-xs px-1 py-0.5 rounded truncate bg-orange-50 border border-orange-200 text-orange-600"
+                          title={`${t.name}[임시]`}
+                        >{t.name}[임시]</div>
+                      ))}
                     </div>
                   </div>
                 );
@@ -1207,9 +1286,52 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                 </>
               )}
 
-              {selectedCalibEvents.length === 0 && selectedScheduleEvents.length === 0 && (
+              {selectedTempEvents.length > 0 && (
+                <>
+                  <div className="px-4 py-1.5 bg-orange-50 border-b border-orange-100 border-t border-t-gray-100">
+                    <span className="text-xs font-semibold text-orange-600">임시 일정 ({selectedTempEvents.length}건)</span>
+                  </div>
+                  <div className="divide-y divide-gray-50">
+                    {selectedTempEvents.map(t => (
+                      <div key={t.id} className="px-4 py-2.5">
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-orange-50 border border-orange-200 text-orange-600">임시</span>
+                          <button
+                            onClick={async () => {
+                              await deleteTempSchedule(t.id);
+                              setTempSchedules(prev => prev.filter(x => x.id !== t.id));
+                            }}
+                            className="text-xs text-gray-400 hover:text-red-500 leading-none"
+                          >✕</button>
+                        </div>
+                        <p className="text-sm font-medium text-gray-800">{t.name}</p>
+                        {(t.points_surface || t.points_float || t.points_fall || t.points_particle) ? (
+                          <div className="flex gap-1 mt-1 flex-wrap">
+                            {t.points_surface > 0 && <span className="text-[10px] bg-green-50 text-green-600 px-1 py-0.5 rounded">표면균 {t.points_surface}pt</span>}
+                            {t.points_float > 0 && <span className="text-[10px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">부유균 {t.points_float}pt</span>}
+                            {t.points_fall > 0 && <span className="text-[10px] bg-orange-50 text-orange-600 px-1 py-0.5 rounded">낙하균 {t.points_fall}pt</span>}
+                            {t.points_particle > 0 && <span className="text-[10px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">부유입자 {t.points_particle}pt</span>}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {selectedCalibEvents.length === 0 && selectedScheduleEvents.length === 0 && selectedTempEvents.length === 0 && (
                 <p className="px-4 py-3 text-sm text-gray-400">일정 없음</p>
               )}
+              </div>
+              <div className="px-3 py-2 border-t border-gray-100 shrink-0">
+                <button
+                  onClick={() => {
+                    setAddSchedName('');
+                    setAddSchedPts({ surface: '', float: '', fall: '', particle: '' });
+                    setAddSchedPopup({ date: selectedDay });
+                  }}
+                  className="w-full py-1.5 text-sm font-medium text-orange-600 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100 transition-colors"
+                >+ 일정 추가</button>
               </div>
             </div>
           )}

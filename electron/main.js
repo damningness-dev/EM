@@ -151,16 +151,17 @@ function getDataPath() {
 function loadData() {
   const p = getDataPath();
   if (!fs.existsSync(p)) {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [] };
   }
   try {
     const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
     if (!data.groups) data.groups = [];
     if (!data.holidays) data.holidays = [];
     if (!data.completions) data.completions = [];
+    if (!data.tempSchedules) data.tempSchedules = [];
     return data;
   } catch {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [] };
   }
 }
 
@@ -453,6 +454,22 @@ function registerHandlers() {
     const key = `${zoneId}_${num}`;
     const data = loadData();
     data.completions = data.completions.filter(c => `${c.zoneId}_${c.num}` !== key);
+    saveData(data);
+  });
+
+  // ── 임시 일정 ──
+  ipcMain.handle('tempSchedules:getAll', () => loadData().tempSchedules);
+  ipcMain.handle('tempSchedules:add', (_e, entry) => {
+    const data = loadData();
+    entry.id = newId();
+    entry.createdAt = new Date().toISOString();
+    data.tempSchedules.push(entry);
+    saveData(data);
+    return entry;
+  });
+  ipcMain.handle('tempSchedules:delete', (_e, id) => {
+    const data = loadData();
+    data.tempSchedules = data.tempSchedules.filter(t => t.id !== id);
     saveData(data);
   });
 }

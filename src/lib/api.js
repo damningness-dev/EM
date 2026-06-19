@@ -99,3 +99,17 @@ export async function setCompletion(zoneId, num) {
 export async function deleteCompletion(zoneId, num) {
   return api.invoke('completions:delete', zoneId, num);
 }
+
+// ─── 임시 일정 ────────────────────────────────────────────────────────────────
+
+export async function fetchTempSchedules() {
+  return api.invoke('tempSchedules:getAll');
+}
+
+export async function addTempSchedule(entry) {
+  return api.invoke('tempSchedules:add', entry);
+}
+
+export async function deleteTempSchedule(id) {
+  return api.invoke('tempSchedules:delete', id);
+}
