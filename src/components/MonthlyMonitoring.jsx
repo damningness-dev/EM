@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, Fragment } from 'react';
 import { fetchZones, upsertZone, deleteZone, fetchMonitoringData, upsertMonitoringEntry, fetchCompletions, fetchHolidays } from '../lib/api';
 import { GRADE_TARGETS, GRADE_COLORS } from '../data/initialData';
-import { calcMeasurements, GRADE_PRIORITY, buildHolidayMap, computeCascadeSchedules } from '../lib/schedule';
+import { calcMeasurements, calcEndDate, GRADE_PRIORITY, buildHolidayMap, computeCascadeSchedules } from '../lib/schedule';
 import { format } from 'date-fns';
 
 const MONTHS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
@@ -77,9 +77,8 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
     zones.forEach(zone => {
       if (!zone.schedule_start) return;
       const start = new Date(zone.schedule_start + 'T00:00:00');
-      const ms = calcMeasurements(zone);
-      if (!ms.length) return;
-      const end = ms[ms.length - 1].baseDate;
+      const end = calcEndDate(zone);
+      if (!end) return;
       if (today >= start && today <= end) active.add(zone.id);
     });
     return active;
@@ -345,7 +344,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                                 const zone = gradeMap[grade];
                                 if (zone) {
                                   const ms = calcMeasurements(zone);
-                                  const endDate = ms.length ? ms[ms.length - 1].baseDate : null;
+                                  const endDate = calcEndDate(zone);
                                   const isActive = activeZoneIds.has(zone.id);
                                   const zoneSched = scheduleThisMonth[zone.id];
                                   const totalMs = ms.length;

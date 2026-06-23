@@ -788,7 +788,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                                 const ms = calcMeasurements(zone);
                                 const done = ms.filter(m => m.date <= todayMidnight).length;
                                 const total = ms.length || totalCount(zone);
-                                const endDate = ms.length ? ms[ms.length - 1].baseDate : null;
+                                const endDate = calcEndDate(zone);
                                 const isPastDue = endDate && endDate < todayMidnight && NEXT_GRADE[zone.grade];
                                 return (
                                   <div key={zone.id} className={`px-3 py-2 ${isPastDue ? 'bg-amber-50/60' : ''}`}>

@@ -1,4 +1,4 @@
-import { addDays, addMonths, startOfWeek, endOfWeek, startOfMonth, endOfMonth, format } from 'date-fns';
+import { addDays, addMonths, addYears, startOfWeek, endOfWeek, startOfMonth, endOfMonth, format } from 'date-fns';
 
 // Grade progression order: P1 → P2 → P3 → 유지관리
 export const NEXT_GRADE = { P1: 'P2', P2: 'P3', P3: '유지관리' };
@@ -130,6 +130,9 @@ export function calcMeasurements(zone) {
 }
 
 export function calcEndDate(zone) {
+  if (zone.grade === '유지관리' && zone.schedule_start) {
+    return addYears(new Date(zone.schedule_start + 'T00:00:00'), 3);
+  }
   const ms = calcMeasurements(zone);
   return ms.length ? ms[ms.length - 1].baseDate : null;
 }
