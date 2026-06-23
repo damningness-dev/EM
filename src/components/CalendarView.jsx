@@ -1135,11 +1135,12 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                       {schedEvts.map(({ zone, measurement }, i) => {
                         const bounds = getDragBounds(measurement);
                         const label = `${zone.name}[${zone.grade}]-${measurement.num}`;
+                        const isDone = completions.has(`${zone.id}_${measurement.num}`);
                         return (
                           <div
                             key={`s${i}`}
-                            draggable={true}
-                            onDragStart={(e) => {
+                            draggable={!isDone}
+                            onDragStart={isDone ? undefined : (e) => {
                               e.stopPropagation();
                               e.dataTransfer.effectAllowed = 'move';
                               e.dataTransfer.setData('text/plain', JSON.stringify({
@@ -1150,15 +1151,15 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                                 maxDateStr: format(bounds.max, 'yyyy-MM-dd'),
                               }));
                             }}
-                            onDragEnd={() => setDragOverDay(null)}
+                            onDragEnd={isDone ? undefined : () => setDragOverDay(null)}
                             onClick={(e) => e.stopPropagation()}
-                            className={`text-xs px-1 py-0.5 rounded truncate ${CAT_CHIP_BG[zone.category] || 'bg-gray-100 border border-gray-200'} ${GRADE_CHIP_TEXT[zone.grade] || 'text-gray-600'} cursor-grab active:cursor-grabbing`}
+                            className={`text-xs px-1 py-0.5 rounded truncate ${CAT_CHIP_BG[zone.category] || 'bg-gray-100 border border-gray-200'} ${GRADE_CHIP_TEXT[zone.grade] || 'text-gray-600'} ${isDone ? 'line-through opacity-60 cursor-default' : 'cursor-grab active:cursor-grabbing'}`}
                             style={{
                               borderLeft: measurement.isFirst ? '3px solid #22c55e' : undefined,
                               borderRight: measurement.isLast ? '3px solid #ef4444' : undefined,
                               fontWeight: (measurement.isFirst || measurement.isLast) ? 600 : undefined,
                             }}
-                            title={`${label}${measurement.isFirst ? ' [첫 측정]' : measurement.isLast ? ' [마지막 측정]' : ''}`}
+                            title={`${label}${isDone ? ' [완료]' : measurement.isFirst ? ' [첫 측정]' : measurement.isLast ? ' [마지막 측정]' : ''}`}
                           >{label}</div>
                         );
                       })}
