@@ -1063,6 +1063,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                                    || (!isOther && nextCellData?.isOther);
                 const boundaryBottom = (isOther && belowCellData && !belowCellData.isOther)
                                     || (!isOther && belowCellData?.isOther);
+                const isHol = !isOther && !!holidays[dateStr];
 
                 return (
                   <div
@@ -1085,12 +1086,14 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                       ${boundaryBottom ? 'border-b-2 border-b-gray-400' : 'border-b border-b-gray-100'}
                       ${isDragOver ? 'bg-blue-100 ring-2 ring-inset ring-blue-400' :
                         isOther ? 'bg-gray-100/90' :
-                        isSelected ? 'bg-blue-50' :
-                        isToday ? 'bg-blue-50/50' : 'hover:bg-gray-50'
+                        isSelected ? (dow === 6 ? 'bg-blue-100' : (dow === 0 || isHol) ? 'bg-red-100' : 'bg-blue-50') :
+                        isToday ? 'bg-blue-50/50' :
+                        dow === 6 ? 'bg-blue-50/60' :
+                        (dow === 0 || isHol) ? 'bg-red-50/60' :
+                        'hover:bg-gray-50'
                       }`}
                   >
                     {(() => {
-                      const isHol = !isOther && !!holidays[dateStr];
                       const dateNumClass = `text-xs font-semibold w-6 h-6 flex items-center justify-center rounded-full shrink-0 ${
                         isOther ? 'text-gray-300' :
                         isToday ? 'bg-blue-600 text-white' :
