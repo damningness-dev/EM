@@ -1,12 +1,13 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, Fragment } from 'react';
 import { fetchZones, upsertZone, deleteZone, fetchMonitoringData, upsertMonitoringEntry, fetchCompletions } from '../lib/api';
 import { GRADE_TARGETS, GRADE_COLORS } from '../data/initialData';
 import { calcMeasurements, GRADE_PRIORITY } from '../lib/schedule';
 import { format } from 'date-fns';
 
-const MONTHS = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'];
+const MONTHS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
 const CATEGORIES = ['공조', '질소가스', '압축공기'];
 const GRADES = ['P1', 'P2', 'P3', '유지관리', 'OQ', 'PQ'];
+const PROGRESSION = ['P1', 'P2', 'P3', '유지관리'];
 
 export default function MonthlyMonitoring({ year, onYearChange }) {
   const [month, setMonth] = useState(new Date().getMonth() + 1);
@@ -16,13 +17,12 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [gradeFilter, setGradeFilter] = useState('all');
-  const [editZone, setEditZone] = useState(null);
+  const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [showAddZone, setShowAddZone] = useState(false);
   const [zoneForm, setZoneForm] = useState({});
   const [editEntry, setEditEntry] = useState(null);
   const [entryForm, setEntryForm] = useState({});
   const [saving, setSaving] = useState(false);
-  const [selectedGroupKey, setSelectedGroupKey] = useState(null);
 
   useEffect(() => {
     Promise.all([fetchZones(), fetchCompletions()]).then(([zns, comps]) => {
@@ -36,7 +36,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
     fetchMonitoringData(year, month).then(d => { setMonData(d); setLoading(false); });
   }, [year, month]);
 
-  // Group zones by name+category for the grade progression panel
+  // Group all zones by name+category; one P1/P2/P3/유지관리 per group
   const zoneGroups = useMemo(() => {
     const map = {};
     zones.forEach(zone => {
@@ -50,7 +50,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
     return map;
   }, [zones]);
 
-  // Schedule-based stats for each zone in the selected month (linked to CalendarView completions)
+  // Schedule-based stats per zone for this month (linked to CalendarView completions)
   const scheduleThisMonth = useMemo(() => {
     const monthStr = `${year}-${String(month).padStart(2, '0')}`;
     const result = {};
@@ -58,136 +58,73 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
       if (!zone.schedule_start) return;
       const ms = calcMeasurements(zone);
       const thisMonthMs = ms.filter(m => format(m.date, 'yyyy-MM') === monthStr);
-      if (thisMonthMs.length > 0) {
-        const done = thisMonthMs.filter(m => completions.has(`${zone.id}_${m.num}`)).length;
-        result[zone.id] = { total: thisMonthMs.length, done };
+      if (thisMonthMs.length) {
+        result[zone.id] = {
+          total: thisMonthMs.length,
+          done: thisMonthMs.filter(m => completions.has(`${zone.id}_${m.num}`)).length,
+        };
       }
     });
     return result;
   }, [zones, year, month, completions]);
 
-  // Which zones are currently active (today within schedule window)
+  // Which zones are currently within their schedule window
   const activeZoneIds = useMemo(() => {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const active = new Set();
     zones.forEach(zone => {
       if (!zone.schedule_start) return;
-      const startDate = new Date(zone.schedule_start + 'T00:00:00');
+      const start = new Date(zone.schedule_start + 'T00:00:00');
       const ms = calcMeasurements(zone);
       if (!ms.length) return;
-      const endDate = ms[ms.length - 1].baseDate;
-      if (today >= startDate && today <= endDate) active.add(zone.id);
+      const end = ms[ms.length - 1].baseDate;
+      if (today >= start && today <= end) active.add(zone.id);
     });
     return active;
   }, [zones]);
 
-  const filteredZones = useMemo(() => {
-    let list = zones;
-    if (search) list = list.filter(z => z.name.toLowerCase().includes(search.toLowerCase()) || z.grade.toLowerCase().includes(search.toLowerCase()));
-    if (gradeFilter !== 'all') list = list.filter(z => z.grade === gradeFilter);
-    return list;
-  }, [zones, search, gradeFilter]);
+  const filteredGroups = useMemo(() => {
+    let groups = Object.values(zoneGroups);
+    if (search) groups = groups.filter(g => g.name.toLowerCase().includes(search.toLowerCase()));
+    if (gradeFilter !== 'all') groups = groups.filter(g => g.zones.some(z => z.grade === gradeFilter));
+    return groups;
+  }, [zoneGroups, search, gradeFilter]);
+
+  const progress = useMemo(() => {
+    let total = 0, done = 0;
+    filteredGroups.forEach(group => {
+      group.zones.forEach(zone => {
+        const sched = scheduleThisMonth[zone.id];
+        if (sched) {
+          total += sched.total; done += sched.done;
+        } else {
+          const target = GRADE_TARGETS[zone.grade] || 1;
+          total += target;
+          const e = monData[zone.id];
+          if (e) done += Math.min(e.count || 0, target);
+        }
+      });
+    });
+    return { total, done, pct: total > 0 ? Math.round((done / total) * 100) : 0 };
+  }, [filteredGroups, monData, scheduleThisMonth]);
 
   function getEntry(zoneId) {
-    return monData[zoneId] || { airborne: '', settle: '', surface: '', particle: '', count: 0, note: '', start_date: '', done: false };
+    return monData[zoneId] || { airborne:'', settle:'', surface:'', particle:'', count:0, note:'', start_date:'', done:false };
   }
 
-  function openEntry(zone) {
-    setEntryForm({ ...getEntry(zone.id) });
-    setEditEntry(zone);
+  function getActiveZone(group) {
+    return group.zones.find(z => activeZoneIds.has(z.id)) || group.zones[0];
   }
 
-  function getGroupKey(zone) {
-    return `${zone.category}|||${zone.name}`;
+  function toggleGroup(key) {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
   }
 
-  async function saveEntry() {
-    setSaving(true);
-    const payload = {
-      zone_id: editEntry.id, year, month,
-      airborne: entryForm.airborne || null,
-      settle: entryForm.settle || null,
-      surface: entryForm.surface || null,
-      particle: entryForm.particle || null,
-      count: parseInt(entryForm.count) || 0,
-      note: entryForm.note || null,
-      start_date: entryForm.start_date || null,
-      done: entryForm.done || false,
-      ...(entryForm.id ? { id: entryForm.id } : {}),
-    };
-    try {
-      const saved = await upsertMonitoringEntry(payload);
-      setMonData(p => ({ ...p, [editEntry.id]: saved }));
-      setEditEntry(null);
-    } catch (e) {
-      alert('저장 실패: ' + e.message);
-    }
-    setSaving(false);
-  }
-
-  async function quickToggleDone(zone) {
-    const sched = scheduleThisMonth[zone.id];
-    const entry = getEntry(zone.id);
-    const target = sched ? sched.total : (GRADE_TARGETS[zone.grade] || 1);
-    const currentDone = sched ? sched.done : (entry.done ? target : (parseInt(entry.count) || 0));
-    const isNowDone = currentDone < target;
-    const payload = {
-      zone_id: zone.id, year, month,
-      count: isNowDone ? target : 0,
-      done: isNowDone,
-      airborne: entry.airborne || null,
-      settle: entry.settle || null,
-      surface: entry.surface || null,
-      particle: entry.particle || null,
-      note: entry.note || null,
-      start_date: entry.start_date || null,
-      ...(entry.id ? { id: entry.id } : {}),
-    };
-    try {
-      const saved = await upsertMonitoringEntry(payload);
-      setMonData(p => ({ ...p, [zone.id]: saved }));
-    } catch (e) {
-      alert('저장 실패: ' + e.message);
-    }
-  }
-
-  async function handleAddZone() {
-    if (!zoneForm.name || !zoneForm.grade) return;
-    setSaving(true);
-    try {
-      const saved = await upsertZone({ name: zoneForm.name, grade: zoneForm.grade, category: zoneForm.category || '공조', sort_order: zones.length });
-      setZones(p => [...p, saved]);
-      setShowAddZone(false);
-      setZoneForm({});
-    } catch (e) {
-      alert('추가 실패: ' + e.message);
-    }
-    setSaving(false);
-  }
-
-  async function handleDeleteZone(id) {
-    if (!confirm('구역을 삭제하시겠습니까?')) return;
-    await deleteZone(id);
-    setZones(p => p.filter(z => z.id !== id));
-    if (selectedGroupKey) {
-      const remaining = zones.filter(z => z.id !== id && getGroupKey(z) === selectedGroupKey);
-      if (!remaining.length) setSelectedGroupKey(null);
-    }
-  }
-
-  async function saveZoneEdit() {
-    setSaving(true);
-    try {
-      const saved = await upsertZone({ id: editZone.id, name: zoneForm.name, grade: zoneForm.grade, category: zoneForm.category });
-      setZones(p => p.map(z => z.id === editZone.id ? saved : z));
-      setEditZone(null);
-    } catch (e) {
-      alert('저장 실패: ' + e.message);
-    }
-    setSaving(false);
-  }
-
-  async function handlePanelZoneStart(zoneId, dateStr) {
+  async function handleZoneStart(zoneId, dateStr) {
     const zone = zones.find(z => z.id === zoneId);
     if (!zone) return;
     const updated = { ...zone, schedule_start: dateStr || null, schedule_overrides: {} };
@@ -195,110 +132,61 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
     setZones(prev => prev.map(z => z.id === zoneId ? updated : z));
   }
 
-  const progress = useMemo(() => {
-    let total = 0, done = 0;
-    filteredZones.forEach(zone => {
-      const sched = scheduleThisMonth[zone.id];
-      if (sched) {
-        total += sched.total;
-        done += sched.done;
-      } else {
-        const target = GRADE_TARGETS[zone.grade] || 1;
-        total += target;
-        const entry = monData[zone.id];
-        if (entry) done += Math.min(entry.count || 0, target);
-      }
-    });
-    return { total, done, pct: total > 0 ? Math.round((done / total) * 100) : 0 };
-  }, [filteredZones, monData, scheduleThisMonth]);
+  async function addGradeToGroup(group, grade) {
+    if (group.zones.some(z => z.grade === grade)) return;
+    try {
+      const saved = await upsertZone({ name: group.name, category: group.category, grade, sort_order: zones.length, schedule_overrides: {} });
+      setZones(prev => [...prev, saved]);
+    } catch (e) { alert('추가 실패: ' + e.message); }
+  }
 
-  const selectedGroup = selectedGroupKey ? zoneGroups[selectedGroupKey] : null;
+  async function handleDeleteZone(id) {
+    if (!confirm('구역을 삭제하시겠습니까?')) return;
+    await deleteZone(id);
+    setZones(p => p.filter(z => z.id !== id));
+  }
+
+  async function saveEntry() {
+    setSaving(true);
+    const payload = {
+      zone_id: editEntry.id, year, month,
+      airborne: entryForm.airborne || null, settle: entryForm.settle || null,
+      surface: entryForm.surface || null, particle: entryForm.particle || null,
+      count: parseInt(entryForm.count) || 0, note: entryForm.note || null,
+      start_date: entryForm.start_date || null, done: entryForm.done || false,
+      ...(entryForm.id ? { id: entryForm.id } : {}),
+    };
+    try {
+      const saved = await upsertMonitoringEntry(payload);
+      setMonData(p => ({ ...p, [editEntry.id]: saved }));
+      setEditEntry(null);
+    } catch (e) { alert('저장 실패: ' + e.message); }
+    setSaving(false);
+  }
+
+  async function handleAddZone() {
+    if (!zoneForm.name || !zoneForm.grade) return;
+    const groupKey = `${zoneForm.category || '공조'}|||${zoneForm.name}`;
+    const existing = zoneGroups[groupKey];
+    if (existing && PROGRESSION.includes(zoneForm.grade) && existing.zones.some(z => z.grade === zoneForm.grade)) {
+      alert(`이미 ${zoneForm.grade} 등급이 존재합니다.`);
+      return;
+    }
+    setSaving(true);
+    try {
+      const saved = await upsertZone({ name: zoneForm.name, grade: zoneForm.grade, category: zoneForm.category || '공조', sort_order: zones.length, schedule_overrides: {} });
+      setZones(p => [...p, saved]);
+      setShowAddZone(false);
+      setZoneForm({});
+    } catch (e) { alert('추가 실패: ' + e.message); }
+    setSaving(false);
+  }
+
   const todayMidnight = new Date(); todayMidnight.setHours(0, 0, 0, 0);
 
   return (
     <div className="p-6 space-y-4">
-      {/* Zone grade progression panel */}
-      {selectedGroup && (
-        <div className="fixed inset-0 z-50 flex">
-          <div className="flex-1 bg-black/30" onClick={() => setSelectedGroupKey(null)} />
-          <div className="w-96 h-full bg-white shadow-2xl border-l border-gray-200 flex flex-col">
-            <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between shrink-0">
-              <div>
-                <h2 className="text-base font-bold text-gray-900">{selectedGroup.name}</h2>
-                <p className="text-xs text-gray-400 mt-0.5">{selectedGroup.category} · 등급별 일정 설정</p>
-              </div>
-              <button onClick={() => setSelectedGroupKey(null)} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 text-lg leading-none">✕</button>
-            </div>
-            <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
-              {selectedGroup.zones.length === 0 && (
-                <p className="px-5 py-4 text-sm text-gray-400">등록된 등급이 없습니다.</p>
-              )}
-              {selectedGroup.zones.map(zone => {
-                const ms = calcMeasurements(zone);
-                const endDate = ms.length ? ms[ms.length - 1].baseDate : null;
-                const isActive = activeZoneIds.has(zone.id);
-                const sched = scheduleThisMonth[zone.id];
-                const totalMs = ms.length;
-                const completedMs = ms.filter(m => completions.has(`${zone.id}_${m.num}`)).length;
-                const isPastDue = endDate && endDate < todayMidnight && !isActive && zone.schedule_start;
-                return (
-                  <div key={zone.id} className={`px-5 py-4 ${isActive ? 'bg-blue-50/40' : ''}`}>
-                    <div className="flex items-center gap-2 mb-3">
-                      <span className={`text-sm font-bold px-2 py-0.5 rounded ${GRADE_COLORS[zone.grade] || 'bg-gray-100 text-gray-600'}`}>
-                        {zone.grade}
-                      </span>
-                      {isActive && <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium">진행중</span>}
-                      {isPastDue && <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium">기간 종료</span>}
-                      {!zone.schedule_start && <span className="text-xs text-gray-400">일정 없음</span>}
-                      <span className="ml-auto text-xs text-gray-400 font-medium">{completedMs}/{totalMs}회</span>
-                    </div>
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-500 w-14 shrink-0">시작일</span>
-                        <input
-                          type="date"
-                          value={zone.schedule_start || ''}
-                          onChange={e => handlePanelZoneStart(zone.id, e.target.value)}
-                          className="flex-1 text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
-                      </div>
-                      {endDate && (
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-gray-500 w-14 shrink-0">종료예정</span>
-                          <span className="text-xs text-blue-600">{format(endDate, 'yyyy.MM.dd')}</span>
-                        </div>
-                      )}
-                      {sched && (
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-gray-500 w-14 shrink-0">이번달</span>
-                          <span className={`text-xs font-semibold ${sched.done >= sched.total ? 'text-green-600' : sched.done > 0 ? 'text-blue-600' : 'text-gray-500'}`}>
-                            {sched.done}/{sched.total}회 {sched.done >= sched.total ? '완료' : sched.done > 0 ? '진행중' : '예정'}
-                          </span>
-                        </div>
-                      )}
-                      {totalMs > 0 && (
-                        <div className="mt-2">
-                          <div className="flex justify-between text-[10px] text-gray-400 mb-0.5">
-                            <span>전체 진행률</span>
-                            <span>{completedMs}/{totalMs}</span>
-                          </div>
-                          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full rounded-full ${completedMs >= totalMs ? 'bg-green-500' : 'bg-blue-400'}`}
-                              style={{ width: `${Math.round((completedMs / totalMs) * 100)}%` }}
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
+      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-2xl font-bold text-gray-800">월별 환경 모니터링</h1>
         <div className="flex items-center gap-3 flex-wrap">
@@ -315,6 +203,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
         </div>
       </div>
 
+      {/* Progress bar */}
       <div className="bg-white rounded-xl border border-gray-200 p-4">
         <div className="flex items-center justify-between mb-2">
           <span className="text-sm font-medium text-gray-600">{year}년 {month}월 진행률</span>
@@ -325,6 +214,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
         </div>
       </div>
 
+      {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center">
         <input type="text" placeholder="구역명 검색..." value={search} onChange={e => setSearch(e.target.value)} className="flex-1 min-w-48 px-3 py-2 border border-gray-200 rounded-lg text-sm" />
         <div className="flex gap-2 flex-wrap">
@@ -336,17 +226,18 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
         <button onClick={() => { setShowAddZone(true); setZoneForm({}); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 ml-auto">+ 구역 추가</button>
       </div>
 
+      {/* Table */}
       {loading ? <LoadingSpinner /> : (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
-                  <th className="text-left px-4 py-3 text-gray-500 font-medium">구역명</th>
-                  <th className="text-center px-3 py-3 text-gray-500 font-medium">등급</th>
+                  <th className="w-8 px-3 py-3"></th>
+                  <th className="text-left px-3 py-3 text-gray-500 font-medium">구역명</th>
                   <th className="text-center px-3 py-3 text-gray-500 font-medium">분류</th>
-                  <th className="text-center px-3 py-3 text-gray-500 font-medium">목표</th>
-                  <th className="text-center px-3 py-3 text-gray-500 font-medium">완료횟수</th>
+                  <th className="text-center px-3 py-3 text-gray-500 font-medium">활성등급</th>
+                  <th className="text-center px-3 py-3 text-gray-500 font-medium">이번달</th>
                   <th className="text-center px-3 py-3 text-gray-500 font-medium">부유균</th>
                   <th className="text-center px-3 py-3 text-gray-500 font-medium">낙하균</th>
                   <th className="text-center px-3 py-3 text-gray-500 font-medium">표면균</th>
@@ -355,88 +246,157 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                   <th className="text-center px-3 py-3 text-gray-500 font-medium">관리</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
-                {filteredZones.map(zone => {
-                  const entry = getEntry(zone.id);
-                  const sched = scheduleThisMonth[zone.id];
-                  const isActive = activeZoneIds.has(zone.id);
-                  const target = GRADE_TARGETS[zone.grade] || 1;
-
-                  // Use schedule-based count when available (linked to CalendarView completions)
-                  const countNum = sched ? sched.done : (parseInt(entry.count) || 0);
-                  const countTarget = sched ? sched.total : target;
-                  const pct = Math.min(Math.round((countNum / countTarget) * 100), 100);
+              <tbody>
+                {filteredGroups.map(group => {
+                  const isExpanded = expandedGroups.has(group.key);
+                  const activeZone = getActiveZone(group);
+                  const isGroupActive = group.zones.some(z => activeZoneIds.has(z.id));
+                  const sched = activeZone ? scheduleThisMonth[activeZone.id] : null;
+                  const entry = activeZone ? getEntry(activeZone.id) : null;
+                  const countTarget = sched ? sched.total : (GRADE_TARGETS[activeZone?.grade] || 1);
+                  const countNum = sched ? sched.done : (parseInt(entry?.count) || 0);
                   const isComplete = countNum >= countTarget && countTarget > 0;
+                  const gradeMap = {};
+                  group.zones.forEach(z => { gradeMap[z.grade] = z; });
 
                   return (
-                    <tr key={zone.id} className={`hover:bg-gray-50 ${isActive ? 'bg-blue-50/20' : ''} ${isComplete ? 'bg-green-50/30' : ''}`}>
-                      {editZone?.id === zone.id ? (
-                        <>
-                          <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm" value={zoneForm.name || ''} onChange={e => setZoneForm(f => ({ ...f, name: e.target.value }))} /></td>
-                          <td className="px-3 py-2"><select className="border rounded px-1 py-1 text-sm w-full" value={zoneForm.grade || ''} onChange={e => setZoneForm(f => ({ ...f, grade: e.target.value }))}>{GRADES.map(g => <option key={g}>{g}</option>)}</select></td>
-                          <td className="px-3 py-2"><select className="border rounded px-1 py-1 text-sm w-full" value={zoneForm.category || ''} onChange={e => setZoneForm(f => ({ ...f, category: e.target.value }))}>{CATEGORIES.map(c => <option key={c}>{c}</option>)}</select></td>
-                          <td colSpan={7} className="px-3 py-2 text-center">
-                            <button onClick={saveZoneEdit} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs mr-1 disabled:opacity-50">저장</button>
-                            <button onClick={() => setEditZone(null)} className="px-2 py-1 bg-gray-200 rounded text-xs">취소</button>
-                          </td>
-                        </>
-                      ) : (
-                        <>
-                          <td className="px-4 py-3">
-                            <button
-                              onClick={() => setSelectedGroupKey(getGroupKey(zone))}
-                              className="font-medium text-gray-800 hover:text-blue-600 text-left flex items-center gap-1.5 group"
-                            >
-                              {zone.name}
-                              {isActive && (
-                                <span className="text-[10px] bg-blue-100 text-blue-600 px-1 py-0.5 rounded font-medium shrink-0">진행중</span>
-                              )}
-                              <span className="text-gray-300 group-hover:text-blue-400 text-xs shrink-0">›</span>
-                            </button>
-                          </td>
-                          <td className="px-3 py-3 text-center"><span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${GRADE_COLORS[zone.grade] || 'bg-gray-100 text-gray-600'}`}>{zone.grade}</span></td>
-                          <td className="px-3 py-3 text-center text-xs text-gray-500">{zone.category}</td>
-                          <td className="px-3 py-3 text-center text-gray-600">{countTarget}</td>
-                          <td className="px-3 py-3 text-center">
+                    <Fragment key={group.key}>
+                      {/* Group summary row */}
+                      <tr
+                        className={`border-b border-gray-100 cursor-pointer select-none hover:bg-gray-50/50 ${isExpanded ? 'bg-blue-50/30 border-blue-100' : ''} ${isGroupActive && !isExpanded ? 'bg-blue-50/10' : ''}`}
+                        onClick={() => toggleGroup(group.key)}
+                      >
+                        <td className="px-3 py-3 text-center text-gray-400 text-xs font-bold">{isExpanded ? '▼' : '▶'}</td>
+                        <td className="px-3 py-3">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-medium text-gray-800">{group.name}</span>
+                            {isGroupActive && <span className="text-[10px] bg-blue-100 text-blue-600 px-1 py-0.5 rounded font-medium">진행중</span>}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 text-center text-xs text-gray-500">{group.category}</td>
+                        <td className="px-3 py-3 text-center">
+                          {activeZone && (
+                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${GRADE_COLORS[activeZone.grade] || 'bg-gray-100 text-gray-600'}`}>
+                              {activeZone.grade}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-3 text-center">
+                          {countTarget > 0 ? (
                             <div className="flex flex-col items-center">
-                              <span className={`font-semibold ${isComplete ? 'text-green-600' : 'text-gray-700'}`}>
-                                {countNum}/{countTarget}
-                              </span>
-                              {sched && (
-                                <span className="text-[10px] text-blue-500 mt-0.5">달력 연동</span>
-                              )}
-                              <div className="w-16 h-1 bg-gray-100 rounded-full mt-1">
-                                <div className={`h-full rounded-full ${isComplete ? 'bg-green-500' : 'bg-blue-400'}`} style={{ width: `${pct}%` }} />
-                              </div>
+                              <span className={`font-semibold text-xs ${isComplete ? 'text-green-600' : 'text-gray-700'}`}>{countNum}/{countTarget}</span>
+                              {sched && <span className="text-[9px] text-blue-500 mt-0.5">달력연동</span>}
+                            </div>
+                          ) : <span className="text-gray-300 text-xs">-</span>}
+                        </td>
+                        <td className="px-3 py-3 text-center text-xs text-gray-500">{entry?.airborne || '-'}</td>
+                        <td className="px-3 py-3 text-center text-xs text-gray-500">{entry?.settle || '-'}</td>
+                        <td className="px-3 py-3 text-center text-xs text-gray-500">{entry?.surface || '-'}</td>
+                        <td className="px-3 py-3 text-center text-xs text-gray-500">{entry?.particle || '-'}</td>
+                        <td className="px-3 py-3 text-center">
+                          <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+                            isComplete ? 'bg-green-100 text-green-700' :
+                            countNum > 0 ? 'bg-blue-100 text-blue-700' :
+                            isGroupActive ? 'bg-orange-100 text-orange-700' :
+                            'bg-gray-100 text-gray-500'
+                          }`}>
+                            {isComplete ? '완료' : countNum > 0 ? '진행중' : isGroupActive ? '예정' : '미시작'}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3 text-center" onClick={e => e.stopPropagation()}>
+                          {activeZone && (
+                            <button
+                              onClick={() => { setEntryForm({ ...getEntry(activeZone.id) }); setEditEntry(activeZone); }}
+                              className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-50 rounded"
+                            >입력</button>
+                          )}
+                        </td>
+                      </tr>
+
+                      {/* Expanded grade progression */}
+                      {isExpanded && (
+                        <tr>
+                          <td colSpan={11} className="p-0">
+                            <div className="bg-gray-50 border-b-2 border-blue-100 px-6 py-3 space-y-2">
+                              {PROGRESSION.map(grade => {
+                                const zone = gradeMap[grade];
+                                if (zone) {
+                                  const ms = calcMeasurements(zone);
+                                  const endDate = ms.length ? ms[ms.length - 1].baseDate : null;
+                                  const isActive = activeZoneIds.has(zone.id);
+                                  const zoneSched = scheduleThisMonth[zone.id];
+                                  const totalMs = ms.length;
+                                  const completedMs = ms.filter(m => completions.has(`${zone.id}_${m.num}`)).length;
+                                  const pct = totalMs > 0 ? Math.round((completedMs / totalMs) * 100) : 0;
+                                  return (
+                                    <div key={grade} className={`flex items-center gap-3 rounded-lg px-3 py-2.5 border ${isActive ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-100'}`}>
+                                      <span className={`text-xs font-bold px-2 py-1 rounded shrink-0 ${GRADE_COLORS[grade] || 'bg-gray-100 text-gray-600'}`}>{grade}</span>
+                                      {isActive && <span className="text-[10px] bg-blue-100 text-blue-600 px-1 py-0.5 rounded font-medium shrink-0">진행중</span>}
+                                      <div className="flex items-center gap-2 flex-1 min-w-0 flex-wrap">
+                                        <span className="text-xs text-gray-400 shrink-0">시작일</span>
+                                        <input
+                                          type="date"
+                                          value={zone.schedule_start || ''}
+                                          onChange={e => handleZoneStart(zone.id, e.target.value)}
+                                          onClick={e => e.stopPropagation()}
+                                          className="text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 w-32 shrink-0"
+                                        />
+                                        {endDate && (
+                                          <span className="text-xs text-blue-600 shrink-0">→ {format(endDate, 'yyyy.MM.dd')}</span>
+                                        )}
+                                        {totalMs > 0 && (
+                                          <div className="flex items-center gap-1.5 shrink-0">
+                                            <div className="w-20 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                                              <div className={`h-full rounded-full ${completedMs >= totalMs ? 'bg-green-500' : 'bg-blue-400'}`} style={{ width: `${pct}%` }} />
+                                            </div>
+                                            <span className="text-[10px] text-gray-400">{completedMs}/{totalMs}</span>
+                                          </div>
+                                        )}
+                                        {zoneSched && (
+                                          <span className="text-xs shrink-0">
+                                            이번달 <span className={`font-semibold ${zoneSched.done >= zoneSched.total ? 'text-green-600' : 'text-blue-600'}`}>{zoneSched.done}/{zoneSched.total}</span>
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                                        <button onClick={() => { setEntryForm({ ...getEntry(zone.id) }); setEditEntry(zone); }} className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-100 rounded">입력</button>
+                                        <button onClick={() => handleDeleteZone(zone.id)} className="text-xs px-2 py-1 text-red-400 hover:bg-red-50 rounded">삭제</button>
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                                return (
+                                  <div key={grade} className="flex items-center gap-3 rounded-lg px-3 py-2 border border-dashed border-gray-200 bg-white/60">
+                                    <span className={`text-xs font-bold px-2 py-1 rounded opacity-30 shrink-0 ${GRADE_COLORS[grade] || 'bg-gray-100 text-gray-600'}`}>{grade}</span>
+                                    <span className="text-xs text-gray-400 flex-1">등록되지 않음</span>
+                                    <button
+                                      onClick={e => { e.stopPropagation(); addGradeToGroup(group, grade); }}
+                                      className="text-xs px-2.5 py-1 bg-gray-100 text-gray-500 hover:bg-gray-200 rounded font-medium shrink-0"
+                                    >+ 추가</button>
+                                  </div>
+                                );
+                              })}
+                              {/* OQ / PQ if present */}
+                              {group.zones.filter(z => !PROGRESSION.includes(z.grade)).map(zone => (
+                                <div key={zone.id} className="flex items-center gap-3 rounded-lg px-3 py-2 bg-white border border-gray-100">
+                                  <span className={`text-xs font-bold px-2 py-1 rounded shrink-0 ${GRADE_COLORS[zone.grade] || 'bg-gray-100 text-gray-600'}`}>{zone.grade}</span>
+                                  <span className="text-xs text-gray-500 flex-1">{zone.name}</span>
+                                  <div className="flex gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                                    <button onClick={() => { setEntryForm({ ...getEntry(zone.id) }); setEditEntry(zone); }} className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-100 rounded">입력</button>
+                                    <button onClick={() => handleDeleteZone(zone.id)} className="text-xs px-2 py-1 text-red-400 hover:bg-red-50 rounded">삭제</button>
+                                  </div>
+                                </div>
+                              ))}
                             </div>
                           </td>
-                          <td className="px-3 py-3 text-center text-xs text-gray-500">{entry.airborne || '-'}</td>
-                          <td className="px-3 py-3 text-center text-xs text-gray-500">{entry.settle || '-'}</td>
-                          <td className="px-3 py-3 text-center text-xs text-gray-500">{entry.surface || '-'}</td>
-                          <td className="px-3 py-3 text-center text-xs text-gray-500">{entry.particle || '-'}</td>
-                          <td className="px-3 py-3 text-center">
-                            <button
-                              onClick={() => quickToggleDone(zone)}
-                              className={`text-xs px-2 py-1 rounded-full font-medium ${
-                                isComplete ? 'bg-green-100 text-green-700' :
-                                countNum > 0 ? 'bg-blue-100 text-blue-700' :
-                                isActive ? 'bg-orange-100 text-orange-700' :
-                                'bg-gray-100 text-gray-500'
-                              }`}
-                            >
-                              {isComplete ? '완료' : countNum > 0 ? '진행중' : isActive ? '예정' : '미시작'}
-                            </button>
-                          </td>
-                          <td className="px-3 py-3 text-center whitespace-nowrap">
-                            <button onClick={() => openEntry(zone)} className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-50 rounded mr-1">입력</button>
-                            <button onClick={() => { setEditZone(zone); setZoneForm({ ...zone }); }} className="text-xs px-2 py-1 text-gray-500 hover:bg-gray-100 rounded mr-1">수정</button>
-                            <button onClick={() => handleDeleteZone(zone.id)} className="text-xs px-2 py-1 text-red-400 hover:bg-red-50 rounded">삭제</button>
-                          </td>
-                        </>
+                        </tr>
                       )}
-                    </tr>
+                    </Fragment>
                   );
                 })}
+                {filteredGroups.length === 0 && (
+                  <tr><td colSpan={11} className="px-4 py-8 text-center text-sm text-gray-400">구역이 없습니다.</td></tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -460,7 +420,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              {[{ key: 'airborne', label: '부유균' }, { key: 'settle', label: '낙하균' }, { key: 'surface', label: '표면균' }, { key: 'particle', label: '부유입자' }].map(({ key, label }) => (
+              {[['airborne','부유균'],['settle','낙하균'],['surface','표면균'],['particle','부유입자']].map(([key, label]) => (
                 <div key={key}>
                   <label className="text-xs text-gray-500">{label}</label>
                   <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" placeholder="측정값" value={entryForm[key] || ''} onChange={e => setEntryForm(f => ({ ...f, [key]: e.target.value }))} />
@@ -484,6 +444,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4">
             <h2 className="font-bold text-gray-800">구역 추가</h2>
+            <p className="text-xs text-gray-400">같은 이름+분류의 구역은 자동으로 그룹화됩니다. P1/P2/P3/유지관리는 그룹 내 각 1개까지 허용됩니다.</p>
             <div>
               <label className="text-xs text-gray-500">구역명</label>
               <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={zoneForm.name || ''} onChange={e => setZoneForm(f => ({ ...f, name: e.target.value }))} />
