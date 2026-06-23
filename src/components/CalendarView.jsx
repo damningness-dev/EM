@@ -1271,15 +1271,14 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                             }}
                             onDragEnd={isDone ? undefined : () => setDragOverDay(null)}
                             onClick={(e) => e.stopPropagation()}
-                            className={`text-xs px-1 py-0.5 rounded truncate ${isDone ? 'line-through opacity-60 cursor-default' : 'cursor-grab active:cursor-grabbing'}`}
-                            style={{
-                              ...getChipStyle(zone.category, zone.grade),
-                              borderLeft: measurement.isFirst ? '3px solid #22c55e' : undefined,
-                              borderRight: measurement.isLast ? '3px solid #ef4444' : undefined,
-                              fontWeight: (measurement.isFirst || measurement.isLast) ? 600 : undefined,
-                            }}
+                            className={`text-xs rounded overflow-hidden flex items-stretch min-w-0 ${isDone ? 'opacity-60 cursor-default' : 'cursor-grab active:cursor-grabbing'}`}
+                            style={getChipStyle(zone.category, zone.grade)}
                             title={`${label}${isDone ? ' [완료]' : measurement.isFirst ? ' [첫 측정]' : measurement.isLast ? ' [마지막 측정]' : ''}`}
-                          >{label}</div>
+                          >
+                            {measurement.isFirst && <span className="w-1 shrink-0" style={{ backgroundColor: '#22c55e' }} />}
+                            <span className={`truncate flex-1 px-1 py-0.5 ${isDone ? 'line-through' : ''} ${(measurement.isFirst || measurement.isLast) ? 'font-semibold' : ''}`}>{label}</span>
+                            {measurement.isLast && <span className="w-1 shrink-0" style={{ backgroundColor: '#ef4444' }} />}
+                          </div>
                         );
                       })}
                       {tempEvts.map((t, i) => (
@@ -1351,10 +1350,15 @@ export default function CalendarView({ year: initYear, onYearChange }) {
               })}
             </div>
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span className="inline-block w-3 h-3 rounded" style={{ borderLeft: '3px solid #22c55e' }} />첫 측정
+              <span className="inline-flex items-stretch w-5 h-3 rounded overflow-hidden border border-gray-200 bg-white">
+                <span className="w-1 shrink-0" style={{ backgroundColor: '#22c55e' }} />
+              </span>첫 측정
             </div>
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span className="inline-block w-3 h-3 rounded" style={{ borderRight: '3px solid #ef4444' }} />마지막 측정
+              <span className="inline-flex items-stretch w-5 h-3 rounded overflow-hidden border border-gray-200 bg-white">
+                <span className="flex-1" />
+                <span className="w-1 shrink-0" style={{ backgroundColor: '#ef4444' }} />
+              </span>마지막 측정
             </div>
           </div>
         </div>
@@ -1365,8 +1369,11 @@ export default function CalendarView({ year: initYear, onYearChange }) {
           {selectedDay && (
             <div className="bg-white rounded-xl border border-gray-200 flex flex-col flex-1 min-h-0">
               <div className={`px-4 py-3 ${hdBg} text-white shrink-0`}>
-                <p className={`text-xs ${hdSub}`}>{selectedDay.slice(0,4)}년 {MONTH_KR[parseInt(selectedDay.slice(5,7)) - 1]}</p>
+                <p className={`text-xs ${hdSub}`}>{selectedDay.slice(0,4)}년 {MONTH_KR[parseInt(selectedDay.slice(5,7)) - 1]} · {DOW_LABELS[selDow]}요일</p>
                 <p className="text-lg font-bold">{parseInt(selectedDay.slice(8,10))}일 일정</p>
+                {isSelHol && (
+                  <p className={`text-xs mt-0.5 ${hdSub}`}>🎌 {holidays[selectedDay]}</p>
+                )}
               </div>
               <div className="flex-1 overflow-y-auto min-h-0">
 
