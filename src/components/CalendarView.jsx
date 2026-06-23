@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
-import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL } from '../lib/schedule';
+import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
 
 const DOW_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
@@ -67,6 +67,8 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   const [dragOverDay, setDragOverDay] = useState(null);
   const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
+  const [successToast, setSuccessToast] = useState(null);
+  const successToastTimer = useRef(null);
   const [groups, setGroups] = useState([]);
   const [phasePrompt, setPhasePrompt] = useState(null); // { zoneId, zoneName, nextGrade, dateStr }
   const [newGroupName, setNewGroupName] = useState('');
@@ -86,44 +88,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   const [addSchedName, setAddSchedName] = useState('');
   const [addSchedPts, setAddSchedPts] = useState({ surface: '', float: '', fall: '', particle: '' });
 
-  const holidays = useMemo(() => {
-    const map = {};
-    holidayDefs.forEach(h => {
-      if (!h.repeat || h.repeat.type === 'none') {
-        map[h.date] = h.name;
-        return;
-      }
-      if (h.repeat.type === 'yearly') {
-        const [, mm, dd] = h.date.split('-');
-        for (let yr = year - 1; yr <= year + 1; yr++) {
-          map[`${yr}-${mm}-${dd}`] = h.name;
-        }
-        return;
-      }
-      for (let yr = year - 1; yr <= year + 1; yr++) {
-        for (let mo = 1; mo <= 12; mo++) {
-          const daysInMo = new Date(yr, mo, 0).getDate();
-          if (h.repeat.type === 'monthly') {
-            const d = Number(h.date.split('-')[2]);
-            if (d <= daysInMo) map[`${yr}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`] = h.name;
-          } else if (h.repeat.type === 'nth-weekday') {
-            const { nth, dow } = h.repeat;
-            let count = 0;
-            for (let d = 1; d <= daysInMo; d++) {
-              if (new Date(yr, mo - 1, d).getDay() === dow) {
-                count++;
-                if (count === nth) {
-                  map[`${yr}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`] = h.name;
-                  break;
-                }
-              }
-            }
-          }
-        }
-      }
-    });
-    return map;
-  }, [holidayDefs, year]);
+  const holidays = useMemo(() => buildHolidayMap(holidayDefs, year - 1, year + 1), [holidayDefs, year]);
 
   useEffect(() => {
     setLoading(true);
@@ -270,6 +235,12 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     toastTimer.current = setTimeout(() => setToast(null), 3500);
   }
 
+  function showSuccess(message) {
+    setSuccessToast(message);
+    if (successToastTimer.current) clearTimeout(successToastTimer.current);
+    successToastTimer.current = setTimeout(() => setSuccessToast(null), 3000);
+  }
+
   async function handleSetZoneStart(zoneId, dateStr) {
     const zone = zones.find(z => z.id === zoneId);
     if (!zone) return;
@@ -297,6 +268,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     }
 
     // Propagate to all zones in the same group
+    let updatedZone;
     const group = groups.find(g => g.zoneIds.includes(zoneId));
     if (group) {
       const groupZones = zones.filter(z => group.zoneIds.includes(z.id));
@@ -310,10 +282,34 @@ export default function CalendarView({ year: initYear, onYearChange }) {
         const u = updates.find(u => u.id === z.id);
         return u || z;
       }));
+      updatedZone = updates.find(u => u.id === zoneId);
     } else {
-      const updated = { ...zone, schedule_start: dateStr || null, schedule_overrides: {} };
-      await upsertZone(updated);
-      setZones(prev => prev.map(z => z.id === zoneId ? updated : z));
+      updatedZone = { ...zone, schedule_start: dateStr || null, schedule_overrides: {} };
+      await upsertZone(updatedZone);
+      setZones(prev => prev.map(z => z.id === zoneId ? updatedZone : z));
+    }
+
+    // Auto-cascade: create/update P2→P3→유지관리 start dates
+    if (dateStr && updatedZone && ['P1', 'P2', 'P3'].includes(updatedZone.grade)) {
+      const startYear = new Date(dateStr).getFullYear();
+      const cascadeHolidayMap = buildHolidayMap(holidayDefs, startYear, startYear + 4);
+      const cascadeItems = computeCascadeSchedules(updatedZone, zones, cascadeHolidayMap);
+      if (cascadeItems.length > 0) {
+        const cascaded = [];
+        for (const { zoneData } of cascadeItems) {
+          const saved = await upsertZone(zoneData);
+          cascaded.push(saved);
+        }
+        setZones(prev => {
+          const next = [...prev];
+          for (const cz of cascaded) {
+            const idx = next.findIndex(z => z.id === cz.id);
+            if (idx >= 0) next[idx] = cz; else next.push(cz);
+          }
+          return next;
+        });
+        showSuccess(`다음 단계 일정 ${cascadeItems.length}개가 자동 등록되었습니다.`);
+      }
     }
   }
 
@@ -436,6 +432,15 @@ export default function CalendarView({ year: initYear, onYearChange }) {
           <span className="text-base shrink-0 mt-0.5">⚠</span>
           <span className="text-sm font-medium flex-1 leading-snug">{toast}</span>
           <button onClick={() => setToast(null)} className="text-red-200 hover:text-white text-lg leading-none shrink-0">✕</button>
+        </div>
+      )}
+
+      {/* Success toast */}
+      {successToast && (
+        <div className="fixed top-16 right-4 z-[200] bg-green-600 text-white px-4 py-3 rounded-xl shadow-xl flex items-start gap-3 max-w-sm">
+          <span className="text-base shrink-0 mt-0.5">✓</span>
+          <span className="text-sm font-medium flex-1 leading-snug">{successToast}</span>
+          <button onClick={() => setSuccessToast(null)} className="text-green-200 hover:text-white text-lg leading-none shrink-0">✕</button>
         </div>
       )}
 

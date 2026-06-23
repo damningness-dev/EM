@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, Fragment } from 'react';
-import { fetchZones, upsertZone, deleteZone, fetchMonitoringData, upsertMonitoringEntry, fetchCompletions } from '../lib/api';
+import { fetchZones, upsertZone, deleteZone, fetchMonitoringData, upsertMonitoringEntry, fetchCompletions, fetchHolidays } from '../lib/api';
 import { GRADE_TARGETS, GRADE_COLORS } from '../data/initialData';
-import { calcMeasurements, GRADE_PRIORITY } from '../lib/schedule';
+import { calcMeasurements, GRADE_PRIORITY, buildHolidayMap, computeCascadeSchedules } from '../lib/schedule';
 import { format } from 'date-fns';
 
 const MONTHS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
@@ -18,6 +18,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
   const [search, setSearch] = useState('');
   const [gradeFilter, setGradeFilter] = useState('all');
   const [expandedGroups, setExpandedGroups] = useState(new Set());
+  const [holidayDefs, setHolidayDefs] = useState([]);
   const [showAddZone, setShowAddZone] = useState(false);
   const [zoneForm, setZoneForm] = useState({});
   const [editEntry, setEditEntry] = useState(null);
@@ -25,9 +26,10 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    Promise.all([fetchZones(), fetchCompletions()]).then(([zns, comps]) => {
+    Promise.all([fetchZones(), fetchCompletions(), fetchHolidays()]).then(([zns, comps, hols]) => {
       setZones(zns);
       setCompletions(new Set(comps.map(c => `${c.zoneId}_${c.num}`)));
+      setHolidayDefs(hols);
     });
   }, []);
 
@@ -130,6 +132,27 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
     const updated = { ...zone, schedule_start: dateStr || null, schedule_overrides: {} };
     await upsertZone(updated);
     setZones(prev => prev.map(z => z.id === zoneId ? updated : z));
+
+    if (dateStr && ['P1', 'P2', 'P3'].includes(updated.grade)) {
+      const startYear = new Date(dateStr).getFullYear();
+      const holidayMap = buildHolidayMap(holidayDefs, startYear, startYear + 4);
+      const cascadeItems = computeCascadeSchedules(updated, zones, holidayMap);
+      if (cascadeItems.length > 0) {
+        const cascaded = [];
+        for (const { zoneData } of cascadeItems) {
+          const saved = await upsertZone(zoneData);
+          cascaded.push(saved);
+        }
+        setZones(prev => {
+          const next = [...prev];
+          for (const cz of cascaded) {
+            const idx = next.findIndex(z => z.id === cz.id);
+            if (idx >= 0) next[idx] = cz; else next.push(cz);
+          }
+          return next;
+        });
+      }
+    }
   }
 
   async function addGradeToGroup(group, grade) {
