@@ -28,6 +28,16 @@ const GRADE_CHIP_TEXT = {
 
 const TYPE_LABEL = { daily: '일1회', weekly: '주1회', biweekly: '격주', monthly: '월1회' };
 
+const DEFAULT_CHIP_COLORS = {
+  'cat_공조':       { bg: '#ffffff', border: '#d1d5db' },
+  'cat_질소가스':   { bg: '#f3e8ff', border: '#e9d5ff' },
+  'cat_압축공기':   { bg: '#fef9c3', border: '#fde68a' },
+  'grade_P1':       { text: '#b91c1c' },
+  'grade_P2':       { text: '#15803d' },
+  'grade_P3':       { text: '#1d4ed8' },
+  'grade_유지관리': { text: '#312e81' },
+};
+
 function buildGrid(year, month) {
   const firstDow = new Date(year, month - 1, 1).getDay();
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -87,6 +97,14 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   const [addSchedPopup, setAddSchedPopup] = useState(null); // { date }
   const [addSchedName, setAddSchedName] = useState('');
   const [addSchedPts, setAddSchedPts] = useState({ surface: '', float: '', fall: '', particle: '' });
+  const [chipColors, setChipColors] = useState(() => {
+    try {
+      const saved = localStorage.getItem('em-chip-colors');
+      return saved ? { ...DEFAULT_CHIP_COLORS, ...JSON.parse(saved) } : { ...DEFAULT_CHIP_COLORS };
+    } catch { return { ...DEFAULT_CHIP_COLORS }; }
+  });
+  const [colorPicker, setColorPicker] = useState(null); // { key, label, type:'cat'|'grade', x, y }
+  const colorPickerRef = useRef(null);
 
   const holidays = useMemo(() => buildHolidayMap(holidayDefs, year - 1, year + 1), [holidayDefs, year]);
 
@@ -114,6 +132,15 @@ export default function CalendarView({ year: initYear, onYearChange }) {
       setLoading(false);
     });
   }, [year, month]);
+
+  useEffect(() => {
+    if (!colorPicker) return;
+    function onMouseDown(e) {
+      if (colorPickerRef.current && !colorPickerRef.current.contains(e.target)) setColorPicker(null);
+    }
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [colorPicker]);
 
   function prevMonth() {
     if (month === 1) { const y = year - 1; setYear(y); onYearChange?.(y); setMonth(12); }
@@ -239,6 +266,20 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     setSuccessToast(message);
     if (successToastTimer.current) clearTimeout(successToastTimer.current);
     successToastTimer.current = setTimeout(() => setSuccessToast(null), 3000);
+  }
+
+  function getChipStyle(category, grade) {
+    const cat = chipColors[`cat_${category}`] ?? DEFAULT_CHIP_COLORS[`cat_${category}`] ?? { bg: '#f3f4f6', border: '#e5e7eb' };
+    const grd = chipColors[`grade_${grade}`] ?? DEFAULT_CHIP_COLORS[`grade_${grade}`] ?? { text: '#4b5563' };
+    return { backgroundColor: cat.bg, borderColor: cat.border, borderWidth: '1px', borderStyle: 'solid', color: grd.text };
+  }
+
+  function updateChipColor(key, field, value) {
+    setChipColors(prev => {
+      const next = { ...prev, [key]: { ...(prev[key] ?? DEFAULT_CHIP_COLORS[key] ?? {}), [field]: value } };
+      try { localStorage.setItem('em-chip-colors', JSON.stringify(next)); } catch {}
+      return next;
+    });
   }
 
   async function handleSetZoneStart(zoneId, dateStr) {
@@ -573,6 +614,78 @@ export default function CalendarView({ year: initYear, onYearChange }) {
               >추가</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Chip color picker popover */}
+      {colorPicker && (
+        <div
+          ref={colorPickerRef}
+          className="fixed z-[300] bg-white rounded-xl shadow-2xl border border-gray-200 p-4 w-52"
+          style={{ left: colorPicker.x, top: colorPicker.y }}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-sm font-semibold text-gray-800">{colorPicker.label} 색상</span>
+            <button onClick={() => setColorPicker(null)} className="text-gray-400 hover:text-gray-700 text-lg leading-none">✕</button>
+          </div>
+
+          {/* Preview */}
+          <div className="flex justify-center mb-3 py-2 bg-gray-50 rounded-lg">
+            <span
+              className="text-xs px-2 py-0.5 rounded font-medium"
+              style={colorPicker.type === 'cat'
+                ? { backgroundColor: chipColors[colorPicker.key]?.bg, borderColor: chipColors[colorPicker.key]?.border, borderWidth: 1, borderStyle: 'solid', color: '#374151' }
+                : { color: chipColors[colorPicker.key]?.text, fontWeight: 700, fontSize: '0.8rem' }
+              }
+            >
+              {colorPicker.type === 'cat' ? `${colorPicker.label}[P1]` : colorPicker.label}
+            </span>
+          </div>
+
+          <div className="space-y-2.5">
+            {colorPicker.type === 'cat' && (
+              <>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-600">배경색</span>
+                  <input type="color"
+                    value={chipColors[colorPicker.key]?.bg ?? '#ffffff'}
+                    onChange={e => updateChipColor(colorPicker.key, 'bg', e.target.value)}
+                    className="w-9 h-7 rounded cursor-pointer p-0.5 border border-gray-200"
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-600">테두리색</span>
+                  <input type="color"
+                    value={chipColors[colorPicker.key]?.border ?? '#e5e7eb'}
+                    onChange={e => updateChipColor(colorPicker.key, 'border', e.target.value)}
+                    className="w-9 h-7 rounded cursor-pointer p-0.5 border border-gray-200"
+                  />
+                </div>
+              </>
+            )}
+            {colorPicker.type === 'grade' && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-600">글씨색</span>
+                <input type="color"
+                  value={chipColors[colorPicker.key]?.text ?? '#374151'}
+                  onChange={e => updateChipColor(colorPicker.key, 'text', e.target.value)}
+                  className="w-9 h-7 rounded cursor-pointer p-0.5 border border-gray-200"
+                />
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={() => {
+              const defaults = DEFAULT_CHIP_COLORS[colorPicker.key];
+              setChipColors(prev => {
+                const next = { ...prev, [colorPicker.key]: { ...defaults } };
+                try { localStorage.setItem('em-chip-colors', JSON.stringify(next)); } catch {}
+                return next;
+              });
+            }}
+            className="w-full mt-3 text-xs text-gray-500 bg-gray-100 hover:bg-gray-200 rounded-lg py-1.5 transition-colors"
+          >기본값으로 되돌리기</button>
         </div>
       )}
 
@@ -1158,8 +1271,9 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                             }}
                             onDragEnd={isDone ? undefined : () => setDragOverDay(null)}
                             onClick={(e) => e.stopPropagation()}
-                            className={`text-xs px-1 py-0.5 rounded truncate ${CAT_CHIP_BG[zone.category] || 'bg-gray-100 border border-gray-200'} ${GRADE_CHIP_TEXT[zone.grade] || 'text-gray-600'} ${isDone ? 'line-through opacity-60 cursor-default' : 'cursor-grab active:cursor-grabbing'}`}
+                            className={`text-xs px-1 py-0.5 rounded truncate ${isDone ? 'line-through opacity-60 cursor-default' : 'cursor-grab active:cursor-grabbing'}`}
                             style={{
+                              ...getChipStyle(zone.category, zone.grade),
                               borderLeft: measurement.isFirst ? '3px solid #22c55e' : undefined,
                               borderRight: measurement.isLast ? '3px solid #ef4444' : undefined,
                               fontWeight: (measurement.isFirst || measurement.isLast) ? 600 : undefined,
@@ -1194,16 +1308,48 @@ export default function CalendarView({ year: initYear, onYearChange }) {
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
               <span className="w-3 h-3 rounded bg-yellow-50 border border-yellow-200 inline-block" />이번달 교정
             </div>
-            <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span className="w-3 h-3 rounded bg-gray-100 border border-gray-200 inline-block" />공조
+            {/* Category chips — click to edit colors */}
+            {['공조', '질소가스', '압축공기'].map(cat => {
+              const c = chipColors[`cat_${cat}`] ?? DEFAULT_CHIP_COLORS[`cat_${cat}`];
+              return (
+                <button
+                  key={cat}
+                  onClick={e => {
+                    const x = Math.max(10, Math.min(e.clientX - 104, window.innerWidth - 224));
+                    const y = Math.max(10, e.clientY - 280);
+                    setColorPicker({ key: `cat_${cat}`, label: cat, type: 'cat', x, y });
+                  }}
+                  className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-800 transition-colors group"
+                  title="클릭하여 색상 변경"
+                >
+                  <span className="w-3 h-3 rounded inline-block border transition-transform group-hover:scale-125"
+                    style={{ backgroundColor: c?.bg, borderColor: c?.border }} />
+                  {cat}
+                  <span className="text-[9px] text-gray-300 group-hover:text-blue-400 leading-none">✎</span>
+                </button>
+              );
+            })}
+            {/* Grade text — click to edit text color */}
+            <div className="flex items-center gap-2 text-xs">
+              {['P1', 'P2', 'P3', '유지관리'].map(grade => {
+                const c = chipColors[`grade_${grade}`] ?? DEFAULT_CHIP_COLORS[`grade_${grade}`];
+                return (
+                  <button
+                    key={grade}
+                    onClick={e => {
+                      const x = Math.max(10, Math.min(e.clientX - 104, window.innerWidth - 224));
+                      const y = Math.max(10, e.clientY - 220);
+                      setColorPicker({ key: `grade_${grade}`, label: grade, type: 'grade', x, y });
+                    }}
+                    className="font-semibold hover:opacity-60 transition-opacity group flex items-center gap-0.5"
+                    style={{ color: c?.text }}
+                    title="클릭하여 색상 변경"
+                  >
+                    {grade}<span className="text-[9px] text-gray-300 group-hover:text-blue-400 leading-none font-normal">✎</span>
+                  </button>
+                );
+              })}
             </div>
-            <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span className="w-3 h-3 rounded bg-purple-100 border border-purple-200 inline-block" />질소가스
-            </div>
-            <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span className="w-3 h-3 rounded bg-yellow-100 border border-yellow-200 inline-block" />압축공기
-            </div>
-            <div className="flex items-center gap-1.5 text-xs"><span className="text-red-700 font-semibold">P1</span><span className="text-green-700 font-semibold">P2</span><span className="text-blue-700 font-semibold">P3</span><span className="text-indigo-900 font-semibold">유지관리</span></div>
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
               <span className="inline-block w-3 h-3 rounded" style={{ borderLeft: '3px solid #22c55e' }} />첫 측정
             </div>
@@ -1264,7 +1410,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                         >
                           <div className="flex items-center justify-between gap-1 mb-1">
                             <div className="flex items-center gap-1">
-                              <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${CAT_CHIP_BG[zone.category] || 'bg-gray-100 border border-gray-200'} ${GRADE_CHIP_TEXT[zone.grade] || 'text-gray-600'}`}>
+                              <span className="text-xs font-medium px-1.5 py-0.5 rounded" style={getChipStyle(zone.category, zone.grade)}>
                                 {zone.grade}
                               </span>
                               {measurement.isFirst && <span className="text-xs text-green-600 font-bold">첫측정</span>}
