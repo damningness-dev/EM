@@ -108,8 +108,11 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   const [colorPicker, setColorPicker] = useState(null); // { key, label, type:'cat'|'grade', x, y }
   const colorPickerRef = useRef(null);
   const [optimizePopup, setOptimizePopup] = useState(false);
-  const [optimizeCapacity, setOptimizeCapacity] = useState(() => {
-    try { return localStorage.getItem('em-daily-capacity') || '30'; } catch { return '30'; }
+  const [optimizeCapacities, setOptimizeCapacities] = useState(() => {
+    try {
+      const saved = localStorage.getItem('em-daily-capacities');
+      return saved ? JSON.parse(saved) : { surface: '', float: '', fall: '', particle: '', combined: '' };
+    } catch { return { surface: '', float: '', fall: '', particle: '', combined: '' }; }
   });
   const [optimizing, setOptimizing] = useState(false);
 
@@ -362,16 +365,20 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   }
 
   async function handleOptimize() {
-    const cap = parseInt(optimizeCapacity) || 0;
-    if (cap <= 0) {
-      showError('하루 최대 포인트를 1 이상으로 설정해주세요.');
-      return;
-    }
-    try { localStorage.setItem('em-daily-capacity', String(cap)); } catch {}
+    const caps = {
+      surface:  parseInt(optimizeCapacities.surface)  || 0,
+      float:    parseInt(optimizeCapacities.float)    || 0,
+      fall:     parseInt(optimizeCapacities.fall)     || 0,
+      particle: parseInt(optimizeCapacities.particle) || 0,
+      combined: parseInt(optimizeCapacities.combined) || 0,
+    };
+    const anySet = Object.values(caps).some(v => v > 0);
+    if (!anySet) { showError('최소 하나의 포인트 최대값을 설정해주세요.'); return; }
+    try { localStorage.setItem('em-daily-capacities', JSON.stringify(optimizeCapacities)); } catch {}
     setOptimizing(true);
     try {
       const overrides = optimizeMonthSchedule({
-        zones, tempSchedules, completions, year, month, capacity: cap, holidayMap: holidays,
+        zones, tempSchedules, completions, year, month, capacities: caps, holidayMap: holidays,
       });
       const zoneIds = Object.keys(overrides);
       if (!zoneIds.length) {
@@ -662,72 +669,96 @@ export default function CalendarView({ year: initYear, onYearChange }) {
 
       {/* Schedule optimize popup */}
       {optimizePopup && (() => {
-        const cap = parseInt(optimizeCapacity) || 0;
         const prefix = `${year}-${String(month).padStart(2, '0')}-`;
-        const sp = it => (it.points_surface || 0) + (it.points_float || 0) + (it.points_fall || 0) + (it.points_particle || 0);
-        // Category-agnostic temp baseline per date
-        const tempDay = {};
-        Object.entries(tempByDate).forEach(([ds, arr]) => {
-          if (!ds.startsWith(prefix)) return;
-          arr.forEach(t => { tempDay[ds] = (tempDay[ds] || 0) + sp(t); });
-        });
-        // Per (category, date) zone load
-        const catDay = {};
+        const sp = z => ({ s: z.points_surface||0, f: z.points_float||0, l: z.points_fall||0, p: z.points_particle||0 });
+        // Per-(cat,date) type sums
+        const catDateType = {}; // cat -> date -> {s,f,l,p}
         Object.entries(scheduleByDate).forEach(([ds, arr]) => {
           if (!ds.startsWith(prefix)) return;
           arr.forEach(({ zone }) => {
-            const k = `${zone.category}|${ds}`;
-            catDay[k] = (catDay[k] || 0) + sp(zone);
+            const pts = sp(zone);
+            if (!catDateType[zone.category]) catDateType[zone.category] = {};
+            const cur = catDateType[zone.category][ds] || (catDateType[zone.category][ds] = {s:0,f:0,l:0,p:0});
+            cur.s+=pts.s; cur.f+=pts.f; cur.l+=pts.l; cur.p+=pts.p;
           });
         });
-        // Effective per-category-day load includes temp baseline
-        const effVals = Object.entries(catDay).map(([k, v]) => v + (tempDay[k.split('|')[1]] || 0));
-        const peak = effVals.length ? Math.max(...effVals) : 0;
-        const overDays = cap > 0 ? effVals.filter(v => v > cap).length : 0;
+        // 질소+압축공기 combined per date
+        const combDay = {};
+        Object.entries(scheduleByDate).forEach(([ds, arr]) => {
+          if (!ds.startsWith(prefix)) return;
+          arr.forEach(({ zone }) => {
+            if (zone.category === '질소가스' || zone.category === '압축공기') {
+              const p = sp(zone); combDay[ds] = (combDay[ds]||0)+p.s+p.f+p.l+p.p;
+            }
+          });
+        });
+        Object.entries(tempByDate).forEach(([ds, arr]) => {
+          if (!ds.startsWith(prefix)) return;
+          arr.forEach(t => { const p=sp(t); combDay[ds]=(combDay[ds]||0)+p.s+p.f+p.l+p.p; });
+        });
+        const caps = { s: parseInt(optimizeCapacities.surface)||0, f: parseInt(optimizeCapacities.float)||0, l: parseInt(optimizeCapacities.fall)||0, p: parseInt(optimizeCapacities.particle)||0, comb: parseInt(optimizeCapacities.combined)||0 };
+        let violations = 0;
+        Object.values(catDateType).forEach(dateMp => Object.values(dateMp).forEach(t => {
+          if (caps.s>0&&t.s>caps.s) violations++;
+          if (caps.f>0&&t.f>caps.f) violations++;
+          if (caps.l>0&&t.l>caps.l) violations++;
+          if (caps.p>0&&t.p>caps.p) violations++;
+        }));
+        if (caps.comb>0) Object.values(combDay).forEach(v => { if(v>caps.comb) violations++; });
+
+        const CAP_FIELDS = [['surface','표면균','green'],['float','부유균','blue'],['fall','낙하균','orange'],['particle','부유입자(공조)','pink']];
         return (
           <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/40" onClick={() => !optimizing && setOptimizePopup(false)}>
-            <div className="bg-white rounded-2xl shadow-2xl w-96 p-6" onClick={e => e.stopPropagation()}>
+            <div className="bg-white rounded-2xl shadow-2xl w-[420px] p-6" onClick={e => e.stopPropagation()}>
               <h3 className="text-base font-bold text-gray-900 mb-1">⚖ 일정 최적화</h3>
-              <p className="text-sm text-gray-500 mb-4 leading-relaxed">
-                <span className="font-semibold text-gray-700">{year}년 {MONTH_KR[month - 1]}</span>의 측정 일정을
-                재배치합니다. 하루 측정 포인트 합계가 설정값을 넘는 날의 일정을 측정주기 내에서
-                여유 있는 날로 옮깁니다. <span className="font-medium text-gray-600">공조·질소가스·압축공기는 각각 따로 계산</span>됩니다.
-                (완료된 측정·임시 일정은 고정)
+              <p className="text-xs text-gray-400 mb-4 leading-relaxed">
+                {year}년 {MONTH_KR[month - 1]}의 하루 포인트가 설정값 초과 시 측정주기 내 여유일로 이동합니다.
+                공조·질소가스·압축공기는 <b>각각 따로</b> 계산되며, 질소+압축공기는 합산도 확인합니다. (완료·임시 고정)
               </p>
 
-              <label className="block text-xs text-gray-500 mb-1">하루 최대 포인트 (표면균+부유균+낙하균+부유입자 합계)</label>
-              <input
-                type="number"
-                min="1"
-                max="9999"
-                value={optimizeCapacity}
-                onChange={e => setOptimizeCapacity(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 mb-4"
-                autoFocus
-              />
-
-              <div className="grid grid-cols-2 gap-2 mb-5">
-                <div className="bg-gray-50 rounded-lg px-3 py-2">
-                  <p className="text-[11px] text-gray-400">카테고리별 최대 부하</p>
-                  <p className="text-sm font-bold text-gray-700">{peak}pt</p>
+              <div className="space-y-2 mb-4">
+                <p className="text-xs font-semibold text-gray-600 mb-1">공조 — 유형별 하루 최대 (0 = 제한없음)</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {CAP_FIELDS.map(([key, label]) => (
+                    <div key={key} className="flex items-center gap-2">
+                      <span className="text-xs text-gray-500 w-24 shrink-0">{label}</span>
+                      <input type="number" min="0" max="9999"
+                        value={optimizeCapacities[key]}
+                        onChange={e => setOptimizeCapacities(prev => ({ ...prev, [key]: e.target.value }))}
+                        className="flex-1 border border-gray-200 rounded px-2 py-1 text-xs text-center focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        placeholder="0"
+                      />
+                    </div>
+                  ))}
                 </div>
-                <div className={`rounded-lg px-3 py-2 ${overDays > 0 ? 'bg-red-50' : 'bg-green-50'}`}>
-                  <p className="text-[11px] text-gray-400">초과 (카테고리·일)</p>
-                  <p className={`text-sm font-bold ${overDays > 0 ? 'text-red-600' : 'text-green-600'}`}>{overDays}건</p>
+                <div className="border-t border-gray-100 pt-2 mt-1">
+                  <p className="text-xs font-semibold text-gray-600 mb-1">질소가스 + 압축공기 합산 최대</p>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500 w-24 shrink-0">합산 합계</span>
+                    <input type="number" min="0" max="9999"
+                      value={optimizeCapacities.combined}
+                      onChange={e => setOptimizeCapacities(prev => ({ ...prev, combined: e.target.value }))}
+                      className="w-24 border border-gray-200 rounded px-2 py-1 text-xs text-center focus:outline-none focus:ring-1 focus:ring-purple-500"
+                      placeholder="0"
+                    />
+                  </div>
                 </div>
               </div>
 
+              <div className={`rounded-lg px-3 py-2 mb-4 ${violations > 0 ? 'bg-red-50' : 'bg-green-50'}`}>
+                <p className={`text-sm font-bold ${violations > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                  현재 위반 {violations}건
+                  <span className="text-xs font-normal ml-2 text-gray-400">(현재 달력 기준, 설정값 적용 시)</span>
+                </p>
+              </div>
+
               <div className="flex gap-2 justify-end">
-                <button
-                  onClick={() => setOptimizePopup(false)}
-                  disabled={optimizing}
-                  className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-40"
-                >취소</button>
-                <button
-                  onClick={handleOptimize}
-                  disabled={optimizing || cap <= 0}
-                  className="px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-40"
-                >{optimizing ? '재배치 중...' : '최적화 실행'}</button>
+                <button onClick={() => setOptimizePopup(false)} disabled={optimizing}
+                  className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-40">취소</button>
+                <button onClick={handleOptimize} disabled={optimizing}
+                  className="px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-40">
+                  {optimizing ? '재배치 중...' : '최적화 실행'}
+                </button>
               </div>
             </div>
           </div>
@@ -1291,13 +1322,15 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                 const isDragOver = dragOverDay === dateStr;
                 const dow = new Date(dateStr + 'T00:00:00').getDay();
 
-                const pts = [...schedEvts.map(({ zone }) => zone), ...tempEvts].reduce((acc, item) => ({
-                  surface: acc.surface + (item.points_surface || 0),
-                  float: acc.float + (item.points_float || 0),
-                  fall: acc.fall + (item.points_fall || 0),
-                  particle: acc.particle + (item.points_particle || 0),
-                }), { surface: 0, float: 0, fall: 0, particle: 0 });
-                const hasPts = pts.surface + pts.float + pts.fall + pts.particle > 0;
+                const catPts = { 공조: {s:0,f:0,l:0,p:0}, 질소가스: 0, 압축공기: 0 };
+                schedEvts.forEach(({ zone }) => {
+                  const s=zone.points_surface||0, f=zone.points_float||0, l=zone.points_fall||0, p=zone.points_particle||0;
+                  if (zone.category === '공조') { catPts['공조'].s+=s; catPts['공조'].f+=f; catPts['공조'].l+=l; catPts['공조'].p+=p; }
+                  else if (zone.category === '질소가스') catPts['질소가스'] += s+f+l+p;
+                  else if (zone.category === '압축공기') catPts['압축공기'] += s+f+l+p;
+                });
+                const tempPtsTotal = tempEvts.reduce((t,e)=>t+(e.points_surface||0)+(e.points_float||0)+(e.points_fall||0)+(e.points_particle||0), 0);
+                const hasPts = catPts['공조'].s+catPts['공조'].f+catPts['공조'].l+catPts['공조'].p+catPts['질소가스']+catPts['압축공기']+tempPtsTotal > 0;
                 const nextCellData = grid[idx + 1];
                 const belowCellData = grid[idx + 7];
                 const boundaryRight = (isOther && nextCellData && !nextCellData.isOther)
@@ -1343,10 +1376,13 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                       }`;
                       const ptsChips = hasPts ? (
                         <div className={`flex flex-wrap gap-0.5 ${isOther ? 'opacity-50' : ''}`}>
-                          {pts.surface > 0 && <span className="text-[9px] leading-none bg-green-50 text-green-700 px-0.5 py-0.5 rounded">표{pts.surface}</span>}
-                          {pts.float > 0 && <span className="text-[9px] leading-none bg-blue-50 text-blue-700 px-0.5 py-0.5 rounded">부{pts.float}</span>}
-                          {pts.fall > 0 && <span className="text-[9px] leading-none bg-orange-50 text-orange-700 px-0.5 py-0.5 rounded">낙{pts.fall}</span>}
-                          {pts.particle > 0 && <span className="text-[9px] leading-none bg-purple-50 text-purple-700 px-0.5 py-0.5 rounded">입{pts.particle}</span>}
+                          {catPts['공조'].s > 0 && <span className="text-[9px] leading-none bg-green-50 text-green-700 px-0.5 py-0.5 rounded">표{catPts['공조'].s}</span>}
+                          {catPts['공조'].f > 0 && <span className="text-[9px] leading-none bg-blue-50 text-blue-700 px-0.5 py-0.5 rounded">부{catPts['공조'].f}</span>}
+                          {catPts['공조'].l > 0 && <span className="text-[9px] leading-none bg-orange-50 text-orange-700 px-0.5 py-0.5 rounded">낙{catPts['공조'].l}</span>}
+                          {catPts['공조'].p > 0 && <span className="text-[9px] leading-none bg-pink-50 text-pink-700 px-0.5 py-0.5 rounded">입{catPts['공조'].p}</span>}
+                          {catPts['질소가스'] > 0 && <span className="text-[9px] leading-none bg-purple-100 text-purple-700 px-0.5 py-0.5 rounded">질{catPts['질소가스']}</span>}
+                          {catPts['압축공기'] > 0 && <span className="text-[9px] leading-none bg-yellow-100 text-yellow-700 px-0.5 py-0.5 rounded">압{catPts['압축공기']}</span>}
+                          {tempPtsTotal > 0 && <span className="text-[9px] leading-none bg-gray-100 text-gray-500 px-0.5 py-0.5 rounded">임{tempPtsTotal}</span>}
                         </div>
                       ) : null;
                       return isHol ? (
@@ -1557,10 +1593,22 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                           </p>
                           {(zone.points_surface || zone.points_float || zone.points_fall || zone.points_particle) ? (
                             <div className="flex gap-1 mt-1 flex-wrap">
-                              {zone.points_surface > 0 && <span className="text-[10px] bg-green-50 text-green-600 px-1 py-0.5 rounded">표면균 {zone.points_surface}pt</span>}
-                              {zone.points_float > 0 && <span className="text-[10px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">부유균 {zone.points_float}pt</span>}
-                              {zone.points_fall > 0 && <span className="text-[10px] bg-orange-50 text-orange-600 px-1 py-0.5 rounded">낙하균 {zone.points_fall}pt</span>}
-                              {zone.points_particle > 0 && <span className="text-[10px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">부유입자 {zone.points_particle}pt</span>}
+                              {zone.category === '질소가스' ? (
+                                <span className="text-[10px] bg-purple-100 text-purple-700 px-1 py-0.5 rounded font-medium">
+                                  질소 {(zone.points_surface||0)+(zone.points_float||0)+(zone.points_fall||0)+(zone.points_particle||0)}pt
+                                </span>
+                              ) : zone.category === '압축공기' ? (
+                                <span className="text-[10px] bg-yellow-100 text-yellow-700 px-1 py-0.5 rounded font-medium">
+                                  압축공기 {(zone.points_surface||0)+(zone.points_float||0)+(zone.points_fall||0)+(zone.points_particle||0)}pt
+                                </span>
+                              ) : (
+                                <>
+                                  {zone.points_surface > 0 && <span className="text-[10px] bg-green-50 text-green-600 px-1 py-0.5 rounded">표면균 {zone.points_surface}pt</span>}
+                                  {zone.points_float > 0 && <span className="text-[10px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">부유균 {zone.points_float}pt</span>}
+                                  {zone.points_fall > 0 && <span className="text-[10px] bg-orange-50 text-orange-600 px-1 py-0.5 rounded">낙하균 {zone.points_fall}pt</span>}
+                                  {zone.points_particle > 0 && <span className="text-[10px] bg-pink-50 text-pink-600 px-1 py-0.5 rounded">부유입자 {zone.points_particle}pt</span>}
+                                </>
+                              )}
                             </div>
                           ) : null}
                           {!isDone && <p className="text-[10px] text-gray-300 mt-1">더블클릭으로 완료 처리</p>}

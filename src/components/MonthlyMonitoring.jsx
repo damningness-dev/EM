@@ -24,6 +24,8 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
   const [editEntry, setEditEntry] = useState(null);
   const [entryForm, setEntryForm] = useState({});
   const [saving, setSaving] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(null); // { id, name }
+  const [errorMsg, setErrorMsg] = useState(null);
 
   useEffect(() => {
     Promise.all([fetchZones(), fetchCompletions(), fetchHolidays()]).then(([zns, comps, hols]) => {
@@ -159,13 +161,13 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
     try {
       const saved = await upsertZone({ name: group.name, category: group.category, grade, sort_order: zones.length, schedule_overrides: {} });
       setZones(prev => [...prev, saved]);
-    } catch (e) { alert('추가 실패: ' + e.message); }
+    } catch (e) { setErrorMsg('추가 실패: ' + e.message); }
   }
 
-  async function handleDeleteZone(id) {
-    if (!confirm('구역을 삭제하시겠습니까?')) return;
+  async function handleDeleteZoneConfirmed(id) {
     await deleteZone(id);
     setZones(p => p.filter(z => z.id !== id));
+    setDeleteConfirm(null);
   }
 
   async function saveEntry() {
@@ -182,7 +184,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
       const saved = await upsertMonitoringEntry(payload);
       setMonData(p => ({ ...p, [editEntry.id]: saved }));
       setEditEntry(null);
-    } catch (e) { alert('저장 실패: ' + e.message); }
+    } catch (e) { setErrorMsg('저장 실패: ' + e.message); }
     setSaving(false);
   }
 
@@ -200,7 +202,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
       setZones(p => [...p, saved]);
       setShowAddZone(false);
       setZoneForm({});
-    } catch (e) { alert('추가 실패: ' + e.message); }
+    } catch (e) { setErrorMsg('추가 실패: ' + e.message); }
     setSaving(false);
   }
 
@@ -382,7 +384,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                                       </div>
                                       <div className="flex gap-1 shrink-0" onClick={e => e.stopPropagation()}>
                                         <button onClick={() => { setEntryForm({ ...getEntry(zone.id) }); setEditEntry(zone); }} className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-100 rounded">입력</button>
-                                        <button onClick={() => handleDeleteZone(zone.id)} className="text-xs px-2 py-1 text-red-400 hover:bg-red-50 rounded">삭제</button>
+                                        <button onClick={() => setDeleteConfirm({ id: zone.id, name: `${zone.name}[${zone.grade}]` })} className="text-xs px-2 py-1 text-red-400 hover:bg-red-50 rounded">삭제</button>
                                       </div>
                                     </div>
                                   );
@@ -405,7 +407,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                                   <span className="text-xs text-gray-500 flex-1">{zone.name}</span>
                                   <div className="flex gap-1 shrink-0" onClick={e => e.stopPropagation()}>
                                     <button onClick={() => { setEntryForm({ ...getEntry(zone.id) }); setEditEntry(zone); }} className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-100 rounded">입력</button>
-                                    <button onClick={() => handleDeleteZone(zone.id)} className="text-xs px-2 py-1 text-red-400 hover:bg-red-50 rounded">삭제</button>
+                                    <button onClick={() => setDeleteConfirm({ id: zone.id, name: `${zone.name}[${zone.grade}]` })} className="text-xs px-2 py-1 text-red-400 hover:bg-red-50 rounded">삭제</button>
                                   </div>
                                 </div>
                               ))}
@@ -456,6 +458,34 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
             <div className="flex gap-2 pt-2">
               <button onClick={saveEntry} disabled={saving} className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">저장</button>
               <button onClick={() => setEditEntry(null)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">취소</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Error toast */}
+      {errorMsg && (
+        <div className="fixed top-4 right-4 z-[200] bg-red-500 text-white px-4 py-3 rounded-xl shadow-xl flex items-start gap-3 max-w-sm">
+          <span className="text-base shrink-0 mt-0.5">⚠</span>
+          <span className="text-sm font-medium flex-1 leading-snug">{errorMsg}</span>
+          <button onClick={() => setErrorMsg(null)} className="text-red-200 hover:text-white text-lg leading-none shrink-0">✕</button>
+        </div>
+      )}
+
+      {/* 삭제 확인 모달 */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setDeleteConfirm(null)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <h2 className="font-bold text-gray-800">구역 삭제</h2>
+            <p className="text-sm text-gray-500">
+              <span className="font-semibold text-gray-700">{deleteConfirm.name}</span> 구역을 삭제하시겠습니까?
+              이 작업은 되돌릴 수 없습니다.
+            </p>
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => handleDeleteZoneConfirmed(deleteConfirm.id)}
+                className="flex-1 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600">삭제</button>
+              <button onClick={() => setDeleteConfirm(null)}
+                className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">취소</button>
             </div>
           </div>
         </div>

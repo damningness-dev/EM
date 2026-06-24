@@ -208,52 +208,58 @@ function sumPoints(item) {
        + (item.points_fall || 0) + (item.points_particle || 0);
 }
 
-// Re-balance a single month's measurements so no day's total points exceed
-// `capacity`. The daily point sum is tallied PER CATEGORY (공조 / 질소가스 /
-// 압축공기 are independent), so each category gets its own daily budget.
-// Temp schedules (no category) are a shared baseline that occupies every
-// category's day. Movable (non-completed) measurements are shifted within their
-// own cycle window to the least-loaded working day of the same category.
-// Returns { [zoneId]: { [num]: 'yyyy-MM-dd' } } of new overrides to persist.
-export function optimizeMonthSchedule({ zones, tempSchedules = [], completions = new Set(), year, month, capacity, holidayMap = {} }) {
-  const prefix = `${year}-${String(month).padStart(2, '0')}-`;
+const COMBINED_CATS = ['질소가스', '압축공기'];
 
-  // Collect this month's measurement events, tagged by category.
+// Re-balance a single month's measurements per-type per-category.
+// capacities = { surface, float, fall, particle, combined }
+// - surface/float/fall/particle: daily cap per type, evaluated PER CATEGORY
+// - combined: daily total cap for 질소가스+압축공기 together
+// Returns { [zoneId]: { [num]: 'yyyy-MM-dd' } } of new overrides to persist.
+export function optimizeMonthSchedule({ zones, tempSchedules = [], completions = new Set(), year, month, capacities, holidayMap = {} }) {
+  const prefix = `${year}-${String(month).padStart(2, '0')}-`;
+  const TYPES = ['surface', 'float', 'fall', 'particle'];
+
   const events = [];
   zones.forEach(zone => {
     if (!zone.schedule_start) return;
-    const pts = sumPoints(zone);
+    const pts = {
+      surface: zone.points_surface || 0,
+      float:   zone.points_float   || 0,
+      fall:    zone.points_fall    || 0,
+      particle: zone.points_particle || 0,
+    };
+    const ptTotal = pts.surface + pts.float + pts.fall + pts.particle;
     calcMeasurements(zone, holidayMap).forEach(m => {
       const ds = format(m.date, 'yyyy-MM-dd');
       if (!ds.startsWith(prefix)) return;
-      events.push({
-        zoneId: zone.id,
-        num: m.num,
-        pts,
-        category: zone.category,
-        bounds: getDragBounds(m),
-        ds,
-        done: completions.has(`${zone.id}_${m.num}`),
-      });
+      events.push({ zoneId: zone.id, num: m.num, pts, ptTotal, category: zone.category,
+                    bounds: getDragBounds(m), ds, done: completions.has(`${zone.id}_${m.num}`) });
     });
   });
 
-  // Per-category daily load + a category-agnostic temp-schedule baseline.
-  const load = {};       // category -> { date -> points }
-  const tempLoad = {};   // date -> points (occupies every category's day)
-  const catLoad = (cat) => (load[cat] || (load[cat] = {}));
+  // catLoad[cat][date][type]: per-category per-type daily points
+  const catLoad = {};
+  // combinedLoad[date]: 질소가스+압축공기 total per day (event portion)
+  const combinedLoad = {};
+  // tempCombined[date]: temp schedule points (no category, contributes to combined)
+  const tempCombined = {};
+
   tempSchedules.forEach(t => {
     if (!t.date || !t.date.startsWith(prefix)) return;
-    tempLoad[t.date] = (tempLoad[t.date] || 0) + sumPoints(t);
+    tempCombined[t.date] = (tempCombined[t.date] || 0) + sumPoints(t);
   });
   events.forEach(e => {
-    const cl = catLoad(e.category);
-    cl[e.ds] = (cl[e.ds] || 0) + e.pts;
+    if (!catLoad[e.category]) catLoad[e.category] = {};
+    const cl = catLoad[e.category][e.ds] || (catLoad[e.category][e.ds] = { surface:0, float:0, fall:0, particle:0 });
+    TYPES.forEach(t => { cl[t] += e.pts[t]; });
+    if (COMBINED_CATS.includes(e.category)) {
+      combinedLoad[e.ds] = (combinedLoad[e.ds] || 0) + e.ptTotal;
+    }
   });
-  const effLoad = (cat, ds) => ((load[cat] && load[cat][ds]) || 0) + (tempLoad[ds] || 0);
 
-  // Working days (in this month) within a measurement's window.
-  const windowDays = (bounds) => {
+  const effCombined = ds => (combinedLoad[ds] || 0) + (tempCombined[ds] || 0);
+
+  const windowDays = bounds => {
     const days = [];
     let d = new Date(bounds.min);
     while (d <= bounds.max) {
@@ -264,41 +270,76 @@ export function optimizeMonthSchedule({ zones, tempSchedules = [], completions =
     return days;
   };
 
-  const movable = events.filter(e => !e.done && e.pts > 0);
+  const movable = events.filter(e => !e.done && e.ptTotal > 0);
   movable.forEach(e => { e.win = windowDays(e.bounds); });
 
   const overrides = {};
-  const maxIter = movable.length * 8 + 50;
+  const maxIter = movable.length * 10 + 50;
+
   for (let iter = 0; iter < maxIter; iter++) {
-    // Most overloaded (category, day) above capacity.
-    let day = null, cat = null, dayLoad = -1;
-    for (const c in load) {
-      for (const ds in load[c]) {
-        const v = effLoad(c, ds);
-        if (v > capacity && v > dayLoad) { day = ds; cat = c; dayLoad = v; }
+    // Find worst violation: (kind='type', cat, ds, type) or (kind='combined', ds)
+    let worst = null, worstExcess = 0;
+
+    for (const cat in catLoad) {
+      for (const ds in catLoad[cat]) {
+        const cl = catLoad[cat][ds];
+        for (const t of TYPES) {
+          const cap = capacities[t];
+          if (cap > 0 && cl[t] > cap) {
+            const ex = cl[t] - cap;
+            if (ex > worstExcess) { worstExcess = ex; worst = { kind: 'type', cat, ds, type: t }; }
+          }
+        }
       }
     }
-    if (!day) break;
+    for (const ds in combinedLoad) {
+      const eff = effCombined(ds);
+      const cap = capacities.combined;
+      if (cap > 0 && eff > cap) {
+        const ex = eff - cap;
+        if (ex > worstExcess) { worstExcess = ex; worst = { kind: 'combined', ds }; }
+      }
+    }
+    if (!worst) break;
 
-    // Best beneficial relocation of a same-category event off `day`.
     let best = null;
-    for (const e of movable) {
-      if (e.category !== cat || e.ds !== day || e.win.length < 2) continue;
-      for (const target of e.win) {
-        if (target === e.ds) continue;
-        const newTarget = effLoad(cat, target) + e.pts;
-        if (newTarget < dayLoad && (!best || newTarget < best.newTarget)) {
-          best = { e, target, newTarget };
+    if (worst.kind === 'type') {
+      for (const e of movable) {
+        if (e.category !== worst.cat || e.ds !== worst.ds || e.win.length < 2 || e.pts[worst.type] <= 0) continue;
+        for (const target of e.win) {
+          if (target === e.ds) continue;
+          const targetCl = catLoad[e.category]?.[target] || { surface:0, float:0, fall:0, particle:0 };
+          const newVal = targetCl[worst.type] + e.pts[worst.type];
+          if (newVal < catLoad[worst.cat][worst.ds][worst.type] && (!best || newVal < best.metric)) {
+            best = { e, target, metric: newVal };
+          }
+        }
+      }
+    } else {
+      for (const e of movable) {
+        if (!COMBINED_CATS.includes(e.category) || e.ds !== worst.ds || e.win.length < 2) continue;
+        for (const target of e.win) {
+          if (target === e.ds) continue;
+          const newCombined = effCombined(target) + e.ptTotal;
+          if (newCombined < effCombined(worst.ds) && (!best || newCombined < best.metric)) {
+            best = { e, target, metric: newCombined };
+          }
         }
       }
     }
     if (!best) break;
 
-    const cl = catLoad(cat);
-    cl[best.e.ds] -= best.e.pts;
-    cl[best.target] = (cl[best.target] || 0) + best.e.pts;
-    best.e.ds = best.target;
-    overrides[best.e.zoneId] = { ...(overrides[best.e.zoneId] || {}), [best.e.num]: best.target };
+    const { e, target } = best;
+    const fromCl = catLoad[e.category][e.ds];
+    TYPES.forEach(t => { fromCl[t] -= e.pts[t]; });
+    if (!catLoad[e.category][target]) catLoad[e.category][target] = { surface:0, float:0, fall:0, particle:0 };
+    TYPES.forEach(t => { catLoad[e.category][target][t] += e.pts[t]; });
+    if (COMBINED_CATS.includes(e.category)) {
+      combinedLoad[e.ds] = (combinedLoad[e.ds] || 0) - e.ptTotal;
+      combinedLoad[target] = (combinedLoad[target] || 0) + e.ptTotal;
+    }
+    e.ds = target;
+    overrides[e.zoneId] = { ...(overrides[e.zoneId] || {}), [e.num]: target };
   }
 
   return overrides;
