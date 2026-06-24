@@ -32,6 +32,7 @@ const DEFAULT_CHIP_COLORS = {
   'cat_공조':       { bg: '#ffffff', border: '#d1d5db' },
   'cat_질소가스':   { bg: '#f3e8ff', border: '#e9d5ff' },
   'cat_압축공기':   { bg: '#fef9c3', border: '#fde68a' },
+  'cat_청정등급':   { bg: '#cffafe', border: '#a5f3fc' },
   'grade_P1':       { text: '#b91c1c' },
   'grade_P2':       { text: '#15803d' },
   'grade_P3':       { text: '#1d4ed8' },
@@ -870,7 +871,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
               <div className="flex-1 overflow-y-auto flex flex-col">
                 {/* Category sub-tabs */}
                 <div className="flex gap-1.5 px-4 py-2.5 border-b border-gray-100 shrink-0">
-                  {['전체', '공조', '질소가스', '압축공기'].map(cat => (
+                  {['전체', '공조', '질소가스', '압축공기', '청정등급'].map(cat => (
                     <button
                       key={cat}
                       onClick={() => setZonesCatFilter(cat)}
@@ -881,7 +882,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                   ))}
                 </div>
                 <div className="flex-1 overflow-y-auto">
-                  {(zonesCatFilter === '전체' ? ['공조', '압축공기', '질소가스'] : [zonesCatFilter]).map(cat => {
+                  {(zonesCatFilter === '전체' ? ['공조', '압축공기', '질소가스', '청정등급'] : [zonesCatFilter]).map(cat => {
                     const catGroups = zoneGroups.filter(g => g.category === cat);
                     if (!catGroups.length) return null;
                     return (
@@ -1111,7 +1112,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                         className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                       >
                         <option value="">구역 추가...</option>
-                        {['공조','압축공기','질소가스'].map(c => {
+                        {['공조','압축공기','질소가스','청정등급'].map(c => {
                           const opts = zones.filter(z =>
                             z.category === c &&
                             !group.zoneIds.includes(z.id) &&
@@ -1322,15 +1323,16 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                 const isDragOver = dragOverDay === dateStr;
                 const dow = new Date(dateStr + 'T00:00:00').getDay();
 
-                const catPts = { 공조: {s:0,f:0,l:0,p:0}, 질소가스: 0, 압축공기: 0 };
+                const catPts = { 공조: {s:0,f:0,l:0,p:0}, 질소가스: 0, 압축공기: 0, 청정등급: 0 };
                 schedEvts.forEach(({ zone }) => {
                   const s=zone.points_surface||0, f=zone.points_float||0, l=zone.points_fall||0, p=zone.points_particle||0;
                   if (zone.category === '공조') { catPts['공조'].s+=s; catPts['공조'].f+=f; catPts['공조'].l+=l; catPts['공조'].p+=p; }
                   else if (zone.category === '질소가스') catPts['질소가스'] += s+f+l+p;
                   else if (zone.category === '압축공기') catPts['압축공기'] += s+f+l+p;
+                  else if (zone.category === '청정등급') catPts['청정등급'] += s+f+l+p;
                 });
                 const tempPtsTotal = tempEvts.reduce((t,e)=>t+(e.points_surface||0)+(e.points_float||0)+(e.points_fall||0)+(e.points_particle||0), 0);
-                const hasPts = catPts['공조'].s+catPts['공조'].f+catPts['공조'].l+catPts['공조'].p+catPts['질소가스']+catPts['압축공기']+tempPtsTotal > 0;
+                const hasPts = catPts['공조'].s+catPts['공조'].f+catPts['공조'].l+catPts['공조'].p+catPts['질소가스']+catPts['압축공기']+catPts['청정등급']+tempPtsTotal > 0;
                 const nextCellData = grid[idx + 1];
                 const belowCellData = grid[idx + 7];
                 const boundaryRight = (isOther && nextCellData && !nextCellData.isOther)
@@ -1382,6 +1384,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                           {catPts['공조'].p > 0 && <span className="text-[9px] leading-none bg-pink-50 text-pink-700 px-0.5 py-0.5 rounded">입{catPts['공조'].p}</span>}
                           {catPts['질소가스'] > 0 && <span className="text-[9px] leading-none bg-purple-100 text-purple-700 px-0.5 py-0.5 rounded">질{catPts['질소가스']}</span>}
                           {catPts['압축공기'] > 0 && <span className="text-[9px] leading-none bg-yellow-100 text-yellow-700 px-0.5 py-0.5 rounded">압{catPts['압축공기']}</span>}
+                          {catPts['청정등급'] > 0 && <span className="text-[9px] leading-none bg-cyan-100 text-cyan-700 px-0.5 py-0.5 rounded">청{catPts['청정등급']}</span>}
                           {tempPtsTotal > 0 && <span className="text-[9px] leading-none bg-gray-100 text-gray-500 px-0.5 py-0.5 rounded">임{tempPtsTotal}</span>}
                         </div>
                       ) : null;
@@ -1467,7 +1470,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
               <span className="w-3 h-3 rounded bg-yellow-50 border border-yellow-200 inline-block" />이번달 교정
             </div>
             {/* Category chips — click to edit colors */}
-            {['공조', '질소가스', '압축공기'].map(cat => {
+            {['공조', '질소가스', '압축공기', '청정등급'].map(cat => {
               const c = chipColors[`cat_${cat}`] ?? DEFAULT_CHIP_COLORS[`cat_${cat}`];
               return (
                 <button
@@ -1600,6 +1603,10 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                               ) : zone.category === '압축공기' ? (
                                 <span className="text-[10px] bg-yellow-100 text-yellow-700 px-1 py-0.5 rounded font-medium">
                                   압축공기 {(zone.points_surface||0)+(zone.points_float||0)+(zone.points_fall||0)+(zone.points_particle||0)}pt
+                                </span>
+                              ) : zone.category === '청정등급' ? (
+                                <span className="text-[10px] bg-cyan-100 text-cyan-700 px-1 py-0.5 rounded font-medium">
+                                  청정등급 {(zone.points_surface||0)+(zone.points_float||0)+(zone.points_fall||0)+(zone.points_particle||0)}pt
                                 </span>
                               ) : (
                                 <>

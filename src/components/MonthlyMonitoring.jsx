@@ -5,7 +5,7 @@ import { calcMeasurements, calcEndDate, GRADE_PRIORITY, buildHolidayMap, compute
 import { format } from 'date-fns';
 
 const MONTHS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
-const CATEGORIES = ['공조', '질소가스', '압축공기'];
+const CATEGORIES = ['공조', '질소가스', '압축공기', '청정등급'];
 const GRADES = ['P1', 'P2', 'P3', '유지관리', 'OQ', 'PQ'];
 const PROGRESSION = ['P1', 'P2', 'P3', '유지관리'];
 
@@ -164,10 +164,26 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
     } catch (e) { setErrorMsg('추가 실패: ' + e.message); }
   }
 
-  async function handleDeleteZoneConfirmed(id) {
-    await deleteZone(id);
-    setZones(p => p.filter(z => z.id !== id));
+  async function handleDeleteConfirmed() {
+    const ids = deleteConfirm.ids;
+    for (const id of ids) await deleteZone(id);
+    setZones(p => p.filter(z => !ids.includes(z.id)));
     setDeleteConfirm(null);
+  }
+
+  async function handleChangeGroupCategory(group, newCategory) {
+    if (!newCategory || newCategory === group.category) return;
+    // Block if a group with the same name already exists under the target category
+    const targetKey = `${newCategory}|||${group.name}`;
+    if (zoneGroups[targetKey]) {
+      setErrorMsg(`동일한 구역명이 존재합니다 "${group.name}"`);
+      return;
+    }
+    const updates = await Promise.all(group.zones.map(z => {
+      const u = { ...z, category: newCategory };
+      return upsertZone(u).then(() => u);
+    }));
+    setZones(prev => prev.map(z => updates.find(u => u.id === z.id) || z));
   }
 
   async function saveEntry() {
@@ -193,7 +209,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
     const groupKey = `${zoneForm.category || '공조'}|||${zoneForm.name}`;
     const existing = zoneGroups[groupKey];
     if (existing && PROGRESSION.includes(zoneForm.grade) && existing.zones.some(z => z.grade === zoneForm.grade)) {
-      alert(`이미 ${zoneForm.grade} 등급이 존재합니다.`);
+      setErrorMsg(`동일한 구역명이 존재합니다 "${zoneForm.name}"`);
       return;
     }
     setSaving(true);
@@ -297,7 +313,15 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                             {isGroupActive && <span className="text-[10px] bg-blue-100 text-blue-600 px-1 py-0.5 rounded font-medium">진행중</span>}
                           </div>
                         </td>
-                        <td className="px-3 py-3 text-center text-xs text-gray-500">{group.category}</td>
+                        <td className="px-3 py-3 text-center" onClick={e => e.stopPropagation()}>
+                          <select
+                            value={group.category}
+                            onChange={e => handleChangeGroupCategory(group, e.target.value)}
+                            className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          >
+                            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                        </td>
                         <td className="px-3 py-3 text-center">
                           {activeZone && (
                             <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${GRADE_COLORS[activeZone.grade] || 'bg-gray-100 text-gray-600'}`}>
@@ -328,12 +352,18 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                           </span>
                         </td>
                         <td className="px-3 py-3 text-center" onClick={e => e.stopPropagation()}>
-                          {activeZone && (
+                          <div className="flex items-center justify-center gap-1">
+                            {activeZone && (
+                              <button
+                                onClick={() => { setEntryForm({ ...getEntry(activeZone.id) }); setEditEntry(activeZone); }}
+                                className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-50 rounded"
+                              >수정</button>
+                            )}
                             <button
-                              onClick={() => { setEntryForm({ ...getEntry(activeZone.id) }); setEditEntry(activeZone); }}
-                              className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-50 rounded"
-                            >입력</button>
-                          )}
+                              onClick={() => setDeleteConfirm({ ids: group.zones.map(z => z.id), name: group.name })}
+                              className="text-xs px-2 py-1 text-red-400 hover:bg-red-50 rounded"
+                            >삭제</button>
+                          </div>
                         </td>
                       </tr>
 
@@ -383,8 +413,8 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                                         )}
                                       </div>
                                       <div className="flex gap-1 shrink-0" onClick={e => e.stopPropagation()}>
-                                        <button onClick={() => { setEntryForm({ ...getEntry(zone.id) }); setEditEntry(zone); }} className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-100 rounded">입력</button>
-                                        <button onClick={() => setDeleteConfirm({ id: zone.id, name: `${zone.name}[${zone.grade}]` })} className="text-xs px-2 py-1 text-red-400 hover:bg-red-50 rounded">삭제</button>
+                                        <button onClick={() => { setEntryForm({ ...getEntry(zone.id) }); setEditEntry(zone); }} className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-100 rounded">수정</button>
+                                        <button onClick={() => setDeleteConfirm({ ids: [zone.id], name: `${zone.name}[${zone.grade}]` })} className="text-xs px-2 py-1 text-red-400 hover:bg-red-50 rounded">삭제</button>
                                       </div>
                                     </div>
                                   );
@@ -406,8 +436,8 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                                   <span className={`text-xs font-bold px-2 py-1 rounded shrink-0 ${GRADE_COLORS[zone.grade] || 'bg-gray-100 text-gray-600'}`}>{zone.grade}</span>
                                   <span className="text-xs text-gray-500 flex-1">{zone.name}</span>
                                   <div className="flex gap-1 shrink-0" onClick={e => e.stopPropagation()}>
-                                    <button onClick={() => { setEntryForm({ ...getEntry(zone.id) }); setEditEntry(zone); }} className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-100 rounded">입력</button>
-                                    <button onClick={() => setDeleteConfirm({ id: zone.id, name: `${zone.name}[${zone.grade}]` })} className="text-xs px-2 py-1 text-red-400 hover:bg-red-50 rounded">삭제</button>
+                                    <button onClick={() => { setEntryForm({ ...getEntry(zone.id) }); setEditEntry(zone); }} className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-100 rounded">수정</button>
+                                    <button onClick={() => setDeleteConfirm({ ids: [zone.id], name: `${zone.name}[${zone.grade}]` })} className="text-xs px-2 py-1 text-red-400 hover:bg-red-50 rounded">삭제</button>
                                   </div>
                                 </div>
                               ))}
@@ -478,11 +508,12 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4" onClick={e => e.stopPropagation()}>
             <h2 className="font-bold text-gray-800">구역 삭제</h2>
             <p className="text-sm text-gray-500">
-              <span className="font-semibold text-gray-700">{deleteConfirm.name}</span> 구역을 삭제하시겠습니까?
+              <span className="font-semibold text-gray-700">{deleteConfirm.name}</span>
+              {deleteConfirm.ids.length > 1 ? ` 그룹(${deleteConfirm.ids.length}개 등급)을` : ' 구역을'} 삭제하시겠습니까?
               이 작업은 되돌릴 수 없습니다.
             </p>
             <div className="flex gap-2 pt-1">
-              <button onClick={() => handleDeleteZoneConfirmed(deleteConfirm.id)}
+              <button onClick={handleDeleteConfirmed}
                 className="flex-1 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600">삭제</button>
               <button onClick={() => setDeleteConfirm(null)}
                 className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">취소</button>

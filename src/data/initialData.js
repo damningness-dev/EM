@@ -122,4 +122,5 @@ export const CATEGORY_SECTION = {
   '공조':   { bg: 'bg-gray-50',   border: 'border-gray-200',   text: 'text-gray-700'   },
   '질소가스': { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-800' },
   '압축공기': { bg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-800' },
+  '청정등급': { bg: 'bg-cyan-50',   border: 'border-cyan-200',   text: 'text-cyan-800'   },
 };
