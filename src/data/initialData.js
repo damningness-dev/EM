@@ -122,5 +122,13 @@ export const CATEGORY_SECTION = {
   '공조':   { bg: 'bg-gray-50',   border: 'border-gray-200',   text: 'text-gray-700'   },
   '질소가스': { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-800' },
   '압축공기': { bg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-800' },
-  '청정등급': { bg: 'bg-cyan-50',   border: 'border-cyan-200',   text: 'text-cyan-800'   },
+};
+
+// 청정등급 (청정도 분류) — 각 일정에 부여하는 속성
+export const CLEAN_GRADES = ['A', 'B', 'C', 'D'];
+export const CLEAN_GRADE_COLORS = {
+  'A': 'bg-rose-100 text-rose-700',
+  'B': 'bg-amber-100 text-amber-700',
+  'C': 'bg-sky-100 text-sky-700',
+  'D': 'bg-gray-100 text-gray-600',
 };

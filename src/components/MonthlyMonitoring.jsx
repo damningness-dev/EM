@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo, Fragment } from 'react';
 import { fetchZones, upsertZone, deleteZone, fetchMonitoringData, upsertMonitoringEntry, fetchCompletions, fetchHolidays } from '../lib/api';
-import { GRADE_TARGETS, GRADE_COLORS } from '../data/initialData';
+import { GRADE_TARGETS, GRADE_COLORS, CLEAN_GRADES, CLEAN_GRADE_COLORS } from '../data/initialData';
 import { calcMeasurements, calcEndDate, GRADE_PRIORITY, buildHolidayMap, computeCascadeSchedules } from '../lib/schedule';
 import { format } from 'date-fns';
 
 const MONTHS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
-const CATEGORIES = ['공조', '질소가스', '압축공기', '청정등급'];
+const CATEGORIES = ['공조', '질소가스', '압축공기'];
 const GRADES = ['P1', 'P2', 'P3', '유지관리', 'OQ', 'PQ'];
 const PROGRESSION = ['P1', 'P2', 'P3', '유지관리'];
 
@@ -29,6 +29,12 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
 
   useEffect(() => {
     Promise.all([fetchZones(), fetchCompletions(), fetchHolidays()]).then(([zns, comps, hols]) => {
+      // 레거시 '청정등급' 분류 → '공조'로 이관 (청정등급은 이제 각 일정의 속성)
+      const legacy = zns.filter(z => z.category === '청정등급');
+      if (legacy.length) {
+        legacy.forEach(z => upsertZone({ ...z, category: '공조' }));
+        zns = zns.map(z => z.category === '청정등급' ? { ...z, category: '공조' } : z);
+      }
       setZones(zns);
       setCompletions(new Set(comps.map(c => `${c.zoneId}_${c.num}`)));
       setHolidayDefs(hols);
@@ -159,7 +165,8 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
   async function addGradeToGroup(group, grade) {
     if (group.zones.some(z => z.grade === grade)) return;
     try {
-      const saved = await upsertZone({ name: group.name, category: group.category, grade, sort_order: zones.length, schedule_overrides: {} });
+      const cleanGrade = group.zones.find(z => z.clean_grade)?.clean_grade || null;
+      const saved = await upsertZone({ name: group.name, category: group.category, grade, clean_grade: cleanGrade, sort_order: zones.length, schedule_overrides: {} });
       setZones(prev => [...prev, saved]);
     } catch (e) { setErrorMsg('추가 실패: ' + e.message); }
   }
@@ -181,6 +188,17 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
     }
     const updates = await Promise.all(group.zones.map(z => {
       const u = { ...z, category: newCategory };
+      return upsertZone(u).then(() => u);
+    }));
+    setZones(prev => prev.map(z => updates.find(u => u.id === z.id) || z));
+  }
+
+  // 청정등급 부여 — 그룹 전체 또는 단일 일정(zone)에 적용
+  async function handleSetCleanGrade(zoneIds, value) {
+    const ids = Array.isArray(zoneIds) ? zoneIds : [zoneIds];
+    const cleanGrade = value || null;
+    const updates = await Promise.all(zones.filter(z => ids.includes(z.id)).map(z => {
+      const u = { ...z, clean_grade: cleanGrade };
       return upsertZone(u).then(() => u);
     }));
     setZones(prev => prev.map(z => updates.find(u => u.id === z.id) || z));
@@ -214,7 +232,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
     }
     setSaving(true);
     try {
-      const saved = await upsertZone({ name: zoneForm.name, grade: zoneForm.grade, category: zoneForm.category || '공조', sort_order: zones.length, schedule_overrides: {} });
+      const saved = await upsertZone({ name: zoneForm.name, grade: zoneForm.grade, category: zoneForm.category || '공조', clean_grade: zoneForm.clean_grade || null, sort_order: zones.length, schedule_overrides: {} });
       setZones(p => [...p, saved]);
       setShowAddZone(false);
       setZoneForm({});
@@ -276,6 +294,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                   <th className="w-8 px-3 py-3"></th>
                   <th className="text-left px-3 py-3 text-gray-500 font-medium">구역명</th>
                   <th className="text-center px-3 py-3 text-gray-500 font-medium">분류</th>
+                  <th className="text-center px-3 py-3 text-gray-500 font-medium">청정등급</th>
                   <th className="text-center px-3 py-3 text-gray-500 font-medium">활성등급</th>
                   <th className="text-center px-3 py-3 text-gray-500 font-medium">이번달</th>
                   <th className="text-center px-3 py-3 text-gray-500 font-medium">부유균</th>
@@ -320,6 +339,16 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                             className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                           >
                             {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                        </td>
+                        <td className="px-3 py-3 text-center" onClick={e => e.stopPropagation()}>
+                          <select
+                            value={activeZone?.clean_grade || ''}
+                            onChange={e => handleSetCleanGrade(group.zones.map(z => z.id), e.target.value)}
+                            className={`text-xs border rounded px-1.5 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 font-semibold ${activeZone?.clean_grade ? (CLEAN_GRADE_COLORS[activeZone.clean_grade] || 'bg-white text-gray-600') + ' border-transparent' : 'bg-white text-gray-400 border-gray-200'}`}
+                          >
+                            <option value="">-</option>
+                            {CLEAN_GRADES.map(c => <option key={c} value={c}>{c}</option>)}
                           </select>
                         </td>
                         <td className="px-3 py-3 text-center">
@@ -370,7 +399,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                       {/* Expanded grade progression */}
                       {isExpanded && (
                         <tr>
-                          <td colSpan={11} className="p-0">
+                          <td colSpan={12} className="p-0">
                             <div className="bg-gray-50 border-b-2 border-blue-100 px-6 py-3 space-y-2">
                               {PROGRESSION.map(grade => {
                                 const zone = gradeMap[grade];
@@ -386,6 +415,16 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                                     <div key={grade} className={`flex items-center gap-3 rounded-lg px-3 py-2.5 border ${isActive ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-100'}`}>
                                       <span className={`text-xs font-bold px-2 py-1 rounded shrink-0 ${GRADE_COLORS[grade] || 'bg-gray-100 text-gray-600'}`}>{grade}</span>
                                       {isActive && <span className="text-[10px] bg-blue-100 text-blue-600 px-1 py-0.5 rounded font-medium shrink-0">진행중</span>}
+                                      <select
+                                        value={zone.clean_grade || ''}
+                                        onChange={e => handleSetCleanGrade(zone.id, e.target.value)}
+                                        onClick={e => e.stopPropagation()}
+                                        title="청정등급"
+                                        className={`text-[10px] border rounded px-1 py-0.5 shrink-0 focus:outline-none focus:ring-1 focus:ring-blue-500 font-semibold ${zone.clean_grade ? (CLEAN_GRADE_COLORS[zone.clean_grade] || 'bg-white text-gray-600') + ' border-transparent' : 'bg-white text-gray-400 border-gray-200'}`}
+                                      >
+                                        <option value="">청정-</option>
+                                        {CLEAN_GRADES.map(c => <option key={c} value={c}>{c}등급</option>)}
+                                      </select>
                                       <div className="flex items-center gap-2 flex-1 min-w-0 flex-wrap">
                                         <span className="text-xs text-gray-400 shrink-0">시작일</span>
                                         <input
@@ -449,7 +488,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                   );
                 })}
                 {filteredGroups.length === 0 && (
-                  <tr><td colSpan={11} className="px-4 py-8 text-center text-sm text-gray-400">구역이 없습니다.</td></tr>
+                  <tr><td colSpan={12} className="px-4 py-8 text-center text-sm text-gray-400">구역이 없습니다.</td></tr>
                 )}
               </tbody>
             </table>
@@ -546,6 +585,13 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                   {CATEGORIES.map(c => <option key={c}>{c}</option>)}
                 </select>
               </div>
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">청정등급</label>
+              <select className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={zoneForm.clean_grade || ''} onChange={e => setZoneForm(f => ({ ...f, clean_grade: e.target.value }))}>
+                <option value="">미지정</option>
+                {CLEAN_GRADES.map(c => <option key={c} value={c}>{c}등급</option>)}
+              </select>
             </div>
             <div className="flex gap-2 pt-2">
               <button onClick={handleAddZone} disabled={saving} className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">추가</button>

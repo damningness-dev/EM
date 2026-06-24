@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule } from '../lib/schedule';
-import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
+import { GRADE_COLORS, CATEGORY_SECTION, CLEAN_GRADES, CLEAN_GRADE_COLORS } from '../data/initialData';
 
 const DOW_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 const MONTH_KR = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
@@ -32,17 +32,16 @@ const DEFAULT_CHIP_COLORS = {
   'cat_공조':       { bg: '#ffffff', border: '#d1d5db' },
   'cat_질소가스':   { bg: '#f3e8ff', border: '#e9d5ff' },
   'cat_압축공기':   { bg: '#fef9c3', border: '#fde68a' },
-  'cat_청정등급':   { bg: '#cffafe', border: '#a5f3fc' },
   'grade_P1':       { text: '#b91c1c' },
   'grade_P2':       { text: '#15803d' },
   'grade_P3':       { text: '#1d4ed8' },
   'grade_유지관리': { text: '#312e81' },
 };
 
-function buildGrid(year, month) {
-  // Monday-first grid: leading blanks = days from Mon up to the 1st.
+function buildGrid(year, month, weekStart = 'mon') {
+  // leading blanks = days from the week-start weekday up to the 1st.
   const firstDow = new Date(year, month - 1, 1).getDay();
-  const lead = (firstDow + 6) % 7;
+  const lead = weekStart === 'sun' ? firstDow : (firstDow + 6) % 7;
   const daysInMonth = new Date(year, month, 0).getDate();
   const prevYear = month === 1 ? year - 1 : year;
   const prevMonth = month === 1 ? 12 : month - 1;
@@ -116,6 +115,15 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     } catch { return { surface: '', float: '', fall: '', particle: '', combined: '' }; }
   });
   const [optimizing, setOptimizing] = useState(false);
+  const [calSettingsPopup, setCalSettingsPopup] = useState(false);
+  const [weekStart, setWeekStart] = useState(() => {
+    try { return localStorage.getItem('em-week-start') || 'mon'; } catch { return 'mon'; }
+  });
+
+  function changeWeekStart(value) {
+    setWeekStart(value);
+    try { localStorage.setItem('em-week-start', value); } catch {}
+  }
 
   const holidays = useMemo(() => buildHolidayMap(holidayDefs, year - 1, year + 1), [holidayDefs, year]);
 
@@ -133,6 +141,12 @@ export default function CalendarView({ year: initYear, onYearChange }) {
       fetchTempSchedules(),
     ]).then(([cal, zns, mon, plan, grps, hols, comps, temps]) => {
       setCalibration(cal);
+      // 레거시 '청정등급' 분류 → '공조'로 이관 (청정등급은 이제 각 일정의 속성)
+      const legacy = zns.filter(z => z.category === '청정등급');
+      if (legacy.length) {
+        legacy.forEach(z => upsertZone({ ...z, category: '공조' }));
+        zns = zns.map(z => z.category === '청정등급' ? { ...z, category: '공조' } : z);
+      }
       setZones(zns);
       setMonitoring(mon);
       setAnnualPlan(plan);
@@ -241,7 +255,8 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   const calibThisMonthCount = Object.keys(calibByDate).filter(k => k.startsWith(curMonthPrefix)).length;
   const scheduledZonesCount = zones.filter(z => z.schedule_start && ['P1','P2','P3'].includes(z.grade)).length;
 
-  const grid = buildGrid(year, month);
+  const grid = buildGrid(year, month, weekStart);
+  const dowOrder = weekStart === 'sun' ? [0, 1, 2, 3, 4, 5, 6] : [1, 2, 3, 4, 5, 6, 0];
   const isCurrentMonth = today.getFullYear() === year && today.getMonth() + 1 === month;
   const todayDate = today.getDate();
 
@@ -766,6 +781,34 @@ export default function CalendarView({ year: initYear, onYearChange }) {
         );
       })()}
 
+      {/* Calendar settings popup */}
+      {calSettingsPopup && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/40" onClick={() => setCalSettingsPopup(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-80 p-6" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-gray-900 mb-1">🗓 달력 설정</h3>
+            <p className="text-xs text-gray-400 mb-4">달력의 시작 요일을 선택하세요.</p>
+            <label className="block text-xs font-semibold text-gray-600 mb-2">주 시작 요일</label>
+            <div className="grid grid-cols-2 gap-2 mb-5">
+              {[['sun', '일요일 시작'], ['mon', '월요일 시작']].map(([val, label]) => (
+                <button
+                  key={val}
+                  onClick={() => changeWeekStart(val)}
+                  className={`py-2.5 text-sm font-medium rounded-lg border transition-colors ${
+                    weekStart === val
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                  }`}
+                >{label}</button>
+              ))}
+            </div>
+            <div className="flex justify-end">
+              <button onClick={() => setCalSettingsPopup(false)}
+                className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">닫기</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Chip color picker popover */}
       {colorPicker && (
         <div
@@ -871,7 +914,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
               <div className="flex-1 overflow-y-auto flex flex-col">
                 {/* Category sub-tabs */}
                 <div className="flex gap-1.5 px-4 py-2.5 border-b border-gray-100 shrink-0">
-                  {['전체', '공조', '질소가스', '압축공기', '청정등급'].map(cat => (
+                  {['전체', '공조', '질소가스', '압축공기'].map(cat => (
                     <button
                       key={cat}
                       onClick={() => setZonesCatFilter(cat)}
@@ -882,7 +925,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                   ))}
                 </div>
                 <div className="flex-1 overflow-y-auto">
-                  {(zonesCatFilter === '전체' ? ['공조', '압축공기', '질소가스', '청정등급'] : [zonesCatFilter]).map(cat => {
+                  {(zonesCatFilter === '전체' ? ['공조', '압축공기', '질소가스'] : [zonesCatFilter]).map(cat => {
                     const catGroups = zoneGroups.filter(g => g.category === cat);
                     if (!catGroups.length) return null;
                     return (
@@ -950,6 +993,15 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                                         <span className={`text-xs tabular-nums ${isPastDue ? 'text-amber-600 font-semibold' : 'text-gray-400'}`}>
                                           {done}/{total}회
                                         </span>
+                                        <select
+                                          value={zone.clean_grade || ''}
+                                          onChange={e => handleSetZonePoint(zone.id, 'clean_grade', e.target.value || null)}
+                                          title="청정등급"
+                                          className={`text-[10px] border rounded px-0.5 py-0.5 w-full focus:outline-none focus:ring-1 focus:ring-blue-500 font-semibold ${zone.clean_grade ? (CLEAN_GRADE_COLORS[zone.clean_grade] || 'bg-white text-gray-600') + ' border-transparent' : 'bg-white text-gray-400 border-gray-200'}`}
+                                        >
+                                          <option value="">청정-</option>
+                                          {CLEAN_GRADES.map(c => <option key={c} value={c}>{c}등급</option>)}
+                                        </select>
                                       </div>
                                       {/* Date info */}
                                       <div className="flex flex-col gap-0.5 w-[120px] shrink-0">
@@ -1112,7 +1164,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                         className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                       >
                         <option value="">구역 추가...</option>
-                        {['공조','압축공기','질소가스','청정등급'].map(c => {
+                        {['공조','압축공기','질소가스'].map(c => {
                           const opts = zones.filter(z =>
                             z.category === c &&
                             !group.zoneIds.includes(z.id) &&
@@ -1254,6 +1306,12 @@ export default function CalendarView({ year: initYear, onYearChange }) {
           >
             ⚙ 일정 설정
           </button>
+          <button
+            onClick={() => setCalSettingsPopup(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
+          >
+            🗓 달력 설정
+          </button>
           <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-2 py-1">
             <button onClick={prevMonth} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-lg leading-none">‹</button>
             <span className="text-base font-semibold text-gray-800 min-w-[96px] text-center">{year}년 {MONTH_KR[month - 1]}</span>
@@ -1298,7 +1356,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
         <div className="flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden min-w-0">
           {/* Day-of-week header */}
           <div className="grid grid-cols-7 border-b border-gray-100">
-            {[1, 2, 3, 4, 5, 6, 0].map(d => (
+            {dowOrder.map(d => (
               <div key={d} className={`py-2.5 text-center text-xs font-semibold ${
                 d === 0 ? 'text-red-500' : d === 6 ? 'text-blue-500' : 'text-gray-500'
               }`}>{DOW_LABELS[d]}</div>
@@ -1323,16 +1381,15 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                 const isDragOver = dragOverDay === dateStr;
                 const dow = new Date(dateStr + 'T00:00:00').getDay();
 
-                const catPts = { 공조: {s:0,f:0,l:0,p:0}, 질소가스: 0, 압축공기: 0, 청정등급: 0 };
+                const catPts = { 공조: {s:0,f:0,l:0,p:0}, 질소가스: 0, 압축공기: 0 };
                 schedEvts.forEach(({ zone }) => {
                   const s=zone.points_surface||0, f=zone.points_float||0, l=zone.points_fall||0, p=zone.points_particle||0;
                   if (zone.category === '공조') { catPts['공조'].s+=s; catPts['공조'].f+=f; catPts['공조'].l+=l; catPts['공조'].p+=p; }
                   else if (zone.category === '질소가스') catPts['질소가스'] += s+f+l+p;
                   else if (zone.category === '압축공기') catPts['압축공기'] += s+f+l+p;
-                  else if (zone.category === '청정등급') catPts['청정등급'] += s+f+l+p;
                 });
                 const tempPtsTotal = tempEvts.reduce((t,e)=>t+(e.points_surface||0)+(e.points_float||0)+(e.points_fall||0)+(e.points_particle||0), 0);
-                const hasPts = catPts['공조'].s+catPts['공조'].f+catPts['공조'].l+catPts['공조'].p+catPts['질소가스']+catPts['압축공기']+catPts['청정등급']+tempPtsTotal > 0;
+                const hasPts = catPts['공조'].s+catPts['공조'].f+catPts['공조'].l+catPts['공조'].p+catPts['질소가스']+catPts['압축공기']+tempPtsTotal > 0;
                 const nextCellData = grid[idx + 1];
                 const belowCellData = grid[idx + 7];
                 const boundaryRight = (isOther && nextCellData && !nextCellData.isOther)
@@ -1384,7 +1441,6 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                           {catPts['공조'].p > 0 && <span className="text-[9px] leading-none bg-pink-50 text-pink-700 px-0.5 py-0.5 rounded">입{catPts['공조'].p}</span>}
                           {catPts['질소가스'] > 0 && <span className="text-[9px] leading-none bg-purple-100 text-purple-700 px-0.5 py-0.5 rounded">질{catPts['질소가스']}</span>}
                           {catPts['압축공기'] > 0 && <span className="text-[9px] leading-none bg-yellow-100 text-yellow-700 px-0.5 py-0.5 rounded">압{catPts['압축공기']}</span>}
-                          {catPts['청정등급'] > 0 && <span className="text-[9px] leading-none bg-cyan-100 text-cyan-700 px-0.5 py-0.5 rounded">청{catPts['청정등급']}</span>}
                           {tempPtsTotal > 0 && <span className="text-[9px] leading-none bg-gray-100 text-gray-500 px-0.5 py-0.5 rounded">임{tempPtsTotal}</span>}
                         </div>
                       ) : null;
@@ -1435,10 +1491,10 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                             onClick={(e) => e.stopPropagation()}
                             className={`text-xs rounded overflow-hidden flex items-stretch min-w-0 ${isDone ? 'opacity-60 cursor-default' : 'cursor-grab active:cursor-grabbing'}`}
                             style={getChipStyle(zone.category, zone.grade)}
-                            title={`${label}${isDone ? ' [완료]' : measurement.isFirst ? ' [첫 측정]' : measurement.isLast ? ' [마지막 측정]' : ''}`}
+                            title={`${label}${zone.clean_grade ? ` [청정 ${zone.clean_grade}]` : ''}${isDone ? ' [완료]' : measurement.isFirst ? ' [첫 측정]' : measurement.isLast ? ' [마지막 측정]' : ''}`}
                           >
                             {measurement.isFirst && <span className="w-1 shrink-0" style={{ backgroundColor: '#22c55e' }} />}
-                            <span className={`truncate flex-1 px-1 py-0.5 ${isDone ? 'line-through' : ''} ${(measurement.isFirst || measurement.isLast) ? 'font-semibold' : ''}`}>{label}</span>
+                            <span className={`truncate flex-1 px-1 py-0.5 ${isDone ? 'line-through' : ''} ${(measurement.isFirst || measurement.isLast) ? 'font-semibold' : ''}`}>{zone.clean_grade ? `${zone.clean_grade}·` : ''}{label}</span>
                             {measurement.isLast && <span className="w-1 shrink-0" style={{ backgroundColor: '#ef4444' }} />}
                           </div>
                         );
@@ -1470,7 +1526,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
               <span className="w-3 h-3 rounded bg-yellow-50 border border-yellow-200 inline-block" />이번달 교정
             </div>
             {/* Category chips — click to edit colors */}
-            {['공조', '질소가스', '압축공기', '청정등급'].map(cat => {
+            {['공조', '질소가스', '압축공기'].map(cat => {
               const c = chipColors[`cat_${cat}`] ?? DEFAULT_CHIP_COLORS[`cat_${cat}`];
               return (
                 <button
@@ -1582,6 +1638,9 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                               <span className="text-xs font-medium px-1.5 py-0.5 rounded" style={getChipStyle(zone.category, zone.grade)}>
                                 {zone.grade}
                               </span>
+                              {zone.clean_grade && (
+                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${CLEAN_GRADE_COLORS[zone.clean_grade] || 'bg-gray-100 text-gray-600'}`}>청정 {zone.clean_grade}</span>
+                              )}
                               {measurement.isFirst && <span className="text-xs text-green-600 font-bold">첫측정</span>}
                               {measurement.isLast && <span className="text-xs text-red-600 font-bold">마지막</span>}
                               {isDone && <span className="text-xs bg-green-500 text-white px-1 py-0.5 rounded font-bold">✓완료</span>}
@@ -1603,10 +1662,6 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                               ) : zone.category === '압축공기' ? (
                                 <span className="text-[10px] bg-yellow-100 text-yellow-700 px-1 py-0.5 rounded font-medium">
                                   압축공기 {(zone.points_surface||0)+(zone.points_float||0)+(zone.points_fall||0)+(zone.points_particle||0)}pt
-                                </span>
-                              ) : zone.category === '청정등급' ? (
-                                <span className="text-[10px] bg-cyan-100 text-cyan-700 px-1 py-0.5 rounded font-medium">
-                                  청정등급 {(zone.points_surface||0)+(zone.points_float||0)+(zone.points_fall||0)+(zone.points_particle||0)}pt
                                 </span>
                               ) : (
                                 <>
