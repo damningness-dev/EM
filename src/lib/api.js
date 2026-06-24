@@ -58,6 +58,16 @@ export async function seedInitialData(calibrationData, zonesData) {
   return api.invoke('data:seed', calibrationData, zonesData);
 }
 
+// ─── 측정주기 설정 ────────────────────────────────────────────────────────────
+
+export async function fetchScheduleConfig() {
+  return api.invoke('scheduleConfig:get');
+}
+
+export async function saveScheduleConfig(config) {
+  return api.invoke('scheduleConfig:set', config);
+}
+
 // ─── 그룹 ─────────────────────────────────────────────────────────────────────
 
 export async function fetchGroups() {

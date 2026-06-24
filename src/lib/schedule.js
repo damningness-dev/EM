@@ -41,30 +41,48 @@ function isOverrideValid(overrideDate, baseDate, type) {
   return false;
 }
 
-export function getScheduleSpec(category, grade) {
-  // 유지관리: 분기 1회 × 3년 = 12회 (공조·압축공기·질소가스 모두)
-  if (grade === '유지관리') {
-    return [{ count: 12, intervalDays: null, type: 'quarterly' }];
-  }
-  if (!['P1', 'P2', 'P3'].includes(grade)) return null;
-  const isHVAC = category === '공조';
+// 카테고리·등급별 기본 측정주기 (사용자가 설정에서 변경 가능)
+// phase: { count: 횟수, intervalDays: 간격(일) | null, type: 'daily'|'weekly'|'biweekly'|'monthly'|'quarterly' }
+export const DEFAULT_SCHEDULE_SPECS = {
+  '공조': {
+    'P1':     [{ count: 7,  intervalDays: 1,    type: 'daily' }],
+    'P2':     [{ count: 4,  intervalDays: 7,    type: 'weekly' },
+               { count: 6,  intervalDays: 14,   type: 'biweekly' }],
+    'P3':     [{ count: 12, intervalDays: null, type: 'monthly' }],
+    '유지관리': [{ count: 36, intervalDays: null, type: 'monthly' }],
+  },
+  '압축공기': {
+    'P1':     [{ count: 7,  intervalDays: 1,    type: 'daily' }],
+    'P2':     [{ count: 13, intervalDays: 14,   type: 'biweekly' }],
+    'P3':     [{ count: 12, intervalDays: null, type: 'monthly' }],
+    '유지관리': [{ count: 12, intervalDays: null, type: 'quarterly' }],
+  },
+  '질소가스': {
+    'P1':     [{ count: 7,  intervalDays: 1,    type: 'daily' }],
+    'P2':     [{ count: 13, intervalDays: 14,   type: 'biweekly' }],
+    'P3':     [{ count: 12, intervalDays: null, type: 'monthly' }],
+    '유지관리': [{ count: 12, intervalDays: null, type: 'quarterly' }],
+  },
+};
 
-  if (grade === 'P1') {
-    return [{ count: 7, intervalDays: 1, type: 'daily' }];
-  }
-  if (grade === 'P2') {
-    if (isHVAC) {
-      return [
-        { count: 4, intervalDays: 7, type: 'weekly' },
-        { count: 6, intervalDays: 14, type: 'biweekly' },
-      ];
-    }
-    return [{ count: 13, intervalDays: 14, type: 'biweekly' }];
-  }
-  if (grade === 'P3') {
-    return [{ count: 12, intervalDays: null, type: 'monthly' }];
-  }
-  return null;
+// 모듈 레벨 설정 저장소 — 앱 시작 시 setScheduleConfig로 주입
+let SCHEDULE_CONFIG = null;
+
+export function setScheduleConfig(cfg) {
+  SCHEDULE_CONFIG = cfg && typeof cfg === 'object' ? cfg : null;
+}
+
+export function getScheduleConfig() {
+  return SCHEDULE_CONFIG || DEFAULT_SCHEDULE_SPECS;
+}
+
+export function getScheduleSpec(category, grade) {
+  const cfg = getScheduleConfig();
+  const catCfg = cfg[category] || DEFAULT_SCHEDULE_SPECS[category];
+  if (!catCfg) return null;
+  const spec = catCfg[grade] || DEFAULT_SCHEDULE_SPECS[category]?.[grade];
+  if (!spec || !spec.length) return null;
+  return spec;
 }
 
 // A working day = weekday (Mon–Fri) that is not a registered holiday.

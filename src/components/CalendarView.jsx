@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule } from '../lib/api';
+import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, fetchScheduleConfig, saveScheduleConfig } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
-import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule } from '../lib/schedule';
+import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
 
 const DOW_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
@@ -27,6 +27,32 @@ const GRADE_CHIP_TEXT = {
 };
 
 const TYPE_LABEL = { daily: '일1회', weekly: '주1회', biweekly: '격주', monthly: '월1회' };
+
+// 측정주기 설정 — 유형 옵션 / 기본 간격
+const CYCLE_TYPES = [
+  { value: 'daily',     label: '매일(일1회)' },
+  { value: 'weekly',    label: '주1회' },
+  { value: 'biweekly',  label: '격주(2주)' },
+  { value: 'monthly',   label: '월1회' },
+  { value: 'quarterly', label: '분기1회(3개월)' },
+];
+const DEFAULT_INTERVAL = { daily: 1, weekly: 7, biweekly: 14, monthly: null, quarterly: null };
+const CYCLE_GRADES = ['P1', 'P2', 'P3', '유지관리'];
+const CYCLE_CATS = ['공조', '압축공기', '질소가스'];
+
+function mergeScheduleConfig(backend) {
+  const base = JSON.parse(JSON.stringify(DEFAULT_SCHEDULE_SPECS));
+  if (backend && typeof backend === 'object') {
+    for (const cat of CYCLE_CATS) {
+      if (backend[cat]) {
+        for (const g of CYCLE_GRADES) {
+          if (Array.isArray(backend[cat][g])) base[cat][g] = backend[cat][g];
+        }
+      }
+    }
+  }
+  return base;
+}
 
 const DEFAULT_CHIP_COLORS = {
   'cat_공조':       { bg: '#ffffff', border: '#d1d5db' },
@@ -119,6 +145,48 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   const [weekStart, setWeekStart] = useState(() => {
     try { return localStorage.getItem('em-week-start') || 'mon'; } catch { return 'mon'; }
   });
+  const [scheduleConfig, setScheduleConfigState] = useState(() => mergeScheduleConfig(null));
+  const [cycleCatTab, setCycleCatTab] = useState('공조');
+
+  function applyScheduleConfig(nextCfg) {
+    setScheduleConfig(nextCfg);          // 모듈 변수 즉시 반영(계산 함수가 최신값 사용)
+    setScheduleConfigState(nextCfg);     // 상태 변경 → 달력 재계산
+    saveScheduleConfig(nextCfg);         // 영구 저장
+  }
+
+  function editCyclePhase(cat, grade, idx, field, value) {
+    const next = JSON.parse(JSON.stringify(scheduleConfig));
+    const phase = next[cat][grade][idx];
+    if (field === 'type') {
+      phase.type = value;
+      if (value === 'monthly' || value === 'quarterly') phase.intervalDays = null;
+      else if (phase.intervalDays == null) phase.intervalDays = DEFAULT_INTERVAL[value];
+    } else if (field === 'count') {
+      phase.count = Math.max(1, parseInt(value) || 1);
+    } else if (field === 'intervalDays') {
+      phase.intervalDays = Math.max(1, parseInt(value) || 1);
+    }
+    applyScheduleConfig(next);
+  }
+
+  function addCyclePhase(cat, grade) {
+    const next = JSON.parse(JSON.stringify(scheduleConfig));
+    if (!next[cat][grade]) next[cat][grade] = [];
+    next[cat][grade].push({ count: 1, intervalDays: 14, type: 'biweekly' });
+    applyScheduleConfig(next);
+  }
+
+  function removeCyclePhase(cat, grade, idx) {
+    const next = JSON.parse(JSON.stringify(scheduleConfig));
+    next[cat][grade].splice(idx, 1);
+    applyScheduleConfig(next);
+  }
+
+  function resetCycleCategory(cat) {
+    const next = JSON.parse(JSON.stringify(scheduleConfig));
+    next[cat] = JSON.parse(JSON.stringify(DEFAULT_SCHEDULE_SPECS[cat]));
+    applyScheduleConfig(next);
+  }
 
   function changeWeekStart(value) {
     setWeekStart(value);
@@ -139,8 +207,12 @@ export default function CalendarView({ year: initYear, onYearChange }) {
       fetchHolidays(),
       fetchCompletions(),
       fetchTempSchedules(),
-    ]).then(([cal, zns, mon, plan, grps, hols, comps, temps]) => {
+      fetchScheduleConfig(),
+    ]).then(([cal, zns, mon, plan, grps, hols, comps, temps, schedCfg]) => {
       setCalibration(cal);
+      const mergedCfg = mergeScheduleConfig(schedCfg);
+      setScheduleConfig(mergedCfg);
+      setScheduleConfigState(mergedCfg);
       // 레거시 '청정등급' 분류 → '공조'로 이관 (청정등급은 이제 각 일정의 속성)
       const legacy = zns.filter(z => z.category === '청정등급');
       if (legacy.length) {
@@ -199,7 +271,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
       });
     });
     return map;
-  }, [zones, holidays]);
+  }, [zones, holidays, scheduleConfig]);
 
   const tempByDate = useMemo(() => {
     const map = {};
@@ -896,7 +968,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
             </div>
             {/* Tabs */}
             <div className="flex border-b border-gray-200 shrink-0">
-              {[['zones','구역 일정'],['groups','그룹 관리'],['holidays','공휴일']].map(([key, label]) => (
+              {[['zones','구역 일정'],['groups','그룹 관리'],['holidays','공휴일'],['cycle','측정주기']].map(([key, label]) => (
                 <button
                   key={key}
                   onClick={() => setSettingsTab(key)}
@@ -1264,6 +1336,101 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                           await deleteHoliday(h.date);
                           setHolidayDefs(prev => prev.filter(x => x.date !== h.date));
                         }} className="text-xs text-gray-400 hover:text-red-500 shrink-0">✕</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ── 측정주기 탭 ── */}
+            {settingsTab === 'cycle' && (
+              <div className="flex-1 overflow-y-auto flex flex-col">
+                {/* Category sub-tabs */}
+                <div className="flex gap-1.5 px-4 py-2.5 border-b border-gray-100 shrink-0">
+                  {CYCLE_CATS.map(cat => (
+                    <button
+                      key={cat}
+                      onClick={() => setCycleCatTab(cat)}
+                      className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                        cycleCatTab === cat ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                      }`}
+                    >{cat}</button>
+                  ))}
+                </div>
+                <div className="px-4 py-2 border-b border-gray-100 flex items-center justify-between shrink-0">
+                  <p className="text-xs text-gray-400 leading-snug">등급별 측정 횟수·간격을 설정합니다. 변경 시 달력 일정이 즉시 재계산됩니다.</p>
+                  <button
+                    onClick={() => resetCycleCategory(cycleCatTab)}
+                    className="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded-lg hover:bg-gray-200 shrink-0 ml-2"
+                  >기본값</button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {CYCLE_GRADES.map(grade => {
+                    const phases = scheduleConfig[cycleCatTab]?.[grade] || [];
+                    const totalCnt = phases.reduce((s, p) => s + (p.count || 0), 0);
+                    return (
+                      <div key={grade} className="border border-gray-200 rounded-xl overflow-hidden">
+                        <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b border-gray-100">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded ${GRADE_COLORS[grade] || 'bg-gray-100 text-gray-600'}`}>{grade}</span>
+                            <span className="text-xs text-gray-400">총 {totalCnt}회</span>
+                          </div>
+                          <button
+                            onClick={() => addCyclePhase(cycleCatTab, grade)}
+                            className="text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium"
+                          >+ 구간</button>
+                        </div>
+                        <div className="divide-y divide-gray-50">
+                          {phases.length === 0 && (
+                            <p className="px-3 py-2 text-xs text-gray-400 italic">구간이 없습니다. '+ 구간'으로 추가하세요.</p>
+                          )}
+                          {phases.map((phase, idx) => {
+                            const isMonthlyLike = phase.type === 'monthly' || phase.type === 'quarterly';
+                            return (
+                              <div key={idx} className="flex items-center gap-1.5 px-3 py-2 flex-wrap">
+                                <span className="text-[10px] text-gray-300 w-4 shrink-0">{idx + 1}</span>
+                                <select
+                                  value={phase.type}
+                                  onChange={e => editCyclePhase(cycleCatTab, grade, idx, 'type', e.target.value)}
+                                  className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                >
+                                  {CYCLE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                                </select>
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="number" min="1" max="999"
+                                    value={phase.count}
+                                    onChange={e => editCyclePhase(cycleCatTab, grade, idx, 'count', e.target.value)}
+                                    className="w-12 text-xs border border-gray-200 rounded px-1 py-1 text-center focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                  />
+                                  <span className="text-xs text-gray-400">회</span>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  {isMonthlyLike ? (
+                                    <span className="text-xs text-gray-400">{phase.type === 'monthly' ? '1개월 간격' : '3개월 간격'}</span>
+                                  ) : (
+                                    <>
+                                      <span className="text-xs text-gray-400">간격</span>
+                                      <input
+                                        type="number" min="1" max="365"
+                                        value={phase.intervalDays ?? ''}
+                                        onChange={e => editCyclePhase(cycleCatTab, grade, idx, 'intervalDays', e.target.value)}
+                                        className="w-12 text-xs border border-gray-200 rounded px-1 py-1 text-center focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                      />
+                                      <span className="text-xs text-gray-400">일</span>
+                                    </>
+                                  )}
+                                </div>
+                                <button
+                                  onClick={() => removeCyclePhase(cycleCatTab, grade, idx)}
+                                  className="text-xs text-gray-300 hover:text-red-500 ml-auto shrink-0"
+                                  title="구간 삭제"
+                                >✕</button>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
                     );
                   })}

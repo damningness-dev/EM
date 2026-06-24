@@ -420,6 +420,18 @@ function registerHandlers() {
 
   ipcMain.handle('data:getPath', () => getDataPath());
 
+  // ── 측정주기 설정 ──
+  ipcMain.handle('scheduleConfig:get', () => {
+    return loadData().scheduleConfig || null;
+  });
+
+  ipcMain.handle('scheduleConfig:set', (_e, config) => {
+    const data = loadData();
+    data.scheduleConfig = config;
+    saveData(data);
+    return config;
+  });
+
   // ── 공휴일 ──
   ipcMain.handle('holidays:getAll', () => {
     return loadData().holidays;

@@ -7,7 +7,8 @@ import ZoneStatus from './components/ZoneStatus';
 import TodoToday from './components/TodoToday';
 import CalendarView from './components/CalendarView';
 import UpdateNotifier from './components/UpdateNotifier';
-import { seedInitialData } from './lib/api';
+import { seedInitialData, fetchScheduleConfig } from './lib/api';
+import { setScheduleConfig } from './lib/schedule';
 import { INITIAL_CALIBRATION, MONITORING_ZONES } from './data/initialData';
 
 const MENU = [
@@ -28,6 +29,8 @@ export default function App() {
 
   useEffect(() => {
     seedInitialData(INITIAL_CALIBRATION, MONITORING_ZONES)
+      .then(() => fetchScheduleConfig())
+      .then(cfg => { if (cfg) setScheduleConfig(cfg); })
       .then(() => setReady(true))
       .catch(() => setReady(true));
   }, []);
