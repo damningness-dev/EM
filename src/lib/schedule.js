@@ -34,7 +34,7 @@ function isOverrideValid(overrideDate, baseDate, type) {
     const max = endOfWeek(baseDate, { weekStartsOn: 1 });
     return overrideDate >= min && overrideDate <= max;
   }
-  if (type === 'monthly') {
+  if (type === 'monthly' || type === 'quarterly') {
     return overrideDate.getFullYear() === baseDate.getFullYear() &&
            overrideDate.getMonth() === baseDate.getMonth();
   }
@@ -42,6 +42,10 @@ function isOverrideValid(overrideDate, baseDate, type) {
 }
 
 export function getScheduleSpec(category, grade) {
+  // 압축공기·질소가스 유지관리: 분기 1회 × 3년 = 12회
+  if (grade === '유지관리' && (category === '압축공기' || category === '질소가스')) {
+    return [{ count: 12, intervalDays: null, type: 'quarterly' }];
+  }
   if (!['P1', 'P2', 'P3'].includes(grade)) return null;
   const isHVAC = category === '공조';
 
@@ -81,9 +85,9 @@ export function calcMeasurements(zone) {
 
     // Phase transition: advance baseDate by new phase's interval after last measurement
     if (phaseIdx > 0 && lastBaseDate !== null) {
-      baseDate = phase.type === 'monthly'
-        ? addMonths(lastBaseDate, 1)
-        : addDays(lastBaseDate, phase.intervalDays);
+      baseDate = phase.type === 'monthly' ? addMonths(lastBaseDate, 1)
+               : phase.type === 'quarterly' ? addMonths(lastBaseDate, 3)
+               : addDays(lastBaseDate, phase.intervalDays);
     }
 
     for (let i = 0; i < phase.count; i++) {
@@ -115,6 +119,8 @@ export function calcMeasurements(zone) {
 
       if (phase.type === 'monthly') {
         baseDate = addMonths(baseDate, 1);
+      } else if (phase.type === 'quarterly') {
+        baseDate = addMonths(baseDate, 3);
       } else if (phase.type === 'daily') {
         // Advance to next weekday, skipping Sat/Sun
         let next = addDays(baseDate, 1);
@@ -130,11 +136,12 @@ export function calcMeasurements(zone) {
 }
 
 export function calcEndDate(zone) {
+  const ms = calcMeasurements(zone);
+  if (ms.length) return ms[ms.length - 1].baseDate;
   if (zone.grade === '유지관리' && zone.schedule_start) {
     return addYears(new Date(zone.schedule_start + 'T00:00:00'), 3);
   }
-  const ms = calcMeasurements(zone);
-  return ms.length ? ms[ms.length - 1].baseDate : null;
+  return null;
 }
 
 export function totalCount(zone) {
@@ -158,7 +165,7 @@ export function getDragBounds(measurement) {
       max: endOfWeek(baseDate, { weekStartsOn: 1 }),
     };
   }
-  if (type === 'monthly') {
+  if (type === 'monthly' || type === 'quarterly') {
     return { min: startOfMonth(baseDate), max: endOfMonth(baseDate) };
   }
   return { min: baseDate, max: baseDate };
