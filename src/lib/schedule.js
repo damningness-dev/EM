@@ -67,7 +67,32 @@ export function getScheduleSpec(category, grade) {
   return null;
 }
 
-export function calcMeasurements(zone) {
+// A working day = weekday (Mon–Fri) that is not a registered holiday.
+export function isWorkingDay(date, holidayMap = {}) {
+  const dow = date.getDay();
+  if (dow === 0 || dow === 6) return false;
+  if (holidayMap[format(date, 'yyyy-MM-dd')]) return false;
+  return true;
+}
+
+// If date falls on a weekend/holiday, shift to the nearest working day within
+// the measurement cycle window — backward first (Sat→Fri→Thu...), then forward.
+function adjustToWorkingDay(date, bounds, holidayMap) {
+  if (isWorkingDay(date, holidayMap)) return date;
+  let d = addDays(date, -1);
+  while (d >= bounds.min) {
+    if (isWorkingDay(d, holidayMap)) return d;
+    d = addDays(d, -1);
+  }
+  d = addDays(date, 1);
+  while (d <= bounds.max) {
+    if (isWorkingDay(d, holidayMap)) return d;
+    d = addDays(d, 1);
+  }
+  return date;
+}
+
+export function calcMeasurements(zone, holidayMap = {}) {
   if (!zone.schedule_start) return [];
   const spec = getScheduleSpec(zone.category, zone.grade);
   if (!spec) return [];
@@ -102,9 +127,16 @@ export function calcMeasurements(zone) {
 
       const key = String(num);
       const rawOverride = overrides[key] ? new Date(overrides[key] + 'T00:00:00') : null;
-      const scheduledDate = (rawOverride && isOverrideValid(rawOverride, effectiveBaseDate, phase.type))
-        ? rawOverride
-        : effectiveBaseDate;
+      const hasValidOverride = rawOverride && isOverrideValid(rawOverride, effectiveBaseDate, phase.type);
+      let scheduledDate;
+      if (hasValidOverride) {
+        // User/optimizer explicitly placed this measurement — respect it.
+        scheduledDate = rawOverride;
+      } else {
+        // Auto-placed: shift off weekends/holidays to nearest working day in window.
+        const bounds = getDragBounds({ type: phase.type, baseDate: effectiveBaseDate });
+        scheduledDate = adjustToWorkingDay(effectiveBaseDate, bounds, holidayMap);
+      }
 
       lastBaseDate = new Date(baseDate);
       measurements.push({
@@ -169,6 +201,93 @@ export function getDragBounds(measurement) {
     return { min: startOfMonth(baseDate), max: endOfMonth(baseDate) };
   }
   return { min: baseDate, max: baseDate };
+}
+
+function sumPoints(item) {
+  return (item.points_surface || 0) + (item.points_float || 0)
+       + (item.points_fall || 0) + (item.points_particle || 0);
+}
+
+// Re-balance a single month's measurements so no day's total points exceed
+// `capacity`. Movable (non-completed) measurements are shifted within their own
+// cycle window to the least-loaded working day. Temp schedules are fixed load.
+// Returns { [zoneId]: { [num]: 'yyyy-MM-dd' } } of new overrides to persist.
+export function optimizeMonthSchedule({ zones, tempSchedules = [], completions = new Set(), year, month, capacity, holidayMap = {} }) {
+  const prefix = `${year}-${String(month).padStart(2, '0')}-`;
+
+  // Collect this month's measurement events.
+  const events = [];
+  zones.forEach(zone => {
+    if (!zone.schedule_start) return;
+    const pts = sumPoints(zone);
+    calcMeasurements(zone, holidayMap).forEach(m => {
+      const ds = format(m.date, 'yyyy-MM-dd');
+      if (!ds.startsWith(prefix)) return;
+      events.push({
+        zoneId: zone.id,
+        num: m.num,
+        pts,
+        bounds: getDragBounds(m),
+        ds,
+        done: completions.has(`${zone.id}_${m.num}`),
+      });
+    });
+  });
+
+  // Daily load: movable events + fixed temp schedules.
+  const load = {};
+  tempSchedules.forEach(t => {
+    if (!t.date || !t.date.startsWith(prefix)) return;
+    load[t.date] = (load[t.date] || 0) + sumPoints(t);
+  });
+  events.forEach(e => { load[e.ds] = (load[e.ds] || 0) + e.pts; });
+
+  // Working days (in this month) within a measurement's window.
+  const windowDays = (bounds) => {
+    const days = [];
+    let d = new Date(bounds.min);
+    while (d <= bounds.max) {
+      const ds = format(d, 'yyyy-MM-dd');
+      if (ds.startsWith(prefix) && isWorkingDay(d, holidayMap)) days.push(ds);
+      d = addDays(d, 1);
+    }
+    return days;
+  };
+
+  const movable = events.filter(e => !e.done && e.pts > 0);
+  movable.forEach(e => { e.win = windowDays(e.bounds); });
+
+  const overrides = {};
+  const maxIter = movable.length * 8 + 50;
+  for (let iter = 0; iter < maxIter; iter++) {
+    // Most overloaded day.
+    let day = null, dayLoad = -1;
+    for (const ds in load) {
+      if (load[ds] > capacity && load[ds] > dayLoad) { day = ds; dayLoad = load[ds]; }
+    }
+    if (!day) break;
+
+    // Best beneficial relocation of a movable event off `day`.
+    let best = null;
+    for (const e of movable) {
+      if (e.ds !== day || e.win.length < 2) continue;
+      for (const target of e.win) {
+        if (target === e.ds) continue;
+        const newTarget = (load[target] || 0) + e.pts;
+        if (newTarget < dayLoad && (!best || newTarget < best.newTarget)) {
+          best = { e, target, newTarget };
+        }
+      }
+    }
+    if (!best) break;
+
+    load[best.e.ds] -= best.e.pts;
+    load[best.target] = (load[best.target] || 0) + best.e.pts;
+    best.e.ds = best.target;
+    overrides[best.e.zoneId] = { ...(overrides[best.e.zoneId] || {}), [best.e.num]: best.target };
+  }
+
+  return overrides;
 }
 
 // Build a date→name map for a given year range, expanding recurring holiday defs.

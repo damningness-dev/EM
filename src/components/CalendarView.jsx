@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
-import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules } from '../lib/schedule';
+import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
 
 const DOW_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
@@ -39,7 +39,9 @@ const DEFAULT_CHIP_COLORS = {
 };
 
 function buildGrid(year, month) {
+  // Monday-first grid: leading blanks = days from Mon up to the 1st.
   const firstDow = new Date(year, month - 1, 1).getDay();
+  const lead = (firstDow + 6) % 7;
   const daysInMonth = new Date(year, month, 0).getDate();
   const prevYear = month === 1 ? year - 1 : year;
   const prevMonth = month === 1 ? 12 : month - 1;
@@ -48,7 +50,7 @@ function buildGrid(year, month) {
   const nextMonth = month === 12 ? 1 : month + 1;
 
   const cells = [];
-  for (let i = firstDow - 1; i >= 0; i--) {
+  for (let i = lead - 1; i >= 0; i--) {
     cells.push({ day: prevMonthDays - i, year: prevYear, month: prevMonth, isOther: true });
   }
   for (let d = 1; d <= daysInMonth; d++) {
@@ -105,6 +107,11 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   });
   const [colorPicker, setColorPicker] = useState(null); // { key, label, type:'cat'|'grade', x, y }
   const colorPickerRef = useRef(null);
+  const [optimizePopup, setOptimizePopup] = useState(false);
+  const [optimizeCapacity, setOptimizeCapacity] = useState(() => {
+    try { return localStorage.getItem('em-daily-capacity') || '30'; } catch { return '30'; }
+  });
+  const [optimizing, setOptimizing] = useState(false);
 
   const holidays = useMemo(() => buildHolidayMap(holidayDefs, year - 1, year + 1), [holidayDefs, year]);
 
@@ -167,14 +174,14 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     const map = {};
     zones.forEach(zone => {
       if (!zone.schedule_start) return;
-      calcMeasurements(zone).forEach(m => {
+      calcMeasurements(zone, holidays).forEach(m => {
         const key = format(m.date, 'yyyy-MM-dd');
         if (!map[key]) map[key] = [];
         map[key].push({ zone, measurement: m });
       });
     });
     return map;
-  }, [zones]);
+  }, [zones, holidays]);
 
   const tempByDate = useMemo(() => {
     const map = {};
@@ -351,6 +358,42 @@ export default function CalendarView({ year: initYear, onYearChange }) {
         });
         showSuccess(`다음 단계 일정 ${cascadeItems.length}개가 자동 등록되었습니다.`);
       }
+    }
+  }
+
+  async function handleOptimize() {
+    const cap = parseInt(optimizeCapacity) || 0;
+    if (cap <= 0) {
+      showError('하루 최대 포인트를 1 이상으로 설정해주세요.');
+      return;
+    }
+    try { localStorage.setItem('em-daily-capacity', String(cap)); } catch {}
+    setOptimizing(true);
+    try {
+      const overrides = optimizeMonthSchedule({
+        zones, tempSchedules, completions, year, month, capacity: cap, holidayMap: holidays,
+      });
+      const zoneIds = Object.keys(overrides);
+      if (!zoneIds.length) {
+        showSuccess('재배치가 필요한 일정이 없습니다.');
+        setOptimizePopup(false);
+        return;
+      }
+      let movedCount = 0;
+      const updates = [];
+      for (const zid of zoneIds) {
+        const zone = zones.find(z => String(z.id) === String(zid));
+        if (!zone) continue;
+        movedCount += Object.keys(overrides[zid]).length;
+        const u = { ...zone, schedule_overrides: { ...(zone.schedule_overrides || {}), ...overrides[zid] } };
+        await upsertZone(u);
+        updates.push(u);
+      }
+      setZones(prev => prev.map(z => updates.find(u => u.id === z.id) || z));
+      showSuccess(`${year}년 ${month}월 일정 ${movedCount}건을 재배치했습니다.`);
+      setOptimizePopup(false);
+    } finally {
+      setOptimizing(false);
     }
   }
 
@@ -616,6 +659,80 @@ export default function CalendarView({ year: initYear, onYearChange }) {
           </div>
         </div>
       )}
+
+      {/* Schedule optimize popup */}
+      {optimizePopup && (() => {
+        const cap = parseInt(optimizeCapacity) || 0;
+        const prefix = `${year}-${String(month).padStart(2, '0')}-`;
+        // Per-day total points for current month (schedule + temp)
+        const dayLoads = {};
+        Object.entries(scheduleByDate).forEach(([ds, arr]) => {
+          if (!ds.startsWith(prefix)) return;
+          arr.forEach(({ zone }) => {
+            dayLoads[ds] = (dayLoads[ds] || 0)
+              + (zone.points_surface || 0) + (zone.points_float || 0)
+              + (zone.points_fall || 0) + (zone.points_particle || 0);
+          });
+        });
+        Object.entries(tempByDate).forEach(([ds, arr]) => {
+          if (!ds.startsWith(prefix)) return;
+          arr.forEach(t => {
+            dayLoads[ds] = (dayLoads[ds] || 0)
+              + (t.points_surface || 0) + (t.points_float || 0)
+              + (t.points_fall || 0) + (t.points_particle || 0);
+          });
+        });
+        const loadVals = Object.values(dayLoads);
+        const peak = loadVals.length ? Math.max(...loadVals) : 0;
+        const overDays = cap > 0 ? loadVals.filter(v => v > cap).length : 0;
+        return (
+          <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/40" onClick={() => !optimizing && setOptimizePopup(false)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-96 p-6" onClick={e => e.stopPropagation()}>
+              <h3 className="text-base font-bold text-gray-900 mb-1">⚖ 일정 최적화</h3>
+              <p className="text-sm text-gray-500 mb-4 leading-relaxed">
+                <span className="font-semibold text-gray-700">{year}년 {MONTH_KR[month - 1]}</span>의 측정 일정을
+                재배치합니다. 하루 측정 포인트 합계가 설정값을 넘는 날의 일정을 측정주기 내에서
+                여유 있는 날로 옮깁니다. (완료된 측정·임시 일정은 고정)
+              </p>
+
+              <label className="block text-xs text-gray-500 mb-1">하루 최대 포인트 (표면균+부유균+낙하균+부유입자 합계)</label>
+              <input
+                type="number"
+                min="1"
+                max="9999"
+                value={optimizeCapacity}
+                onChange={e => setOptimizeCapacity(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 mb-4"
+                autoFocus
+              />
+
+              <div className="grid grid-cols-2 gap-2 mb-5">
+                <div className="bg-gray-50 rounded-lg px-3 py-2">
+                  <p className="text-[11px] text-gray-400">이번달 최대 부하</p>
+                  <p className="text-sm font-bold text-gray-700">{peak}pt</p>
+                </div>
+                <div className={`rounded-lg px-3 py-2 ${overDays > 0 ? 'bg-red-50' : 'bg-green-50'}`}>
+                  <p className="text-[11px] text-gray-400">초과일 수</p>
+                  <p className={`text-sm font-bold ${overDays > 0 ? 'text-red-600' : 'text-green-600'}`}>{overDays}일</p>
+                </div>
+              </div>
+
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => setOptimizePopup(false)}
+                  disabled={optimizing}
+                  className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 disabled:opacity-40"
+                >취소</button>
+                <button
+                  onClick={handleOptimize}
+                  disabled={optimizing || cap <= 0}
+                  className="px-4 py-2 text-sm text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-40"
+                >{optimizing ? '재배치 중...' : '최적화 실행'}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Chip color picker popover */}
       {colorPicker && (
@@ -1094,6 +1211,12 @@ export default function CalendarView({ year: initYear, onYearChange }) {
         </div>
         <div className="flex items-center gap-2">
           <button
+            onClick={() => setOptimizePopup(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-xl hover:bg-indigo-100 transition-colors"
+          >
+            ⚖ 일정 최적화
+          </button>
+          <button
             onClick={() => setShowSettings(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
           >
@@ -1143,10 +1266,10 @@ export default function CalendarView({ year: initYear, onYearChange }) {
         <div className="flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden min-w-0">
           {/* Day-of-week header */}
           <div className="grid grid-cols-7 border-b border-gray-100">
-            {DOW_LABELS.map((d, i) => (
+            {[1, 2, 3, 4, 5, 6, 0].map(d => (
               <div key={d} className={`py-2.5 text-center text-xs font-semibold ${
-                i === 0 ? 'text-red-500' : i === 6 ? 'text-blue-500' : 'text-gray-500'
-              }`}>{d}</div>
+                d === 0 ? 'text-red-500' : d === 6 ? 'text-blue-500' : 'text-gray-500'
+              }`}>{DOW_LABELS[d]}</div>
             ))}
           </div>
 
@@ -1166,7 +1289,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                 const isToday = !isOther && isCurrentMonth && day === todayDate;
                 const isSelected = dateStr === selectedDay;
                 const isDragOver = dragOverDay === dateStr;
-                const dow = idx % 7;
+                const dow = new Date(dateStr + 'T00:00:00').getDay();
 
                 const pts = [...schedEvts.map(({ zone }) => zone), ...tempEvts].reduce((acc, item) => ({
                   surface: acc.surface + (item.points_surface || 0),
