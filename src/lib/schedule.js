@@ -42,8 +42,8 @@ function isOverrideValid(overrideDate, baseDate, type) {
 }
 
 export function getScheduleSpec(category, grade) {
-  // 압축공기·질소가스 유지관리: 분기 1회 × 3년 = 12회
-  if (grade === '유지관리' && (category === '압축공기' || category === '질소가스')) {
+  // 유지관리: 분기 1회 × 3년 = 12회 (공조·압축공기·질소가스 모두)
+  if (grade === '유지관리') {
     return [{ count: 12, intervalDays: null, type: 'quarterly' }];
   }
   if (!['P1', 'P2', 'P3'].includes(grade)) return null;

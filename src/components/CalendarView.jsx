@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule } from '../lib/schedule';
-import { GRADE_COLORS, CATEGORY_SECTION, CLEAN_GRADES, CLEAN_GRADE_COLORS } from '../data/initialData';
+import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
 
 const DOW_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 const MONTH_KR = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
@@ -993,15 +993,6 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                                         <span className={`text-xs tabular-nums ${isPastDue ? 'text-amber-600 font-semibold' : 'text-gray-400'}`}>
                                           {done}/{total}회
                                         </span>
-                                        <select
-                                          value={zone.clean_grade || ''}
-                                          onChange={e => handleSetZonePoint(zone.id, 'clean_grade', e.target.value || null)}
-                                          title="청정등급"
-                                          className={`text-[10px] border rounded px-0.5 py-0.5 w-full focus:outline-none focus:ring-1 focus:ring-blue-500 font-semibold ${zone.clean_grade ? (CLEAN_GRADE_COLORS[zone.clean_grade] || 'bg-white text-gray-600') + ' border-transparent' : 'bg-white text-gray-400 border-gray-200'}`}
-                                        >
-                                          <option value="">청정-</option>
-                                          {CLEAN_GRADES.map(c => <option key={c} value={c}>{c}등급</option>)}
-                                        </select>
                                       </div>
                                       {/* Date info */}
                                       <div className="flex flex-col gap-0.5 w-[120px] shrink-0">
@@ -1491,10 +1482,10 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                             onClick={(e) => e.stopPropagation()}
                             className={`text-xs rounded overflow-hidden flex items-stretch min-w-0 ${isDone ? 'opacity-60 cursor-default' : 'cursor-grab active:cursor-grabbing'}`}
                             style={getChipStyle(zone.category, zone.grade)}
-                            title={`${label}${zone.clean_grade ? ` [청정 ${zone.clean_grade}]` : ''}${isDone ? ' [완료]' : measurement.isFirst ? ' [첫 측정]' : measurement.isLast ? ' [마지막 측정]' : ''}`}
+                            title={`${label}${isDone ? ' [완료]' : measurement.isFirst ? ' [첫 측정]' : measurement.isLast ? ' [마지막 측정]' : ''}`}
                           >
                             {measurement.isFirst && <span className="w-1 shrink-0" style={{ backgroundColor: '#22c55e' }} />}
-                            <span className={`truncate flex-1 px-1 py-0.5 ${isDone ? 'line-through' : ''} ${(measurement.isFirst || measurement.isLast) ? 'font-semibold' : ''}`}>{zone.clean_grade ? `${zone.clean_grade}·` : ''}{label}</span>
+                            <span className={`truncate flex-1 px-1 py-0.5 ${isDone ? 'line-through' : ''} ${(measurement.isFirst || measurement.isLast) ? 'font-semibold' : ''}`}>{label}</span>
                             {measurement.isLast && <span className="w-1 shrink-0" style={{ backgroundColor: '#ef4444' }} />}
                           </div>
                         );
@@ -1638,9 +1629,6 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                               <span className="text-xs font-medium px-1.5 py-0.5 rounded" style={getChipStyle(zone.category, zone.grade)}>
                                 {zone.grade}
                               </span>
-                              {zone.clean_grade && (
-                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${CLEAN_GRADE_COLORS[zone.clean_grade] || 'bg-gray-100 text-gray-600'}`}>청정 {zone.clean_grade}</span>
-                              )}
                               {measurement.isFirst && <span className="text-xs text-green-600 font-bold">첫측정</span>}
                               {measurement.isLast && <span className="text-xs text-red-600 font-bold">마지막</span>}
                               {isDone && <span className="text-xs bg-green-500 text-white px-1 py-0.5 rounded font-bold">✓완료</span>}
