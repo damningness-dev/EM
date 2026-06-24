@@ -89,9 +89,9 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
   const filteredGroups = useMemo(() => {
     let groups = Object.values(zoneGroups);
     if (search) groups = groups.filter(g => g.name.toLowerCase().includes(search.toLowerCase()));
-    if (gradeFilter !== 'all') groups = groups.filter(g => g.zones.some(z => z.grade === gradeFilter));
+    if (gradeFilter !== 'all') groups = groups.filter(g => g.zones.some(z => z.grade === gradeFilter && activeZoneIds.has(z.id)));
     return groups;
-  }, [zoneGroups, search, gradeFilter]);
+  }, [zoneGroups, search, gradeFilter, activeZoneIds]);
 
   const progress = useMemo(() => {
     let total = 0, done = 0;
