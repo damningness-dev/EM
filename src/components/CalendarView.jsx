@@ -664,27 +664,26 @@ export default function CalendarView({ year: initYear, onYearChange }) {
       {optimizePopup && (() => {
         const cap = parseInt(optimizeCapacity) || 0;
         const prefix = `${year}-${String(month).padStart(2, '0')}-`;
-        // Per-day total points for current month (schedule + temp)
-        const dayLoads = {};
+        const sp = it => (it.points_surface || 0) + (it.points_float || 0) + (it.points_fall || 0) + (it.points_particle || 0);
+        // Category-agnostic temp baseline per date
+        const tempDay = {};
+        Object.entries(tempByDate).forEach(([ds, arr]) => {
+          if (!ds.startsWith(prefix)) return;
+          arr.forEach(t => { tempDay[ds] = (tempDay[ds] || 0) + sp(t); });
+        });
+        // Per (category, date) zone load
+        const catDay = {};
         Object.entries(scheduleByDate).forEach(([ds, arr]) => {
           if (!ds.startsWith(prefix)) return;
           arr.forEach(({ zone }) => {
-            dayLoads[ds] = (dayLoads[ds] || 0)
-              + (zone.points_surface || 0) + (zone.points_float || 0)
-              + (zone.points_fall || 0) + (zone.points_particle || 0);
+            const k = `${zone.category}|${ds}`;
+            catDay[k] = (catDay[k] || 0) + sp(zone);
           });
         });
-        Object.entries(tempByDate).forEach(([ds, arr]) => {
-          if (!ds.startsWith(prefix)) return;
-          arr.forEach(t => {
-            dayLoads[ds] = (dayLoads[ds] || 0)
-              + (t.points_surface || 0) + (t.points_float || 0)
-              + (t.points_fall || 0) + (t.points_particle || 0);
-          });
-        });
-        const loadVals = Object.values(dayLoads);
-        const peak = loadVals.length ? Math.max(...loadVals) : 0;
-        const overDays = cap > 0 ? loadVals.filter(v => v > cap).length : 0;
+        // Effective per-category-day load includes temp baseline
+        const effVals = Object.entries(catDay).map(([k, v]) => v + (tempDay[k.split('|')[1]] || 0));
+        const peak = effVals.length ? Math.max(...effVals) : 0;
+        const overDays = cap > 0 ? effVals.filter(v => v > cap).length : 0;
         return (
           <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/40" onClick={() => !optimizing && setOptimizePopup(false)}>
             <div className="bg-white rounded-2xl shadow-2xl w-96 p-6" onClick={e => e.stopPropagation()}>
@@ -692,7 +691,8 @@ export default function CalendarView({ year: initYear, onYearChange }) {
               <p className="text-sm text-gray-500 mb-4 leading-relaxed">
                 <span className="font-semibold text-gray-700">{year}년 {MONTH_KR[month - 1]}</span>의 측정 일정을
                 재배치합니다. 하루 측정 포인트 합계가 설정값을 넘는 날의 일정을 측정주기 내에서
-                여유 있는 날로 옮깁니다. (완료된 측정·임시 일정은 고정)
+                여유 있는 날로 옮깁니다. <span className="font-medium text-gray-600">공조·질소가스·압축공기는 각각 따로 계산</span>됩니다.
+                (완료된 측정·임시 일정은 고정)
               </p>
 
               <label className="block text-xs text-gray-500 mb-1">하루 최대 포인트 (표면균+부유균+낙하균+부유입자 합계)</label>
@@ -708,12 +708,12 @@ export default function CalendarView({ year: initYear, onYearChange }) {
 
               <div className="grid grid-cols-2 gap-2 mb-5">
                 <div className="bg-gray-50 rounded-lg px-3 py-2">
-                  <p className="text-[11px] text-gray-400">이번달 최대 부하</p>
+                  <p className="text-[11px] text-gray-400">카테고리별 최대 부하</p>
                   <p className="text-sm font-bold text-gray-700">{peak}pt</p>
                 </div>
                 <div className={`rounded-lg px-3 py-2 ${overDays > 0 ? 'bg-red-50' : 'bg-green-50'}`}>
-                  <p className="text-[11px] text-gray-400">초과일 수</p>
-                  <p className={`text-sm font-bold ${overDays > 0 ? 'text-red-600' : 'text-green-600'}`}>{overDays}일</p>
+                  <p className="text-[11px] text-gray-400">초과 (카테고리·일)</p>
+                  <p className={`text-sm font-bold ${overDays > 0 ? 'text-red-600' : 'text-green-600'}`}>{overDays}건</p>
                 </div>
               </div>
 

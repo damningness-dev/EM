@@ -209,13 +209,16 @@ function sumPoints(item) {
 }
 
 // Re-balance a single month's measurements so no day's total points exceed
-// `capacity`. Movable (non-completed) measurements are shifted within their own
-// cycle window to the least-loaded working day. Temp schedules are fixed load.
+// `capacity`. The daily point sum is tallied PER CATEGORY (공조 / 질소가스 /
+// 압축공기 are independent), so each category gets its own daily budget.
+// Temp schedules (no category) are a shared baseline that occupies every
+// category's day. Movable (non-completed) measurements are shifted within their
+// own cycle window to the least-loaded working day of the same category.
 // Returns { [zoneId]: { [num]: 'yyyy-MM-dd' } } of new overrides to persist.
 export function optimizeMonthSchedule({ zones, tempSchedules = [], completions = new Set(), year, month, capacity, holidayMap = {} }) {
   const prefix = `${year}-${String(month).padStart(2, '0')}-`;
 
-  // Collect this month's measurement events.
+  // Collect this month's measurement events, tagged by category.
   const events = [];
   zones.forEach(zone => {
     if (!zone.schedule_start) return;
@@ -227,6 +230,7 @@ export function optimizeMonthSchedule({ zones, tempSchedules = [], completions =
         zoneId: zone.id,
         num: m.num,
         pts,
+        category: zone.category,
         bounds: getDragBounds(m),
         ds,
         done: completions.has(`${zone.id}_${m.num}`),
@@ -234,13 +238,19 @@ export function optimizeMonthSchedule({ zones, tempSchedules = [], completions =
     });
   });
 
-  // Daily load: movable events + fixed temp schedules.
-  const load = {};
+  // Per-category daily load + a category-agnostic temp-schedule baseline.
+  const load = {};       // category -> { date -> points }
+  const tempLoad = {};   // date -> points (occupies every category's day)
+  const catLoad = (cat) => (load[cat] || (load[cat] = {}));
   tempSchedules.forEach(t => {
     if (!t.date || !t.date.startsWith(prefix)) return;
-    load[t.date] = (load[t.date] || 0) + sumPoints(t);
+    tempLoad[t.date] = (tempLoad[t.date] || 0) + sumPoints(t);
   });
-  events.forEach(e => { load[e.ds] = (load[e.ds] || 0) + e.pts; });
+  events.forEach(e => {
+    const cl = catLoad(e.category);
+    cl[e.ds] = (cl[e.ds] || 0) + e.pts;
+  });
+  const effLoad = (cat, ds) => ((load[cat] && load[cat][ds]) || 0) + (tempLoad[ds] || 0);
 
   // Working days (in this month) within a measurement's window.
   const windowDays = (bounds) => {
@@ -260,20 +270,23 @@ export function optimizeMonthSchedule({ zones, tempSchedules = [], completions =
   const overrides = {};
   const maxIter = movable.length * 8 + 50;
   for (let iter = 0; iter < maxIter; iter++) {
-    // Most overloaded day.
-    let day = null, dayLoad = -1;
-    for (const ds in load) {
-      if (load[ds] > capacity && load[ds] > dayLoad) { day = ds; dayLoad = load[ds]; }
+    // Most overloaded (category, day) above capacity.
+    let day = null, cat = null, dayLoad = -1;
+    for (const c in load) {
+      for (const ds in load[c]) {
+        const v = effLoad(c, ds);
+        if (v > capacity && v > dayLoad) { day = ds; cat = c; dayLoad = v; }
+      }
     }
     if (!day) break;
 
-    // Best beneficial relocation of a movable event off `day`.
+    // Best beneficial relocation of a same-category event off `day`.
     let best = null;
     for (const e of movable) {
-      if (e.ds !== day || e.win.length < 2) continue;
+      if (e.category !== cat || e.ds !== day || e.win.length < 2) continue;
       for (const target of e.win) {
         if (target === e.ds) continue;
-        const newTarget = (load[target] || 0) + e.pts;
+        const newTarget = effLoad(cat, target) + e.pts;
         if (newTarget < dayLoad && (!best || newTarget < best.newTarget)) {
           best = { e, target, newTarget };
         }
@@ -281,8 +294,9 @@ export function optimizeMonthSchedule({ zones, tempSchedules = [], completions =
     }
     if (!best) break;
 
-    load[best.e.ds] -= best.e.pts;
-    load[best.target] = (load[best.target] || 0) + best.e.pts;
+    const cl = catLoad(cat);
+    cl[best.e.ds] -= best.e.pts;
+    cl[best.target] = (cl[best.target] || 0) + best.e.pts;
     best.e.ds = best.target;
     overrides[best.e.zoneId] = { ...(overrides[best.e.zoneId] || {}), [best.e.num]: best.target };
   }
