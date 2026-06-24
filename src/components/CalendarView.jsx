@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, fetchScheduleConfig, saveScheduleConfig } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
-import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS } from '../lib/schedule';
+import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, alignGroupSchedules } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
 
 const DOW_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
@@ -422,6 +422,11 @@ export default function CalendarView({ year: initYear, onYearChange }) {
         return u || z;
       }));
       updatedZone = updates.find(u => u.id === zoneId);
+      // 자동 측정주기 정렬: 주기가 긴 구역을 짧은 구역 측정일에 맞춤
+      if (dateStr) {
+        const withStart = updates.filter(z => z.schedule_start);
+        if (withStart.length >= 2) await applyGroupAlignment(withStart);
+      }
     } else {
       updatedZone = { ...zone, schedule_start: dateStr || null, schedule_overrides: {} };
       await upsertZone(updatedZone);
@@ -550,27 +555,45 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     setZones(prev => prev.map(z => z.id === zoneId ? updated : z));
   }
 
+  // 일정그룹 정렬: 주기가 긴 구역의 측정일을 짧은(잦은) 구역 측정일에 맞춰 스냅
+  async function applyGroupAlignment(groupZones) {
+    const aligns = alignGroupSchedules(groupZones, holidays);
+    if (!aligns.length) return 0;
+    const updates = [];
+    for (const a of aligns) {
+      const z = groupZones.find(z => z.id === a.zoneId) || zones.find(z => z.id === a.zoneId);
+      if (!z) continue;
+      const u = { ...z, schedule_overrides: a.schedule_overrides };
+      await upsertZone(u);
+      updates.push(u);
+    }
+    if (updates.length) setZones(prev => prev.map(z => updates.find(u => u.id === z.id) || z));
+    return updates.length;
+  }
+
   async function handleSyncGroup(groupId) {
     const group = groups.find(g => g.id === groupId);
     if (!group) return;
-    const groupZones = zones.filter(z => group.zoneIds.includes(z.id) && z.schedule_start);
-    if (groupZones.length === 0) return;
-    // Find anchor: zone with highest grade priority (P1 > P2 > P3)
+    let groupZones = zones.filter(z => group.zoneIds.includes(z.id) && z.schedule_start);
+    if (groupZones.length < 2) { showError('정렬하려면 시작일이 설정된 구역이 2개 이상이어야 합니다.'); return; }
+    // 1) 시작일 동기화 (가장 잦은 구역 기준)
     const anchor = groupZones.reduce((best, z) => {
       return (GRADE_PRIORITY[z.grade] || 0) > (GRADE_PRIORITY[best.grade] || 0) ? z : best;
     });
     const toSync = groupZones.filter(z => z.id !== anchor.id && z.schedule_start !== anchor.schedule_start);
-    if (!toSync.length) return;
-    const updates = await Promise.all(
+    const startUpdates = await Promise.all(
       toSync.map(z => {
         const u = { ...z, schedule_start: anchor.schedule_start, schedule_overrides: {} };
         return upsertZone(u).then(() => u);
       })
     );
-    setZones(prev => prev.map(z => {
-      const u = updates.find(u => u.id === z.id);
-      return u || z;
-    }));
+    // 동기화 반영된 작업 집합 구성
+    let working = zones.map(z => startUpdates.find(u => u.id === z.id) || z);
+    if (startUpdates.length) setZones(working);
+    groupZones = working.filter(z => group.zoneIds.includes(z.id) && z.schedule_start);
+    // 2) 측정주기 정렬
+    const aligned = await applyGroupAlignment(groupZones);
+    showSuccess(`일정그룹 동기화 완료${aligned ? ` · 측정일 ${aligned}개 구역 정렬됨` : ''}`);
   }
 
   async function handleDropOnDay(dateStr, dragData) {
@@ -968,7 +991,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
             </div>
             {/* Tabs */}
             <div className="flex border-b border-gray-200 shrink-0">
-              {[['zones','구역 일정'],['groups','그룹 관리'],['holidays','공휴일'],['cycle','측정주기']].map(([key, label]) => (
+              {[['zones','구역 일정'],['groups','일정그룹 관리'],['holidays','공휴일'],['cycle','측정주기']].map(([key, label]) => (
                 <button
                   key={key}
                   onClick={() => setSettingsTab(key)}
@@ -1162,7 +1185,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                   <div className="flex gap-2">
                     <input
                       type="text"
-                      placeholder="새 그룹 이름..."
+                      placeholder="새 일정그룹 이름..."
                       value={newGroupName}
                       onChange={e => setNewGroupName(e.target.value)}
                       onKeyDown={e => {
@@ -1177,7 +1200,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                       className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700"
                     >추가</button>
                   </div>
-                  <p className="text-xs text-gray-400 mt-1.5">그룹 내 구역들은 시작일이 자동으로 동기화됩니다.</p>
+                  <p className="text-xs text-gray-400 mt-1.5">일정그룹으로 묶인 구역은 시작일이 동기화되고, 주기가 긴 구역의 측정일이 가장 잦은(짧은 주기) 구역 측정일에 맞춰 정렬됩니다.</p>
                 </div>
                 {groups.length === 0 && (
                   <p className="px-5 py-4 text-sm text-gray-400">그룹이 없습니다. 위에서 새 그룹을 만드세요.</p>
@@ -1191,9 +1214,9 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                         <div className="flex gap-1.5">
                           <button
                             onClick={() => handleSyncGroup(group.id)}
-                            title="가장 높은 등급 구역 기준으로 시작일 동기화"
+                            title="시작일 동기화 + 측정주기 정렬 (긴 주기를 짧은 주기 측정일에 맞춤)"
                             className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 font-medium"
-                          >동기화</button>
+                          >동기화/정렬</button>
                           <button
                             onClick={() => handleDeleteGroup(group.id)}
                             className="text-xs px-2 py-1 bg-red-100 text-red-600 rounded-lg hover:bg-red-200"

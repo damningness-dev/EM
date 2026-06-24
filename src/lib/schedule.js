@@ -221,6 +221,44 @@ export function getDragBounds(measurement) {
   return { min: baseDate, max: baseDate };
 }
 
+// 일정그룹 정렬: 측정주기가 짧은(잦은) 구역을 기준으로, 주기가 긴 구역의
+// 측정일을 겹치는 날짜로 스냅한다. 각 구역은 자기 측정주기 창을 벗어나지 않는다.
+// 예) 그룹에 P1·P2 → P2를 P1 측정일에 맞춤 / P2·P3 → P3를 P2 측정일에 맞춤
+// 반환: [{ zoneId, schedule_overrides }] (변경된 구역만)
+export function alignGroupSchedules(groupZones, holidayMap = {}) {
+  const ordered = groupZones
+    .filter(z => z.schedule_start)
+    .slice()
+    .sort((a, b) => (GRADE_PRIORITY[b.grade] || 0) - (GRADE_PRIORITY[a.grade] || 0));
+  if (ordered.length < 2) return [];
+
+  const results = [];
+  // 마스터(가장 잦은 구역)의 실제 측정일
+  let masterDates = calcMeasurements(ordered[0], holidayMap).map(m => m.date);
+
+  for (let i = 1; i < ordered.length; i++) {
+    const zone = ordered[i];
+    const overrides = { ...(zone.schedule_overrides || {}) };
+    const ms = calcMeasurements(zone, holidayMap);
+    let changed = false;
+    for (const m of ms) {
+      const bounds = getDragBounds(m);
+      // 마스터 측정일 중 이 측정의 허용 창(window) 안에 있는 날짜
+      const candidates = masterDates.filter(d => d >= bounds.min && d <= bounds.max);
+      if (candidates.length) {
+        candidates.sort((a, b) => Math.abs(a - m.baseDate) - Math.abs(b - m.baseDate));
+        const snapped = format(candidates[0], 'yyyy-MM-dd');
+        if (overrides[String(m.num)] !== snapped) { overrides[String(m.num)] = snapped; changed = true; }
+      }
+    }
+    const aligned = { ...zone, schedule_overrides: overrides };
+    if (changed) results.push({ zoneId: zone.id, schedule_overrides: overrides });
+    // 다음 구역은 이미 정렬된 이 구역의 측정일 기준으로 맞춘다 (P3→P2→P1 연쇄)
+    masterDates = calcMeasurements(aligned, holidayMap).map(m => m.date);
+  }
+  return results;
+}
+
 function sumPoints(item) {
   return (item.points_surface || 0) + (item.points_float || 0)
        + (item.points_fall || 0) + (item.points_particle || 0);
