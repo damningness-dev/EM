@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, Fragment } from 'react';
-import { fetchZones, upsertZone, deleteZone, fetchMonitoringData, upsertMonitoringEntry, fetchCompletions, fetchHolidays } from '../lib/api';
+import { fetchZones, upsertZone, deleteZone, fetchMonitoringData, upsertMonitoringEntry, fetchCompletions, fetchHolidays, fetchGroups, upsertGroup } from '../lib/api';
 import { GRADE_TARGETS, GRADE_COLORS, CLEAN_GRADES, CLEAN_GRADE_COLORS } from '../data/initialData';
 import { calcMeasurements, calcEndDate, GRADE_PRIORITY, buildHolidayMap, computeCascadeSchedules } from '../lib/schedule';
 import { format } from 'date-fns';
@@ -17,6 +17,11 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [gradeFilter, setGradeFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [namedGroups, setNamedGroups] = useState([]);
+  const [groupBy, setGroupBy] = useState(false);
+  const [newGroupModal, setNewGroupModal] = useState(null); // { zoneGroup }
+  const [newGroupName, setNewGroupName] = useState('');
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [holidayDefs, setHolidayDefs] = useState([]);
   const [showAddZone, setShowAddZone] = useState(false);
@@ -28,7 +33,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
   const [errorMsg, setErrorMsg] = useState(null);
 
   useEffect(() => {
-    Promise.all([fetchZones(), fetchCompletions(), fetchHolidays()]).then(([zns, comps, hols]) => {
+    Promise.all([fetchZones(), fetchCompletions(), fetchHolidays(), fetchGroups()]).then(([zns, comps, hols, grps]) => {
       // 레거시 '청정등급' 분류 → '공조'로 이관 (청정등급은 이제 각 일정의 속성)
       const legacy = zns.filter(z => z.category === '청정등급');
       if (legacy.length) {
@@ -38,6 +43,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
       setZones(zns);
       setCompletions(new Set(comps.map(c => `${c.zoneId}_${c.num}`)));
       setHolidayDefs(hols);
+      setNamedGroups(grps);
     });
   }, []);
 
@@ -92,12 +98,44 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
     return active;
   }, [zones]);
 
+  // 구역 그룹 정렬 키 = 그룹 내 zone들의 최소 sort_order
+  function groupOrderKey(g) {
+    return Math.min(...g.zones.map(z => (typeof z.sort_order === 'number' ? z.sort_order : 1e9)));
+  }
+
+  const orderedAllGroups = useMemo(() => {
+    const arr = Object.values(zoneGroups);
+    arr.sort((a, b) => (groupOrderKey(a) - groupOrderKey(b)) || a.name.localeCompare(b.name));
+    return arr;
+  }, [zoneGroups]);
+
   const filteredGroups = useMemo(() => {
-    let groups = Object.values(zoneGroups);
+    let groups = orderedAllGroups;
+    if (categoryFilter !== 'all') groups = groups.filter(g => g.category === categoryFilter);
     if (search) groups = groups.filter(g => g.name.toLowerCase().includes(search.toLowerCase()));
     if (gradeFilter !== 'all') groups = groups.filter(g => g.zones.some(z => z.grade === gradeFilter && activeZoneIds.has(z.id)));
     return groups;
-  }, [zoneGroups, search, gradeFilter, activeZoneIds]);
+  }, [orderedAllGroups, search, gradeFilter, categoryFilter, activeZoneIds]);
+
+  // 구역을 소속 그룹명으로 묶기 (그룹으로 보기 ON)
+  function groupOf(zoneGroup) {
+    const ids = zoneGroup.zones.map(z => z.id);
+    return namedGroups.find(g => (g.zoneIds || []).some(id => ids.includes(id))) || null;
+  }
+
+  const groupedSections = useMemo(() => {
+    const map = new Map();
+    filteredGroups.forEach(zg => {
+      const g = groupOf(zg);
+      const key = g ? g.id : '__none__';
+      if (!map.has(key)) map.set(key, { id: key, name: g ? g.name : '그룹 미지정', items: [] });
+      map.get(key).items.push(zg);
+    });
+    const sections = [...map.values()];
+    // '그룹 미지정'은 항상 마지막
+    sections.sort((a, b) => (a.id === '__none__' ? 1 : 0) - (b.id === '__none__' ? 1 : 0));
+    return sections;
+  }, [filteredGroups, namedGroups]);
 
   const progress = useMemo(() => {
     let total = 0, done = 0;
@@ -193,6 +231,64 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
     setZones(prev => prev.map(z => updates.find(u => u.id === z.id) || z));
   }
 
+  // 구역 순서 조정 — 보이는 목록에서 인접 그룹과 위치 교환 (sort_order 재기록)
+  async function moveGroup(group, dir) {
+    const list = filteredGroups;
+    const idx = list.findIndex(g => g.key === group.key);
+    const swapIdx = dir === 'up' ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= list.length) return;
+    const other = list[swapIdx];
+    const full = [...orderedAllGroups];
+    const a = full.findIndex(g => g.key === group.key);
+    const b = full.findIndex(g => g.key === other.key);
+    if (a < 0 || b < 0) return;
+    [full[a], full[b]] = [full[b], full[a]];
+    // 전체 그룹 순서대로 sort_order 재기록
+    const updates = [];
+    full.forEach((g, gi) => {
+      g.zones.forEach((z, zi) => {
+        const newOrder = gi * 1000 + zi;
+        if (z.sort_order !== newOrder) updates.push({ ...z, sort_order: newOrder });
+      });
+    });
+    setZones(prev => prev.map(z => updates.find(u => u.id === z.id) || z));
+    for (const u of updates) await upsertZone(u);
+  }
+
+  // 구역을 명명된 그룹에 배정 (다른 그룹에서는 제거)
+  async function assignGroup(zoneGroup, value) {
+    if (value === '__new__') { setNewGroupName(''); setNewGroupModal({ zoneGroup }); return; }
+    const ids = zoneGroup.zones.map(z => z.id);
+    const targetId = value || null;
+    const changed = [];
+    for (const g of namedGroups) {
+      const has = (g.zoneIds || []).some(id => ids.includes(id));
+      const shouldHave = String(g.id) === String(targetId);
+      if (has && !shouldHave) changed.push({ ...g, zoneIds: g.zoneIds.filter(id => !ids.includes(id)) });
+      else if (!has && shouldHave) changed.push({ ...g, zoneIds: [...new Set([...(g.zoneIds || []), ...ids])] });
+    }
+    for (const g of changed) await upsertGroup(g);
+    setNamedGroups(prev => prev.map(g => changed.find(c => c.id === g.id) || g));
+  }
+
+  async function createGroupAndAssign() {
+    const name = newGroupName.trim();
+    if (!name || !newGroupModal) return;
+    const ids = newGroupModal.zoneGroup.zones.map(z => z.id);
+    // 다른 그룹에서 제거
+    const removed = [];
+    for (const g of namedGroups) {
+      if ((g.zoneIds || []).some(id => ids.includes(id))) {
+        removed.push({ ...g, zoneIds: g.zoneIds.filter(id => !ids.includes(id)) });
+      }
+    }
+    for (const g of removed) await upsertGroup(g);
+    const saved = await upsertGroup({ name, zoneIds: ids });
+    setNamedGroups(prev => [...prev.map(g => removed.find(r => r.id === g.id) || g), saved]);
+    setNewGroupModal(null);
+    setNewGroupName('');
+  }
+
   // 청정등급 부여 — 그룹 전체 또는 단일 일정(zone)에 적용
   async function handleSetCleanGrade(zoneIds, value) {
     const ids = Array.isArray(zoneIds) ? zoneIds : [zoneIds];
@@ -275,12 +371,24 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
       {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center">
         <input type="text" placeholder="구역명 검색..." value={search} onChange={e => setSearch(e.target.value)} className="flex-1 min-w-48 px-3 py-2 border border-gray-200 rounded-lg text-sm" />
-        <div className="flex gap-2 flex-wrap">
-          <button onClick={() => setGradeFilter('all')} className={`px-3 py-1.5 rounded-lg text-sm border ${gradeFilter === 'all' ? 'bg-gray-700 text-white border-gray-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>전체</button>
+        {/* 분류 필터 */}
+        <div className="flex gap-1.5 flex-wrap">
+          <button onClick={() => setCategoryFilter('all')} className={`px-3 py-1.5 rounded-lg text-sm border ${categoryFilter === 'all' ? 'bg-gray-700 text-white border-gray-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>전체분류</button>
+          {CATEGORIES.map(c => (
+            <button key={c} onClick={() => setCategoryFilter(c)} className={`px-3 py-1.5 rounded-lg text-sm border ${categoryFilter === c ? 'bg-indigo-600 text-white border-indigo-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>{c}</button>
+          ))}
+        </div>
+        {/* 등급 필터 */}
+        <div className="flex gap-1.5 flex-wrap">
+          <button onClick={() => setGradeFilter('all')} className={`px-3 py-1.5 rounded-lg text-sm border ${gradeFilter === 'all' ? 'bg-gray-700 text-white border-gray-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>전체등급</button>
           {GRADES.map(g => (
             <button key={g} onClick={() => setGradeFilter(g)} className={`px-3 py-1.5 rounded-lg text-sm border ${gradeFilter === g ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>{g}</button>
           ))}
         </div>
+        <button
+          onClick={() => setGroupBy(v => !v)}
+          className={`px-3 py-1.5 rounded-lg text-sm border font-medium ${groupBy ? 'bg-purple-600 text-white border-purple-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+        >📁 그룹으로 보기</button>
         <button onClick={() => { setShowAddZone(true); setZoneForm({}); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 ml-auto">+ 구역 추가</button>
       </div>
 
@@ -291,9 +399,10 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
-                  <th className="w-8 px-3 py-3"></th>
+                  <th className="w-16 px-2 py-3 text-center text-gray-400 font-medium text-xs">순서</th>
                   <th className="text-left px-3 py-3 text-gray-500 font-medium">구역명</th>
                   <th className="text-center px-3 py-3 text-gray-500 font-medium">분류</th>
+                  <th className="text-center px-3 py-3 text-gray-500 font-medium">그룹</th>
                   <th className="text-center px-3 py-3 text-gray-500 font-medium">청정등급</th>
                   <th className="text-center px-3 py-3 text-gray-500 font-medium">활성등급</th>
                   <th className="text-center px-3 py-3 text-gray-500 font-medium">이번달</th>
@@ -306,7 +415,22 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                 </tr>
               </thead>
               <tbody>
-                {filteredGroups.map(group => {
+                {(groupBy
+                  ? groupedSections.flatMap(sec => [{ kind: 'section', sec }, ...sec.items.map(g => ({ kind: 'group', group: g }))])
+                  : filteredGroups.map(g => ({ kind: 'group', group: g }))
+                ).map((row) => {
+                  if (row.kind === 'section') {
+                    return (
+                      <tr key={`sec-${row.sec.id}`} className="bg-purple-50/70 border-y border-purple-100">
+                        <td colSpan={13} className="px-4 py-2">
+                          <span className="text-sm font-bold text-purple-700">📁 {row.sec.name}</span>
+                          <span className="ml-2 text-xs text-purple-400">({row.sec.items.length}개 구역)</span>
+                        </td>
+                      </tr>
+                    );
+                  }
+                  const group = row.group;
+                  const idx = filteredGroups.findIndex(g => g.key === group.key);
                   const isExpanded = expandedGroups.has(group.key);
                   const activeZone = getActiveZone(group);
                   const isGroupActive = group.zones.some(z => activeZoneIds.has(z.id));
@@ -325,7 +449,19 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                         className={`border-b border-gray-100 cursor-pointer select-none hover:bg-gray-50/50 ${isExpanded ? 'bg-blue-50/30 border-blue-100' : ''} ${isGroupActive && !isExpanded ? 'bg-blue-50/10' : ''}`}
                         onClick={() => toggleGroup(group.key)}
                       >
-                        <td className="px-3 py-3 text-center text-gray-400 text-xs font-bold">{isExpanded ? '▼' : '▶'}</td>
+                        <td className="px-2 py-3 text-center" onClick={e => e.stopPropagation()}>
+                          <div className="flex items-center justify-center gap-1">
+                            {!groupBy && (
+                              <div className="flex flex-col leading-none">
+                                <button onClick={() => moveGroup(group, 'up')} disabled={idx <= 0}
+                                  className="text-[10px] text-gray-400 hover:text-blue-600 disabled:opacity-20 disabled:cursor-default" title="위로">▲</button>
+                                <button onClick={() => moveGroup(group, 'down')} disabled={idx >= filteredGroups.length - 1}
+                                  className="text-[10px] text-gray-400 hover:text-blue-600 disabled:opacity-20 disabled:cursor-default" title="아래로">▼</button>
+                              </div>
+                            )}
+                            <span className="text-gray-400 text-xs font-bold cursor-pointer" onClick={() => toggleGroup(group.key)}>{isExpanded ? '▼' : '▶'}</span>
+                          </div>
+                        </td>
                         <td className="px-3 py-3">
                           <div className="flex items-center gap-1.5">
                             <span className="font-medium text-gray-800">{group.name}</span>
@@ -339,6 +475,17 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                             className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                           >
                             {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                        </td>
+                        <td className="px-3 py-3 text-center" onClick={e => e.stopPropagation()}>
+                          <select
+                            value={groupOf(group)?.id || ''}
+                            onChange={e => assignGroup(group, e.target.value)}
+                            className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-purple-500 max-w-[120px]"
+                          >
+                            <option value="">그룹 없음</option>
+                            {namedGroups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                            <option value="__new__">+ 새 그룹...</option>
                           </select>
                         </td>
                         <td className="px-3 py-3 text-center" onClick={e => e.stopPropagation()}>
@@ -399,7 +546,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                       {/* Expanded grade progression */}
                       {isExpanded && (
                         <tr>
-                          <td colSpan={12} className="p-0">
+                          <td colSpan={13} className="p-0">
                             <div className="bg-gray-50 border-b-2 border-blue-100 px-6 py-3 space-y-2">
                               {PROGRESSION.map(grade => {
                                 const zone = gradeMap[grade];
@@ -488,7 +635,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                   );
                 })}
                 {filteredGroups.length === 0 && (
-                  <tr><td colSpan={12} className="px-4 py-8 text-center text-sm text-gray-400">구역이 없습니다.</td></tr>
+                  <tr><td colSpan={13} className="px-4 py-8 text-center text-sm text-gray-400">구역이 없습니다.</td></tr>
                 )}
               </tbody>
             </table>
@@ -596,6 +743,33 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
             <div className="flex gap-2 pt-2">
               <button onClick={handleAddZone} disabled={saving} className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">추가</button>
               <button onClick={() => setShowAddZone(false)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600">취소</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 새 그룹 만들기 모달 */}
+      {newGroupModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setNewGroupModal(null)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <h2 className="font-bold text-gray-800">새 그룹 만들기</h2>
+            <p className="text-xs text-gray-400">
+              <span className="font-semibold text-gray-600">{newGroupModal.zoneGroup.name}</span> 구역을 새 그룹으로 묶습니다.
+            </p>
+            <div>
+              <label className="text-xs text-gray-500">그룹명</label>
+              <input
+                autoFocus
+                className="w-full border rounded px-2 py-1.5 text-sm mt-0.5"
+                value={newGroupName}
+                onChange={e => setNewGroupName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') createGroupAndAssign(); }}
+                placeholder="예: 1동 4층"
+              />
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button onClick={createGroupAndAssign} disabled={!newGroupName.trim()} className="flex-1 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 disabled:opacity-50">만들기</button>
+              <button onClick={() => setNewGroupModal(null)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600">취소</button>
             </div>
           </div>
         </div>
