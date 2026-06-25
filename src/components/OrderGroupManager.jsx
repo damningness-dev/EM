@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { upsertZone, upsertGroup, fetchScheduleConfig, saveScheduleConfig } from '../lib/api';
-import { GRADE_PRIORITY, DEFAULT_SCHEDULE_SPECS, setScheduleConfig, getScheduleConfig } from '../lib/schedule';
-import { GRADE_COLORS } from '../data/initialData';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { upsertZone, deleteZone, upsertGroup, fetchScheduleConfig, saveScheduleConfig } from '../lib/api';
+import { GRADE_PRIORITY, DEFAULT_SCHEDULE_SPECS, setScheduleConfig, getScheduleConfig, buildHolidayMap, computeCascadeSchedules, calcMeasurements, calcEndDate } from '../lib/schedule';
+import { GRADE_COLORS, CLEAN_GRADES, CLEAN_GRADE_COLORS } from '../data/initialData';
 
 const CYCLE_TYPES = [
   { value: 'daily',     label: '매일(일1회)' },
@@ -13,10 +13,8 @@ const CYCLE_TYPES = [
 const DEFAULT_INTERVAL = { daily: 1, weekly: 7, biweekly: 14 };
 const CYCLE_GRADES = ['P1', 'P2', 'P3', '유지관리'];
 const BUILTIN_CATS = ['공조', '압축공기', '질소가스'];
-
-function groupOrderKey(g) {
-  return Math.min(...g.zones.map(z => (typeof z.sort_order === 'number' ? z.sort_order : 1e9)));
-}
+const PROGRESSION = ['P1', 'P2', 'P3', '유지관리'];
+const GRADES = ['P1', 'P2', 'P3', '유지관리', 'OQ', 'PQ'];
 
 function buildOrderedGroups(zones) {
   const map = {};
@@ -29,26 +27,37 @@ function buildOrderedGroups(zones) {
     g.zones.sort((a, b) => (GRADE_PRIORITY[b.grade] || 0) - (GRADE_PRIORITY[a.grade] || 0));
   });
   const arr = Object.values(map);
-  arr.sort((a, b) => (groupOrderKey(a) - groupOrderKey(b)) || a.name.localeCompare(b.name));
+  arr.sort((a, b) => (Math.min(...a.zones.map(z => z.sort_order ?? 1e9)) - Math.min(...b.zones.map(z => z.sort_order ?? 1e9))) || a.name.localeCompare(b.name));
   return arr;
 }
 
+const CATEGORY_OPTIONS = ['공조', '압축공기', '질소가스'];
+
 /**
  * 구역 순서 / 그룹(폴더) 관리 + 측정주기 설정 통합 팝업.
- * 월별 환경모니터링의 순서/그룹 관리 기능을 달력보기에서도 쓸 수 있도록 분리한 공용 컴포넌트.
  *
  * props:
  *  - zones, groups: 현재 데이터
+ *  - holidayDefs: 공휴일 정의 배열 (cascade schedule 계산용)
  *  - onClose(): 닫기
- *  - onSaved(updatedZones, updatedGroups, cycleConfig): 저장 후 부모 데이터 갱신
+ *  - onSaved(updatedZones, updatedGroups): 저장 후 부모 데이터 갱신
  */
-export default function OrderGroupManager({ zones, groups, onClose, onSaved }) {
+export default function OrderGroupManager({ zones, groups, holidayDefs = [], onClose, onSaved }) {
   const [activeTab, setActiveTab] = useState('order'); // 'order' | 'cycle'
-  const [modalGroups, setModalGroups] = useState(() => buildOrderedGroups(zones).map(g => ({ ...g, zones: [...g.zones] })));
-  const [modalNamedGroups, setModalNamedGroups] = useState(() => groups.map(g => ({ ...g, zoneIds: [...(g.zoneIds || [])] })));
+  const [modalGroups, setModalGroups] = useState(() =>
+    buildOrderedGroups(zones).map(g => ({
+      ...g,
+      zones: g.zones.map(z => ({ ...z }))
+    }))
+  );
+  const [modalNamedGroups, setModalNamedGroups] = useState(() =>
+    groups.map(g => ({ ...g, zoneIds: [...(g.zoneIds || [])] }))
+  );
   const [modalSelectedIdx, setModalSelectedIdx] = useState(null);
+  const [expandedRows, setExpandedRows] = useState(new Set());
+  const [folderFilter, setFolderFilter] = useState(null); // null = 전체, or namedGroup id
   const [pos, setPos] = useState({ x: 80, y: 60 });
-  const [size, setSize] = useState({ w: 840, h: 560 });
+  const [size, setSize] = useState({ w: 980, h: 600 });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [dragIdx, setDragIdx] = useState(null);
@@ -56,6 +65,17 @@ export default function OrderGroupManager({ zones, groups, onClose, onSaved }) {
   const [dragOverFolder, setDragOverFolder] = useState(null);
   const [newFolderName, setNewFolderName] = useState('');
   const [showNewFolder, setShowNewFolder] = useState(false);
+  // 로컬 편집 변경사항 tracking: { zoneId: { ...fields } }
+  const [localEdits, setLocalEdits] = useState({});
+  // 새 구역 추가 폼
+  const [showAddZone, setShowAddZone] = useState(false);
+  const [addZoneName, setAddZoneName] = useState('');
+  const [addZoneCategory, setAddZoneCategory] = useState('공조');
+  const [addZoneGrade, setAddZoneGrade] = useState('P1');
+  const [addZoneCleanGrade, setAddZoneCleanGrade] = useState('A');
+  // 우클릭 컨텍스트 메뉴
+  const [contextMenu, setContextMenu] = useState(null); // { x, y, groupIdx }
+  const contextMenuRef = useRef(null);
   // 측정주기 설정
   const [cycleConfig, setCycleConfig] = useState(() => getScheduleConfig());
   const [cycleCatTab, setCycleCatTab] = useState(() => Object.keys(getScheduleConfig())[0] || '공조');
@@ -84,36 +104,76 @@ export default function OrderGroupManager({ zones, groups, onClose, onSaved }) {
     if (row) row.scrollIntoView({ block: 'nearest' });
   }, [modalSelectedIdx]);
 
+  // 우클릭 메뉴 click-outside 닫기
+  useEffect(() => {
+    if (!contextMenu) return;
+    function onDown(e) {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target)) {
+        setContextMenu(null);
+      }
+    }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [contextMenu]);
+
+  // 폴더 필터링된 그룹 목록
+  const filteredGroups = useMemo(() => {
+    if (folderFilter === null) return modalGroups;
+    if (folderFilter === '__none__') {
+      // 어떤 그룹에도 속하지 않은 구역들
+      const allGroupedIds = new Set(modalNamedGroups.flatMap(g => g.zoneIds || []));
+      return modalGroups.filter(g => g.zones.some(z => !allGroupedIds.has(z.id)));
+    }
+    const namedGroup = modalNamedGroups.find(g => String(g.id) === String(folderFilter));
+    if (!namedGroup) return modalGroups;
+    const ids = new Set(namedGroup.zoneIds || []);
+    return modalGroups.filter(g => g.zones.some(z => ids.has(z.id)));
+  }, [modalGroups, modalNamedGroups, folderFilter]);
+
+  // 인덱스를 실제 modalGroups 내 인덱스로 변환
+  function getRealIdx(filteredIdx) {
+    const group = filteredGroups[filteredIdx];
+    if (!group) return -1;
+    return modalGroups.findIndex(g => g.key === group.key);
+  }
+
   // ─── 순서 이동 ──────────────────────────────────────────────
   function moveModalSelected(dir) {
     if (modalSelectedIdx === null) return;
+    const realIdx = getRealIdx(modalSelectedIdx);
+    if (realIdx < 0) return;
     const arr = [...modalGroups];
-    let newIdx;
-    if (dir === 'top')         newIdx = 0;
-    else if (dir === 'up10')   newIdx = Math.max(0, modalSelectedIdx - 10);
-    else if (dir === 'up1')    newIdx = Math.max(0, modalSelectedIdx - 1);
-    else if (dir === 'down1')  newIdx = Math.min(arr.length - 1, modalSelectedIdx + 1);
-    else if (dir === 'down10') newIdx = Math.min(arr.length - 1, modalSelectedIdx + 10);
-    else if (dir === 'bottom') newIdx = arr.length - 1;
+    let newRealIdx;
+    if (dir === 'top')         newRealIdx = 0;
+    else if (dir === 'up10')   newRealIdx = Math.max(0, realIdx - 10);
+    else if (dir === 'up1')    newRealIdx = Math.max(0, realIdx - 1);
+    else if (dir === 'down1')  newRealIdx = Math.min(arr.length - 1, realIdx + 1);
+    else if (dir === 'down10') newRealIdx = Math.min(arr.length - 1, realIdx + 10);
+    else if (dir === 'bottom') newRealIdx = arr.length - 1;
     else return;
-    if (newIdx === modalSelectedIdx) return;
-    const [item] = arr.splice(modalSelectedIdx, 1);
-    arr.splice(newIdx, 0, item);
+    if (newRealIdx === realIdx) return;
+    const [item] = arr.splice(realIdx, 1);
+    arr.splice(newRealIdx, 0, item);
     setModalGroups(arr);
-    setModalSelectedIdx(newIdx);
+    // filteredGroups를 재계산하여 새 인덱스를 찾음
+    // (간단히 null로 초기화 후 첫 번째 선택)
+    setModalSelectedIdx(null);
   }
 
-  function handleModalDrop(e, targetIdx) {
+  function handleModalDrop(e, targetFilteredIdx) {
     e.preventDefault();
     const fromStr = e.dataTransfer.getData('modalDragIdx');
     if (!fromStr) return;
-    const fromIdx = parseInt(fromStr);
-    if (!isNaN(fromIdx) && fromIdx !== targetIdx) {
+    const fromFilteredIdx = parseInt(fromStr);
+    if (!isNaN(fromFilteredIdx) && fromFilteredIdx !== targetFilteredIdx) {
+      const fromRealIdx = getRealIdx(fromFilteredIdx);
+      const toRealIdx = getRealIdx(targetFilteredIdx);
+      if (fromRealIdx < 0 || toRealIdx < 0) return;
       const arr = [...modalGroups];
-      const [item] = arr.splice(fromIdx, 1);
-      arr.splice(targetIdx, 0, item);
+      const [item] = arr.splice(fromRealIdx, 1);
+      arr.splice(toRealIdx, 0, item);
       setModalGroups(arr);
-      setModalSelectedIdx(targetIdx);
+      setModalSelectedIdx(targetFilteredIdx);
     }
     setDragIdx(null); setDropIdx(null);
   }
@@ -122,8 +182,11 @@ export default function OrderGroupManager({ zones, groups, onClose, onSaved }) {
     e.preventDefault();
     const fromStr = e.dataTransfer.getData('modalDragIdx');
     if (!fromStr) return;
-    const fromIdx = parseInt(fromStr);
-    if (!isNaN(fromIdx)) modalAssignGroup(fromIdx, namedGroupId || '');
+    const fromFilteredIdx = parseInt(fromStr);
+    if (!isNaN(fromFilteredIdx)) {
+      const realIdx = getRealIdx(fromFilteredIdx);
+      if (realIdx >= 0) modalAssignGroup(realIdx, namedGroupId || '');
+    }
     setDragIdx(null); setDragOverFolder(null);
   }
 
@@ -138,8 +201,8 @@ export default function OrderGroupManager({ zones, groups, onClose, onSaved }) {
     } catch (e) { setError('폴더 생성 실패: ' + e.message); }
   }
 
-  function modalAssignGroup(idx, namedGroupId) {
-    const ids = modalGroups[idx].zones.map(z => z.id);
+  function modalAssignGroup(realIdx, namedGroupId) {
+    const ids = modalGroups[realIdx]?.zones.map(z => z.id) || [];
     setModalNamedGroups(prev => prev.map(g => {
       const has = (g.zoneIds || []).some(id => ids.includes(id));
       const shouldHave = String(g.id) === String(namedGroupId);
@@ -149,19 +212,135 @@ export default function OrderGroupManager({ zones, groups, onClose, onSaved }) {
     }));
   }
 
+  // ─── 로컬 편집 ──────────────────────────────────────────────
+  function getZoneValue(zone, field) {
+    if (localEdits[zone.id] && field in localEdits[zone.id]) return localEdits[zone.id][field];
+    return zone[field];
+  }
+
+  function editZoneField(zoneId, field, value) {
+    setLocalEdits(prev => ({
+      ...prev,
+      [zoneId]: { ...(prev[zoneId] || {}), [field]: value }
+    }));
+  }
+
+  function handleDateBlur(zone) {
+    // cascade: P1/P2/P3인 경우 computeCascadeSchedules 호출
+    if (!PROGRESSION.includes(zone.grade)) return;
+    const dateStr = getZoneValue(zone, 'schedule_start');
+    if (!dateStr) return;
+    try {
+      const startYear = new Date(dateStr).getFullYear();
+      const holidayMap = buildHolidayMap(holidayDefs, startYear, startYear + 4);
+      // 모든 현재 zones + localEdits 반영한 merged 배열
+      const allZones = modalGroups.flatMap(g =>
+        g.zones.map(z => ({
+          ...z,
+          ...(localEdits[z.id] || {}),
+        }))
+      );
+      // 현재 zone도 edits 반영
+      const mergedZone = { ...zone, ...(localEdits[zone.id] || {}) };
+      const cascadeResult = computeCascadeSchedules(mergedZone, allZones, holidayMap);
+      // cascade 결과를 localEdits에 반영
+      if (cascadeResult && Array.isArray(cascadeResult)) {
+        const newEdits = { ...localEdits };
+        cascadeResult.forEach(updated => {
+          if (updated.id !== zone.id) {
+            newEdits[updated.id] = { ...(newEdits[updated.id] || {}), schedule_start: updated.schedule_start };
+          }
+        });
+        setLocalEdits(newEdits);
+        // modalGroups의 zones도 업데이트
+        setModalGroups(prev => prev.map(g => ({
+          ...g,
+          zones: g.zones.map(z => {
+            const found = cascadeResult.find(u => u.id === z.id);
+            return found ? { ...z, ...found } : z;
+          })
+        })));
+      }
+    } catch (err) {
+      console.warn('cascade error:', err);
+    }
+  }
+
+  // ─── 구역 추가 ──────────────────────────────────────────────
+  async function handleAddZone() {
+    const name = addZoneName.trim();
+    if (!name) return;
+    try {
+      const newZone = {
+        name,
+        category: addZoneCategory,
+        grade: addZoneGrade,
+        clean_grade: addZoneCleanGrade,
+        sort_order: modalGroups.length * 1000,
+      };
+      const saved = await upsertZone(newZone);
+      const key = `${saved.category}|||${saved.name}`;
+      // 기존 그룹에 추가하거나 새 그룹 생성
+      setModalGroups(prev => {
+        const existing = prev.find(g => g.key === key);
+        if (existing) {
+          return prev.map(g => g.key === key
+            ? { ...g, zones: [...g.zones, saved].sort((a, b) => (GRADE_PRIORITY[b.grade] || 0) - (GRADE_PRIORITY[a.grade] || 0)) }
+            : g
+          );
+        }
+        return [{ name: saved.name, category: saved.category, key, zones: [saved] }, ...prev];
+      });
+      setAddZoneName('');
+      setAddZoneGrade('P1');
+      setAddZoneCleanGrade('A');
+      setShowAddZone(false);
+    } catch (e) {
+      setError('구역 추가 실패: ' + e.message);
+    }
+  }
+
+  // ─── 구역(등급) 삭제 ────────────────────────────────────────
+  async function handleDeleteZoneGrade(groupKey, zoneId) {
+    try {
+      await deleteZone(zoneId);
+      setModalGroups(prev => {
+        return prev
+          .map(g => {
+            if (g.key !== groupKey) return g;
+            const newZones = g.zones.filter(z => z.id !== zoneId);
+            return newZones.length === 0 ? null : { ...g, zones: newZones };
+          })
+          .filter(Boolean);
+      });
+      setLocalEdits(prev => {
+        const next = { ...prev };
+        delete next[zoneId];
+        return next;
+      });
+    } catch (e) {
+      setError('삭제 실패: ' + e.message);
+    }
+  }
+
+  // ─── 저장 ──────────────────────────────────────────────────
   async function saveOrderModal() {
     setSaving(true);
     try {
       const zoneUpdates = [];
       modalGroups.forEach((g, gi) => {
         g.zones.forEach((z, zi) => {
-          zoneUpdates.push({ ...z, sort_order: gi * 1000 + zi });
+          const edits = localEdits[z.id] || {};
+          zoneUpdates.push({ ...z, ...edits, sort_order: gi * 1000 + zi });
         });
       });
       for (const u of zoneUpdates) await upsertZone(u);
       for (const g of modalNamedGroups) await upsertGroup(g);
-      const updatedZones = zones.map(z => zoneUpdates.find(u => u.id === z.id) || z);
-      onSaved?.(updatedZones, modalNamedGroups, cycleConfig);
+      // updatedZones: 원본 zones를 기준으로 합침
+      const updatedZones = zones
+        .map(z => zoneUpdates.find(u => u.id === z.id) || z)
+        .concat(zoneUpdates.filter(u => !zones.find(z => z.id === u.id)));
+      onSaved?.(updatedZones, modalNamedGroups);
       onClose?.();
     } catch (e) {
       setError('저장 실패: ' + e.message);
@@ -191,7 +370,7 @@ export default function OrderGroupManager({ zones, groups, onClose, onSaved }) {
     e.preventDefault(); e.stopPropagation();
     const startX = e.clientX, startY = e.clientY;
     const startW = size.w, startH = size.h;
-    const onMove = ev => setSize({ w: Math.max(580, startW + ev.clientX - startX), h: Math.max(360, startH + ev.clientY - startY) });
+    const onMove = ev => setSize({ w: Math.max(700, startW + ev.clientX - startX), h: Math.max(400, startH + ev.clientY - startY) });
     const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
@@ -262,6 +441,27 @@ export default function OrderGroupManager({ zones, groups, onClose, onSaved }) {
     setCycleCatTab(Object.keys(next)[0] || '공조');
   }
 
+  // 폴더당 구역 개수
+  function folderZoneCount(namedGroup) {
+    const ids = new Set(namedGroup.zoneIds || []);
+    return modalGroups.filter(g => g.zones.some(z => ids.has(z.id))).length;
+  }
+
+  function ungroupedCount() {
+    const allGroupedIds = new Set(modalNamedGroups.flatMap(g => g.zoneIds || []));
+    return modalGroups.filter(g => g.zones.some(z => !allGroupedIds.has(z.id))).length;
+  }
+
+  // 오늘 날짜 기준 활성 zone 찾기
+  function getActiveZone(group) {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    // 시작일이 오늘 이전이면서 가장 최근인 것
+    const candidates = group.zones
+      .filter(z => z.schedule_start && z.schedule_start <= todayStr)
+      .sort((a, b) => b.schedule_start.localeCompare(a.schedule_start));
+    return candidates[0] || group.zones[0];
+  }
+
   return (
     <div className="fixed inset-0 z-[500]" style={{ pointerEvents: 'none' }}>
       <div
@@ -297,9 +497,9 @@ export default function OrderGroupManager({ zones, groups, onClose, onSaved }) {
                 { dir: 'top',    label: '맨위로',   icon: '⏫', dis: modalSelectedIdx === null || modalSelectedIdx === 0 },
                 { dir: 'up10',   label: '10위',     icon: '▲▲', dis: modalSelectedIdx === null || modalSelectedIdx === 0 },
                 { dir: 'up1',    label: '위로',     icon: '▲',  dis: modalSelectedIdx === null || modalSelectedIdx === 0 },
-                { dir: 'down1',  label: '아래로',   icon: '▼',  dis: modalSelectedIdx === null || modalSelectedIdx >= modalGroups.length - 1 },
-                { dir: 'down10', label: '10아래',   icon: '▼▼', dis: modalSelectedIdx === null || modalSelectedIdx >= modalGroups.length - 1 },
-                { dir: 'bottom', label: '맨아래로', icon: '⏬', dis: modalSelectedIdx === null || modalSelectedIdx >= modalGroups.length - 1 },
+                { dir: 'down1',  label: '아래로',   icon: '▼',  dis: modalSelectedIdx === null || modalSelectedIdx >= filteredGroups.length - 1 },
+                { dir: 'down10', label: '10아래',   icon: '▼▼', dis: modalSelectedIdx === null || modalSelectedIdx >= filteredGroups.length - 1 },
+                { dir: 'bottom', label: '맨아래로', icon: '⏬', dis: modalSelectedIdx === null || modalSelectedIdx >= filteredGroups.length - 1 },
               ].map(btn => (
                 <button key={btn.dir} onClick={() => moveModalSelected(btn.dir)} disabled={btn.dis}
                   className={`flex items-center gap-1 px-2 py-1 text-xs rounded border font-medium transition-colors ${btn.dis ? 'border-transparent text-gray-300 cursor-default' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 hover:border-gray-400 shadow-sm'}`}
@@ -310,95 +510,288 @@ export default function OrderGroupManager({ zones, groups, onClose, onSaved }) {
                 </button>
               ))}
               <div className="w-px h-5 bg-gray-200 mx-1" />
+              <button
+                onClick={() => setShowAddZone(v => !v)}
+                className="flex items-center gap-1 px-2 py-1 text-xs rounded border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100 font-medium"
+              >
+                <span>+</span><span>구역 추가</span>
+              </button>
+              <div className="w-px h-5 bg-gray-200 mx-1" />
               <span className="text-xs text-gray-400">
-                {modalSelectedIdx !== null ? `${modalSelectedIdx + 1} / ${modalGroups.length}` : `${modalGroups.length}개`}
+                {modalSelectedIdx !== null ? `${modalSelectedIdx + 1} / ${filteredGroups.length}` : `${filteredGroups.length}개`}
               </span>
             </div>
+
+            {/* 구역 추가 인라인 폼 */}
+            {showAddZone && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border-b border-blue-200 shrink-0 flex-wrap">
+                <input
+                  autoFocus
+                  className="text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 w-36"
+                  placeholder="구역명"
+                  value={addZoneName}
+                  onChange={e => setAddZoneName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleAddZone(); if (e.key === 'Escape') setShowAddZone(false); }}
+                />
+                <select value={addZoneCategory} onChange={e => setAddZoneCategory(e.target.value)}
+                  className="text-xs border border-gray-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                  {CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <select value={addZoneGrade} onChange={e => setAddZoneGrade(e.target.value)}
+                  className="text-xs border border-gray-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                  {GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+                </select>
+                <select value={addZoneCleanGrade} onChange={e => setAddZoneCleanGrade(e.target.value)}
+                  className="text-xs border border-gray-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                  {CLEAN_GRADES.map(g => <option key={g} value={g}>청정{g}</option>)}
+                </select>
+                <button onClick={handleAddZone} disabled={!addZoneName.trim()}
+                  className="text-xs px-2.5 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40">추가</button>
+                <button onClick={() => { setShowAddZone(false); setAddZoneName(''); }}
+                  className="text-xs px-2 py-1 border border-gray-200 rounded text-gray-500 hover:bg-gray-50">취소</button>
+              </div>
+            )}
 
             {/* 두 패널 */}
             <div className="flex flex-1 min-h-0">
               {/* 왼쪽: 구역 목록 */}
               <div className="flex flex-col flex-1 min-w-0">
-                <div className="flex items-center bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-500 shrink-0" style={{ height: 28 }}>
-                  <div className="w-8 text-center shrink-0 text-gray-300">≡</div>
-                  <div className="w-8 text-center shrink-0">#</div>
-                  <div className="flex-1 pl-1">구역명</div>
-                  <div className="text-center shrink-0" style={{ width: 68 }}>분류</div>
-                  <div className="text-center shrink-0" style={{ width: 96 }}>등급</div>
+                {/* 컬럼 헤더 */}
+                <div className="flex items-center bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-500 shrink-0 select-none" style={{ height: 28 }}>
+                  <div className="shrink-0 text-center text-gray-300" style={{ width: 32 }}>≡</div>
+                  <div className="shrink-0 text-center" style={{ width: 32 }}>#</div>
+                  <div className="flex-1 pl-1 min-w-0">구역명</div>
+                  <div className="shrink-0 text-center" style={{ width: 60 }}>분류</div>
+                  <div className="shrink-0 text-center" style={{ width: 70 }}>청정등급</div>
+                  <div className="shrink-0 text-center" style={{ width: 100 }}>시작일</div>
+                  <div className="shrink-0 text-center" style={{ width: 48 }}>부유균</div>
+                  <div className="shrink-0 text-center" style={{ width: 48 }}>낙하균</div>
+                  <div className="shrink-0 text-center" style={{ width: 48 }}>표면균</div>
+                  <div className="shrink-0 text-center" style={{ width: 48 }}>부유입자</div>
+                  <div className="shrink-0 text-center" style={{ width: 80 }}>등급</div>
+                  <div className="shrink-0 text-center" style={{ width: 28 }}></div>
                 </div>
+
+                {/* 목록 */}
                 <div ref={listRef} className="flex-1 overflow-y-auto">
-                  {modalGroups.map((group, idx) => {
-                    const sel = idx === modalSelectedIdx;
-                    const isDragOver = dropIdx === idx && dragIdx !== idx;
+                  {filteredGroups.map((group, filteredIdx) => {
+                    const sel = filteredIdx === modalSelectedIdx;
+                    const isDragOver = dropIdx === filteredIdx && dragIdx !== filteredIdx;
+                    const isExpanded = expandedRows.has(group.key);
+                    const activeZone = getActiveZone(group);
+                    const firstZone = group.zones[0];
+
                     return (
-                      <div
-                        key={group.key}
-                        data-modal-row={idx}
-                        onClick={() => setModalSelectedIdx(idx)}
-                        onDragOver={e => { e.preventDefault(); setDropIdx(idx); }}
-                        onDragLeave={() => setDropIdx(null)}
-                        onDrop={e => handleModalDrop(e, idx)}
-                        className={`flex items-center text-xs cursor-pointer select-none transition-colors ${sel ? 'bg-blue-600 text-white' : idx % 2 === 0 ? 'bg-white hover:bg-blue-50' : 'bg-gray-50/60 hover:bg-blue-50'}`}
-                        style={{ height: 28, borderTop: isDragOver ? '2px solid #2563eb' : '1px solid transparent', borderBottom: '1px solid #f3f4f6' }}
-                      >
+                      <div key={group.key}>
+                        {/* 접힌 행 (그룹 요약) */}
                         <div
-                          draggable
-                          onDragStart={e => { e.dataTransfer.setData('modalDragIdx', String(idx)); e.dataTransfer.effectAllowed = 'move'; setDragIdx(idx); }}
-                          onDragEnd={() => { setDragIdx(null); setDropIdx(null); }}
-                          onClick={e => e.stopPropagation()}
-                          className={`w-8 flex items-center justify-center cursor-grab shrink-0 text-base ${sel ? 'text-blue-300 hover:text-white' : 'text-gray-300 hover:text-gray-500'}`}
-                          title="드래그하여 순서 변경"
-                        >≡</div>
-                        <div className={`w-8 text-center shrink-0 font-mono ${sel ? 'text-blue-200' : 'text-gray-300'}`} style={{ fontSize: 10 }}>{idx + 1}</div>
-                        <div className="flex-1 flex items-center gap-2 min-w-0 px-1">
-                          <svg width="14" height="12" viewBox="0 0 16 13" fill="none" className="shrink-0">
-                            <rect width="16" height="10" rx="1" fill={sel ? '#93c5fd' : '#fbbf24'} y="2.5" />
-                            <rect width="7" height="2.5" fill={sel ? '#60a5fa' : '#f59e0b'} y="0.5" x="0.5" rx="0.8" />
-                          </svg>
-                          <span className={`font-medium truncate ${sel ? 'text-white' : 'text-gray-800'}`}>{group.name}</span>
-                        </div>
-                        <div className={`text-center shrink-0 ${sel ? 'text-blue-100' : 'text-gray-400'}`} style={{ width: 68, fontSize: 10 }}>{group.category}</div>
-                        <div className="flex items-center justify-center gap-1 shrink-0" style={{ width: 96 }}>
-                          {group.zones.map(z => (
-                            <span key={z.id} className={`text-[9px] px-1 py-px rounded ${sel ? 'bg-blue-400 text-white' : 'bg-gray-200 text-gray-600'}`}>{z.grade}</span>
+                          data-modal-row={filteredIdx}
+                          onClick={() => setModalSelectedIdx(filteredIdx === modalSelectedIdx ? null : filteredIdx)}
+                          onContextMenu={e => {
+                            e.preventDefault();
+                            setContextMenu({ x: e.clientX, y: e.clientY, groupIdx: getRealIdx(filteredIdx) });
+                          }}
+                          onDragOver={e => { e.preventDefault(); setDropIdx(filteredIdx); }}
+                          onDragLeave={() => setDropIdx(null)}
+                          onDrop={e => handleModalDrop(e, filteredIdx)}
+                          className={`flex items-center text-xs cursor-pointer select-none transition-colors ${sel ? 'bg-blue-600 text-white' : filteredIdx % 2 === 0 ? 'bg-white hover:bg-blue-50' : 'bg-gray-50/60 hover:bg-blue-50'}`}
+                          style={{ height: 28, borderTop: isDragOver ? '2px solid #2563eb' : '1px solid transparent', borderBottom: '1px solid #f3f4f6' }}
+                        >
+                          {/* 드래그 핸들 */}
+                          <div
+                            draggable
+                            onDragStart={e => { e.dataTransfer.setData('modalDragIdx', String(filteredIdx)); e.dataTransfer.effectAllowed = 'move'; setDragIdx(filteredIdx); }}
+                            onDragEnd={() => { setDragIdx(null); setDropIdx(null); }}
+                            onClick={e => e.stopPropagation()}
+                            className={`flex items-center justify-center cursor-grab shrink-0 text-base ${sel ? 'text-blue-300 hover:text-white' : 'text-gray-300 hover:text-gray-500'}`}
+                            style={{ width: 32 }}
+                            title="드래그하여 순서 변경"
+                          >≡</div>
+                          {/* 번호 */}
+                          <div className={`text-center shrink-0 font-mono ${sel ? 'text-blue-200' : 'text-gray-300'}`} style={{ width: 32, fontSize: 10 }}>{filteredIdx + 1}</div>
+                          {/* 구역명 + 확장 토글 */}
+                          <div className="flex-1 flex items-center gap-1 min-w-0 px-1">
+                            <button
+                              onClick={e => { e.stopPropagation(); setExpandedRows(prev => { const s = new Set(prev); s.has(group.key) ? s.delete(group.key) : s.add(group.key); return s; }); }}
+                              className={`shrink-0 text-[10px] transition-transform ${isExpanded ? 'rotate-90' : ''} ${sel ? 'text-blue-200' : 'text-gray-400'}`}
+                            >▶</button>
+                            <svg width="12" height="10" viewBox="0 0 16 13" fill="none" className="shrink-0">
+                              <rect width="16" height="10" rx="1" fill={sel ? '#93c5fd' : '#fbbf24'} y="2.5" />
+                              <rect width="7" height="2.5" fill={sel ? '#60a5fa' : '#f59e0b'} y="0.5" x="0.5" rx="0.8" />
+                            </svg>
+                            <span className={`font-medium truncate ${sel ? 'text-white' : 'text-gray-800'}`}>{group.name}</span>
+                          </div>
+                          {/* 분류 */}
+                          <div className={`shrink-0 text-center truncate px-0.5 ${sel ? 'text-blue-100' : 'text-gray-400'}`} style={{ width: 60, fontSize: 10 }}>{group.category}</div>
+                          {/* 청정등급 */}
+                          <div className="shrink-0 text-center" style={{ width: 70 }}>
+                            {firstZone?.clean_grade ? (
+                              <span className={`text-[9px] px-1 py-px rounded ${sel ? 'bg-blue-400 text-white' : (CLEAN_GRADE_COLORS[firstZone.clean_grade] || 'bg-gray-100 text-gray-500')}`}>
+                                {firstZone.clean_grade}
+                              </span>
+                            ) : <span className={`text-[9px] ${sel ? 'text-blue-200' : 'text-gray-300'}`}>—</span>}
+                          </div>
+                          {/* 시작일 */}
+                          <div className={`shrink-0 text-center ${sel ? 'text-blue-100' : 'text-gray-400'}`} style={{ width: 100, fontSize: 10 }}>
+                            {activeZone?.schedule_start || '—'}
+                          </div>
+                          {/* 측정포인트 */}
+                          {[
+                            ['points_float', 48],
+                            ['points_fall', 48],
+                            ['points_surface', 48],
+                            ['points_particle', 48],
+                          ].map(([field, w]) => (
+                            <div key={field} className={`shrink-0 text-center ${sel ? 'text-blue-100' : 'text-gray-400'}`} style={{ width: w, fontSize: 10 }}>
+                              {activeZone?.[field] ?? '—'}
+                            </div>
                           ))}
+                          {/* 등급 칩들 */}
+                          <div className="flex items-center justify-center gap-0.5 shrink-0" style={{ width: 80 }}>
+                            {group.zones.map(z => (
+                              <span key={z.id} className={`text-[9px] px-0.5 py-px rounded ${sel ? 'bg-blue-400 text-white' : (GRADE_COLORS[z.grade] || 'bg-gray-100 text-gray-600')}`}>{z.grade}</span>
+                            ))}
+                          </div>
+                          {/* 삭제 (행 삭제는 없음, 서브행에서 등급 삭제) */}
+                          <div className="shrink-0" style={{ width: 28 }} />
                         </div>
+
+                        {/* 확장된 서브행 (등급별 인라인 편집) */}
+                        {isExpanded && group.zones.map((zone, zi) => {
+                          const startVal = getZoneValue(zone, 'schedule_start') || '';
+                          const cleanVal = getZoneValue(zone, 'clean_grade') || '';
+                          const floatVal = getZoneValue(zone, 'points_float') ?? '';
+                          const fallVal = getZoneValue(zone, 'points_fall') ?? '';
+                          const surfaceVal = getZoneValue(zone, 'points_surface') ?? '';
+                          const particleVal = getZoneValue(zone, 'points_particle') ?? '';
+                          return (
+                            <div key={zone.id}
+                              className="flex items-center text-xs bg-blue-50/40 border-b border-blue-100"
+                              style={{ height: 32, paddingLeft: 32 }}
+                            >
+                              <div className="shrink-0" style={{ width: 32 }} />
+                              {/* 등급 칩 */}
+                              <div className="shrink-0 flex items-center justify-center" style={{ width: 32 }}>
+                                <span className={`text-[9px] px-1 py-px rounded font-bold ${GRADE_COLORS[zone.grade] || 'bg-gray-100 text-gray-600'}`}>{zone.grade}</span>
+                              </div>
+                              {/* 구역명 (편집 없음) */}
+                              <div className="flex-1 min-w-0 px-1 text-gray-500 text-[10px] truncate">{zone.name}</div>
+                              {/* 분류 (표시만) */}
+                              <div className="shrink-0 text-center text-gray-400 text-[10px]" style={{ width: 60 }}>{zone.category}</div>
+                              {/* 청정등급 select */}
+                              <div className="shrink-0 flex items-center justify-center" style={{ width: 70 }}>
+                                <select
+                                  value={cleanVal}
+                                  onChange={e => editZoneField(zone.id, 'clean_grade', e.target.value)}
+                                  onClick={e => e.stopPropagation()}
+                                  className="text-[10px] border border-gray-200 rounded px-0.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 w-14"
+                                >
+                                  <option value="">—</option>
+                                  {CLEAN_GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+                                </select>
+                              </div>
+                              {/* 시작일 */}
+                              <div className="shrink-0 flex items-center justify-center" style={{ width: 100 }}>
+                                <input
+                                  type="date"
+                                  value={startVal}
+                                  onChange={e => editZoneField(zone.id, 'schedule_start', e.target.value)}
+                                  onBlur={() => handleDateBlur(zone)}
+                                  onClick={e => e.stopPropagation()}
+                                  className="text-[10px] border border-gray-200 rounded px-0.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 w-24"
+                                />
+                              </div>
+                              {/* 측정포인트 inputs */}
+                              {[
+                                ['points_float', floatVal, 48],
+                                ['points_fall', fallVal, 48],
+                                ['points_surface', surfaceVal, 48],
+                                ['points_particle', particleVal, 48],
+                              ].map(([field, val, w]) => (
+                                <div key={field} className="shrink-0 flex items-center justify-center" style={{ width: w }}>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max="999"
+                                    value={val}
+                                    onChange={e => editZoneField(zone.id, field, e.target.value === '' ? null : Number(e.target.value))}
+                                    onClick={e => e.stopPropagation()}
+                                    className="text-[10px] border border-gray-200 rounded px-0.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 w-10 text-center"
+                                  />
+                                </div>
+                              ))}
+                              {/* 등급 표시 */}
+                              <div className="shrink-0 flex items-center justify-center" style={{ width: 80 }}>
+                                <span className={`text-[9px] px-1 py-px rounded ${GRADE_COLORS[zone.grade] || 'bg-gray-100 text-gray-600'}`}>{zone.grade}</span>
+                              </div>
+                              {/* 삭제 버튼 */}
+                              <div className="shrink-0 flex items-center justify-center" style={{ width: 28 }}>
+                                <button
+                                  onClick={e => { e.stopPropagation(); handleDeleteZoneGrade(group.key, zone.id); }}
+                                  className="text-gray-300 hover:text-red-500 text-xs leading-none"
+                                  title="이 등급 삭제"
+                                >✕</button>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     );
                   })}
-                  {modalGroups.length === 0 && (
-                    <div className="text-center py-10 text-sm text-gray-400">구역이 없습니다</div>
+                  {filteredGroups.length === 0 && (
+                    <div className="text-center py-10 text-sm text-gray-400">
+                      {folderFilter !== null ? '이 폴더에 속한 구역이 없습니다' : '구역이 없습니다'}
+                    </div>
                   )}
                 </div>
               </div>
 
               {/* 오른쪽: 폴더 패널 */}
-              <div className="shrink-0 border-l border-gray-200 flex flex-col" style={{ width: 168 }}>
-                <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-200 shrink-0">일정그룹 (폴더화)</div>
-                <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
+              <div className="shrink-0 border-l border-gray-200 flex flex-col" style={{ width: 160 }}>
+                <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-200 shrink-0">일정그룹 (폴더)</div>
+                <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                  {/* 전체 */}
                   <div
+                    onClick={() => setFolderFilter(null)}
+                    onDragOver={e => { e.preventDefault(); setDragOverFolder('__all__'); }}
+                    onDragLeave={() => setDragOverFolder(null)}
+                    onDrop={e => { e.preventDefault(); setDragOverFolder(null); }}
+                    className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs border cursor-pointer transition-colors ${folderFilter === null ? 'bg-blue-600 text-white border-blue-600' : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-blue-50 hover:border-blue-200'}`}
+                  >
+                    <span>📂</span>
+                    <span className="font-medium flex-1">전체</span>
+                    <span className={`shrink-0 text-[10px] ${folderFilter === null ? 'text-blue-200' : 'text-gray-400'}`}>{modalGroups.length}</span>
+                  </div>
+                  {/* 그룹 없음 */}
+                  <div
+                    onClick={() => setFolderFilter('__none__')}
                     onDragOver={e => { e.preventDefault(); setDragOverFolder('__none__'); }}
                     onDragLeave={() => setDragOverFolder(null)}
                     onDrop={e => handleFolderDrop(e, '')}
-                    className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs border cursor-pointer transition-colors ${dragOverFolder === '__none__' ? 'bg-blue-100 border-blue-400 text-blue-700' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'}`}
+                    className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs border cursor-pointer transition-colors ${folderFilter === '__none__' ? 'bg-blue-100 border-blue-400 text-blue-700' : dragOverFolder === '__none__' ? 'bg-blue-50 border-blue-300 text-blue-600' : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'}`}
                   >
-                    <span>📂</span><span>그룹 없음</span>
+                    <span>📁</span>
+                    <span className="flex-1">그룹 없음</span>
+                    <span className="shrink-0 text-[10px] text-gray-400">{ungroupedCount()}</span>
                   </div>
+                  {/* 폴더 목록 */}
                   {modalNamedGroups.map(g => (
                     <div
                       key={g.id}
+                      onClick={() => setFolderFilter(String(g.id))}
                       onDragOver={e => { e.preventDefault(); setDragOverFolder(String(g.id)); }}
                       onDragLeave={() => setDragOverFolder(null)}
                       onDrop={e => handleFolderDrop(e, String(g.id))}
-                      className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs border cursor-pointer transition-colors ${dragOverFolder === String(g.id) ? 'bg-blue-100 border-blue-400 text-blue-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-blue-50 hover:border-blue-200'}`}
+                      className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs border cursor-pointer transition-colors ${folderFilter === String(g.id) ? 'bg-blue-600 text-white border-blue-600' : dragOverFolder === String(g.id) ? 'bg-blue-100 border-blue-400 text-blue-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-blue-50 hover:border-blue-200'}`}
                     >
                       <span>📁</span>
                       <span className="font-medium truncate flex-1">{g.name}</span>
-                      <span className="text-gray-400 shrink-0">{(g.zoneIds || []).length}</span>
+                      <span className={`shrink-0 text-[10px] ${folderFilter === String(g.id) ? 'text-blue-200' : 'text-gray-400'}`}>{folderZoneCount(g)}</span>
                     </div>
                   ))}
+                  {/* 새 폴더 */}
                   {showNewFolder ? (
-                    <div className="space-y-1">
+                    <div className="space-y-1 pt-1">
                       <input
                         autoFocus
                         className="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -413,7 +806,7 @@ export default function OrderGroupManager({ zones, groups, onClose, onSaved }) {
                       </div>
                     </div>
                   ) : (
-                    <button onClick={() => setShowNewFolder(true)} className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs border border-dashed border-gray-300 text-gray-400 hover:bg-gray-50 hover:border-gray-400 hover:text-gray-600 transition-colors">
+                    <button onClick={() => setShowNewFolder(true)} className="w-full flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs border border-dashed border-gray-300 text-gray-400 hover:bg-gray-50 hover:border-gray-400 hover:text-gray-600 transition-colors">
                       <span>+</span><span>새 폴더</span>
                     </button>
                   )}
@@ -425,8 +818,8 @@ export default function OrderGroupManager({ zones, groups, onClose, onSaved }) {
             <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 border-t border-gray-200 shrink-0">
               <span className="text-xs text-gray-500 truncate">
                 {modalSelectedIdx !== null
-                  ? `"${modalGroups[modalSelectedIdx]?.name}" 선택 — 버튼·≡ 드래그로 이동 / 폴더에 드래그하여 그룹 배정`
-                  : '구역 클릭 선택 후 이동, 또는 ≡ 핸들을 드래그하여 순서 변경'}
+                  ? `"${filteredGroups[modalSelectedIdx]?.name}" 선택 — 버튼·≡ 드래그로 이동 / 폴더에 드래그하여 그룹 배정 / 우클릭으로 그룹 배정`
+                  : '구역 클릭 선택 후 이동, ≡ 드래그로 순서 변경, 우클릭으로 그룹 배정'}
               </span>
               <div className="flex gap-2 shrink-0">
                 <button onClick={saveOrderModal} disabled={saving} className="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-semibold hover:bg-blue-700 disabled:opacity-50 transition-colors">{saving ? '저장 중…' : '저장'}</button>
@@ -538,6 +931,30 @@ export default function OrderGroupManager({ zones, groups, onClose, onSaved }) {
           </div>
         )}
       </div>
+
+      {/* 우클릭 컨텍스트 메뉴 */}
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          className="fixed bg-white rounded-xl shadow-2xl border border-gray-200 py-1 z-[600] min-w-36"
+          style={{ left: contextMenu.x, top: contextMenu.y, pointerEvents: 'auto' }}
+        >
+          <div className="px-3 py-1.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100">📁 그룹 배정</div>
+          <button
+            onClick={() => { modalAssignGroup(contextMenu.groupIdx, ''); setContextMenu(null); }}
+            className="w-full text-left px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50"
+          >그룹 없음</button>
+          {modalNamedGroups.map(g => (
+            <button
+              key={g.id}
+              onClick={() => { modalAssignGroup(contextMenu.groupIdx, String(g.id)); setContextMenu(null); }}
+              className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-blue-50 hover:text-blue-700"
+            >
+              📁 {g.name}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

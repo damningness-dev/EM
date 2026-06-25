@@ -881,9 +881,9 @@ export default function CalendarView({ year: initYear, onYearChange }) {
       {/* Calendar settings popup */}
       {calSettingsPopup && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/40" onClick={() => setCalSettingsPopup(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-80 p-6" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-xl w-full mx-4 p-6 flex flex-col max-h-[80vh]" onClick={e => e.stopPropagation()}>
             <h3 className="text-base font-bold text-gray-900 mb-1">🗓 달력 설정</h3>
-            <p className="text-xs text-gray-400 mb-4">달력의 시작 요일을 선택하세요.</p>
+            <p className="text-xs text-gray-400 mb-4">달력의 시작 요일 및 공휴일을 관리합니다.</p>
             <label className="block text-xs font-semibold text-gray-600 mb-2">주 시작 요일</label>
             <div className="grid grid-cols-2 gap-2 mb-5">
               {[['sun', '일요일 시작'], ['mon', '월요일 시작']].map(([val, label]) => (
@@ -898,7 +898,101 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                 >{label}</button>
               ))}
             </div>
-            <div className="flex justify-end">
+
+            {/* 공휴일 관리 */}
+            <div className="border-t border-gray-100 pt-4 flex flex-col min-h-0">
+              <h4 className="text-sm font-semibold text-gray-700 mb-3">공휴일 관리</h4>
+              {/* 추가 폼 */}
+              <div className="space-y-2 shrink-0 mb-3">
+                <div className="flex gap-2 items-start">
+                  <input type="date" value={newHolidayDate} onChange={e => setNewHolidayDate(e.target.value)}
+                    className="text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500 w-32 shrink-0" />
+                  <input type="text" placeholder="공휴일 이름" value={newHolidayName} onChange={e => setNewHolidayName(e.target.value)}
+                    className="flex-1 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                  <button
+                    onClick={async () => {
+                      if (!newHolidayDate || !newHolidayName.trim()) return;
+                      const repeat = newHolidayRepeat
+                        ? (newHolidayRepeatType === 'nth-weekday'
+                            ? { type: 'nth-weekday', nth: newHolidayNth, dow: newHolidayDow }
+                            : { type: newHolidayRepeatType })
+                        : null;
+                      const h = { date: newHolidayDate, name: newHolidayName.trim(), repeat };
+                      const saved = await upsertHoliday(h);
+                      setHolidayDefs(prev => {
+                        const idx = prev.findIndex(x => x.date === saved.date);
+                        return idx >= 0 ? prev.map((x,i) => i === idx ? saved : x) : [...prev, saved];
+                      });
+                      setNewHolidayDate(''); setNewHolidayName(''); setNewHolidayRepeat(false);
+                    }}
+                    className="px-2.5 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 shrink-0"
+                  >추가</button>
+                </div>
+                <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
+                  <input type="checkbox" checked={newHolidayRepeat} onChange={e => setNewHolidayRepeat(e.target.checked)} className="rounded" />
+                  반복
+                </label>
+                {newHolidayRepeat && (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <select value={newHolidayRepeatType} onChange={e => setNewHolidayRepeatType(e.target.value)}
+                      className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                      <option value="yearly">매년</option>
+                      <option value="monthly">매월</option>
+                      <option value="nth-weekday">N번째 요일</option>
+                    </select>
+                    {newHolidayRepeatType === 'nth-weekday' && (
+                      <>
+                        <select value={newHolidayNth} onChange={e => setNewHolidayNth(Number(e.target.value))}
+                          className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                          <option value={1}>1번째</option>
+                          <option value={2}>2번째</option>
+                          <option value={3}>3번째</option>
+                          <option value={4}>4번째</option>
+                          <option value={5}>마지막</option>
+                        </select>
+                        <select value={newHolidayDow} onChange={e => setNewHolidayDow(Number(e.target.value))}
+                          className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                          {['일','월','화','수','목','금','토'].map((d,i) => <option key={i} value={i}>{d}요일</option>)}
+                        </select>
+                      </>
+                    )}
+                    {newHolidayRepeatType === 'yearly' && newHolidayDate && (
+                      <span className="text-[10px] text-gray-400">매년 {newHolidayDate.slice(5)} 반복</span>
+                    )}
+                    {newHolidayRepeatType === 'monthly' && newHolidayDate && (
+                      <span className="text-[10px] text-gray-400">매월 {Number(newHolidayDate.slice(8))}일 반복</span>
+                    )}
+                  </div>
+                )}
+              </div>
+              {/* 공휴일 목록 */}
+              <div className="flex-1 overflow-y-auto divide-y divide-gray-100 border border-gray-100 rounded-lg" style={{ maxHeight: 200 }}>
+                {holidayDefs.length === 0 && (
+                  <p className="px-4 py-4 text-sm text-gray-400">등록된 공휴일이 없습니다.</p>
+                )}
+                {[...holidayDefs].sort((a,b) => a.date.localeCompare(b.date)).map(h => {
+                  const repeatLabel = !h.repeat || h.repeat.type === 'none' ? null
+                    : h.repeat.type === 'yearly' ? `매년 ${h.date.slice(5)}`
+                    : h.repeat.type === 'monthly' ? `매월 ${Number(h.date.slice(8))}일`
+                    : `매월 ${['','1번째','2번째','3번째','4번째','마지막'][h.repeat.nth]}${ ['일','월','화','수','목','금','토'][h.repeat.dow]}요일`;
+                  return (
+                    <div key={h.date} className="flex items-center gap-2 px-3 py-2">
+                      <span className="text-xs text-gray-500 w-24 shrink-0">{h.date}</span>
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm text-red-600 font-medium">{h.name}</span>
+                        {repeatLabel && <span className="ml-1.5 text-[10px] text-blue-500 bg-blue-50 px-1 py-0.5 rounded">{repeatLabel}</span>}
+                      </div>
+                      <button onClick={async () => {
+                        await deleteHoliday(h.date);
+                        setHolidayDefs(prev => prev.filter(x => x.date !== h.date));
+                      }} className="text-xs text-gray-400 hover:text-red-500 shrink-0">✕</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex justify-end mt-4 shrink-0">
               <button onClick={() => setCalSettingsPopup(false)}
                 className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">닫기</button>
             </div>
@@ -983,11 +1077,11 @@ export default function CalendarView({ year: initYear, onYearChange }) {
         <OrderGroupManager
           zones={zones}
           groups={groups}
+          holidayDefs={holidayDefs}
           onClose={() => setShowOrderManager(false)}
-          onSaved={(updatedZones, updatedGroups, cycleCfg) => {
+          onSaved={(updatedZones, updatedGroups) => {
             setZones(updatedZones);
             setGroups(updatedGroups);
-            if (cycleCfg) applyScheduleConfig(cycleCfg);
           }}
         />
       )}
@@ -1007,7 +1101,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
             </div>
             {/* Tabs */}
             <div className="flex border-b border-gray-200 shrink-0">
-              {[['zones','구역 일정'],['groups','일정그룹 관리'],['holidays','공휴일'],['cycle','측정주기']].map(([key, label]) => (
+              {[['zones','구역 일정'],['groups','일정그룹 관리'],['cycle','측정주기']].map(([key, label]) => (
                 <button
                   key={key}
                   onClick={() => setSettingsTab(key)}
@@ -1287,98 +1381,6 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                     </div>
                   );
                 })}
-              </div>
-            )}
-
-            {/* ── 공휴일 탭 ── */}
-            {settingsTab === 'holidays' && (
-              <div className="flex-1 overflow-y-auto flex flex-col">
-                <div className="px-4 py-3 border-b border-gray-100 shrink-0 space-y-2">
-                  <div className="flex gap-2 items-start">
-                    <input type="date" value={newHolidayDate} onChange={e => setNewHolidayDate(e.target.value)}
-                      className="text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500 w-32 shrink-0" />
-                    <input type="text" placeholder="공휴일 이름" value={newHolidayName} onChange={e => setNewHolidayName(e.target.value)}
-                      className="flex-1 text-xs border border-gray-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                    <button
-                      onClick={async () => {
-                        if (!newHolidayDate || !newHolidayName.trim()) return;
-                        const repeat = newHolidayRepeat
-                          ? (newHolidayRepeatType === 'nth-weekday'
-                              ? { type: 'nth-weekday', nth: newHolidayNth, dow: newHolidayDow }
-                              : { type: newHolidayRepeatType })
-                          : null;
-                        const h = { date: newHolidayDate, name: newHolidayName.trim(), repeat };
-                        const saved = await upsertHoliday(h);
-                        setHolidayDefs(prev => {
-                          const idx = prev.findIndex(x => x.date === saved.date);
-                          return idx >= 0 ? prev.map((x,i) => i === idx ? saved : x) : [...prev, saved];
-                        });
-                        setNewHolidayDate(''); setNewHolidayName(''); setNewHolidayRepeat(false);
-                      }}
-                      className="px-2.5 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 shrink-0"
-                    >추가</button>
-                  </div>
-                  <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
-                    <input type="checkbox" checked={newHolidayRepeat} onChange={e => setNewHolidayRepeat(e.target.checked)} className="rounded" />
-                    반복
-                  </label>
-                  {newHolidayRepeat && (
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <select value={newHolidayRepeatType} onChange={e => setNewHolidayRepeatType(e.target.value)}
-                        className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
-                        <option value="yearly">매년</option>
-                        <option value="monthly">매월</option>
-                        <option value="nth-weekday">N번째 요일</option>
-                      </select>
-                      {newHolidayRepeatType === 'nth-weekday' && (
-                        <>
-                          <select value={newHolidayNth} onChange={e => setNewHolidayNth(Number(e.target.value))}
-                            className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
-                            <option value={1}>1번째</option>
-                            <option value={2}>2번째</option>
-                            <option value={3}>3번째</option>
-                            <option value={4}>4번째</option>
-                            <option value={5}>마지막</option>
-                          </select>
-                          <select value={newHolidayDow} onChange={e => setNewHolidayDow(Number(e.target.value))}
-                            className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
-                            {['일','월','화','수','목','금','토'].map((d,i) => <option key={i} value={i}>{d}요일</option>)}
-                          </select>
-                        </>
-                      )}
-                      {newHolidayRepeatType === 'yearly' && newHolidayDate && (
-                        <span className="text-[10px] text-gray-400">매년 {newHolidayDate.slice(5)} 반복</span>
-                      )}
-                      {newHolidayRepeatType === 'monthly' && newHolidayDate && (
-                        <span className="text-[10px] text-gray-400">매월 {Number(newHolidayDate.slice(8))}일 반복</span>
-                      )}
-                    </div>
-                  )}
-                </div>
-                <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
-                  {holidayDefs.length === 0 && (
-                    <p className="px-4 py-4 text-sm text-gray-400">등록된 공휴일이 없습니다.</p>
-                  )}
-                  {[...holidayDefs].sort((a,b) => a.date.localeCompare(b.date)).map(h => {
-                    const repeatLabel = !h.repeat || h.repeat.type === 'none' ? null
-                      : h.repeat.type === 'yearly' ? `매년 ${h.date.slice(5)}`
-                      : h.repeat.type === 'monthly' ? `매월 ${Number(h.date.slice(8))}일`
-                      : `매월 ${['','1번째','2번째','3번째','4번째','마지막'][h.repeat.nth]}${ ['일','월','화','수','목','금','토'][h.repeat.dow]}요일`;
-                    return (
-                      <div key={h.date} className="flex items-center gap-2 px-4 py-2.5">
-                        <span className="text-xs text-gray-500 w-24 shrink-0">{h.date}</span>
-                        <div className="flex-1 min-w-0">
-                          <span className="text-sm text-red-600 font-medium">{h.name}</span>
-                          {repeatLabel && <span className="ml-1.5 text-[10px] text-blue-500 bg-blue-50 px-1 py-0.5 rounded">{repeatLabel}</span>}
-                        </div>
-                        <button onClick={async () => {
-                          await deleteHoliday(h.date);
-                          setHolidayDefs(prev => prev.filter(x => x.date !== h.date));
-                        }} className="text-xs text-gray-400 hover:text-red-500 shrink-0">✕</button>
-                      </div>
-                    );
-                  })}
-                </div>
               </div>
             )}
 
