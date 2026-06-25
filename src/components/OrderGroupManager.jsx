@@ -33,6 +33,11 @@ function buildOrderedGroups(zones) {
 
 const CATEGORY_OPTIONS = ['공조', '압축공기', '질소가스'];
 
+// 셀 세로 구분선
+function cellBorder(sel) {
+  return sel ? 'border-r border-blue-400/40' : 'border-r border-gray-100';
+}
+
 /**
  * 구역 순서 / 그룹(폴더) 관리 + 측정주기 설정 통합 팝업.
  *
@@ -42,7 +47,7 @@ const CATEGORY_OPTIONS = ['공조', '압축공기', '질소가스'];
  *  - onClose(): 닫기
  *  - onSaved(updatedZones, updatedGroups): 저장 후 부모 데이터 갱신
  */
-export default function OrderGroupManager({ zones, groups, holidayDefs = [], onClose, onSaved }) {
+export default function OrderGroupManager({ zones, groups, holidayDefs = [], onClose, onSaved, docked = false }) {
   const [activeTab, setActiveTab] = useState('order'); // 'order' | 'cycle'
   const [modalGroups, setModalGroups] = useState(() =>
     buildOrderedGroups(zones).map(g => ({
@@ -223,6 +228,22 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
       ...prev,
       [zoneId]: { ...(prev[zoneId] || {}), [field]: value }
     }));
+  }
+
+  // 분류 변경 — 그룹 내 모든 등급(zone)에 일괄 적용
+  function editGroupCategory(groupKey, newCat) {
+    const grp = modalGroups.find(g => g.key === groupKey);
+    const ids = grp?.zones.map(z => z.id) || [];
+    setModalGroups(prev => prev.map(g =>
+      g.key === groupKey
+        ? { ...g, category: newCat, zones: g.zones.map(z => ({ ...z, category: newCat })) }
+        : g
+    ));
+    setLocalEdits(prev => {
+      const next = { ...prev };
+      ids.forEach(id => { next[id] = { ...(next[id] || {}), category: newCat }; });
+      return next;
+    });
   }
 
   function handleDateBlur(zone) {
@@ -463,13 +484,15 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
   }
 
   return (
-    <div className="fixed inset-0 z-[500]" style={{ pointerEvents: 'none' }}>
+    <div className={docked ? 'fixed inset-0 z-[500]' : 'fixed inset-0 z-[500]'} style={{ pointerEvents: docked ? 'auto' : 'none' }}>
       <div
-        className="absolute flex flex-col bg-white rounded-xl overflow-hidden"
-        style={{ left: pos.x, top: pos.y, width: size.w, height: size.h, pointerEvents: 'auto', boxShadow: '0 24px 64px rgba(0,0,0,0.30)', border: '1px solid #e5e7eb' }}
+        className={`flex flex-col bg-white overflow-hidden ${docked ? 'w-full h-full' : 'absolute rounded-xl'}`}
+        style={docked
+          ? { pointerEvents: 'auto' }
+          : { left: pos.x, top: pos.y, width: size.w, height: size.h, pointerEvents: 'auto', boxShadow: '0 24px 64px rgba(0,0,0,0.30)', border: '1px solid #e5e7eb' }}
       >
         {/* 헤더 */}
-        <div onMouseDown={startDrag} className="flex items-center justify-between px-4 bg-gray-900 text-white cursor-move shrink-0" style={{ height: 46 }}>
+        <div onMouseDown={docked ? undefined : startDrag} className={`flex items-center justify-between px-4 bg-gray-900 text-white shrink-0 ${docked ? '' : 'cursor-move'}`} style={{ height: 46 }}>
           <div className="flex items-center gap-2">
             <svg width="16" height="14" viewBox="0 0 16 13" fill="none">
               <rect width="16" height="10" rx="1.5" fill="#fbbf24" y="2.5" />
@@ -557,19 +580,19 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
               {/* 왼쪽: 구역 목록 */}
               <div className="flex flex-col flex-1 min-w-0">
                 {/* 컬럼 헤더 */}
-                <div className="flex items-center bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-500 shrink-0 select-none" style={{ height: 28 }}>
-                  <div className="shrink-0 text-center text-gray-300" style={{ width: 32 }}>≡</div>
-                  <div className="shrink-0 text-center" style={{ width: 32 }}>#</div>
-                  <div className="flex-1 pl-1 min-w-0">구역명</div>
-                  <div className="shrink-0 text-center" style={{ width: 60 }}>분류</div>
-                  <div className="shrink-0 text-center" style={{ width: 70 }}>청정등급</div>
-                  <div className="shrink-0 text-center" style={{ width: 100 }}>시작일</div>
-                  <div className="shrink-0 text-center" style={{ width: 48 }}>부유균</div>
-                  <div className="shrink-0 text-center" style={{ width: 48 }}>낙하균</div>
-                  <div className="shrink-0 text-center" style={{ width: 48 }}>표면균</div>
-                  <div className="shrink-0 text-center" style={{ width: 48 }}>부유입자</div>
-                  <div className="shrink-0 text-center" style={{ width: 80 }}>등급</div>
-                  <div className="shrink-0 text-center" style={{ width: 28 }}></div>
+                <div className="flex items-stretch bg-gray-100 border-b border-gray-300 text-xs font-semibold text-gray-600 shrink-0 select-none" style={{ height: 30 }}>
+                  <div className="shrink-0 flex items-center justify-center text-center text-gray-300 border-r border-gray-200" style={{ width: 32 }}>≡</div>
+                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 32 }}>#</div>
+                  <div className="flex-1 flex items-center justify-center text-center min-w-0 border-r border-gray-200">구역명</div>
+                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 60 }}>분류</div>
+                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 70 }}>청정등급</div>
+                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 100 }}>시작일</div>
+                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 48 }}>부유균</div>
+                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 48 }}>낙하균</div>
+                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 48 }}>표면균</div>
+                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 48 }}>부유입자</div>
+                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 80 }}>등급</div>
+                  <div className="shrink-0" style={{ width: 28 }}></div>
                 </div>
 
                 {/* 목록 */}
@@ -603,14 +626,14 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                             onDragStart={e => { e.dataTransfer.setData('modalDragIdx', String(filteredIdx)); e.dataTransfer.effectAllowed = 'move'; setDragIdx(filteredIdx); }}
                             onDragEnd={() => { setDragIdx(null); setDropIdx(null); }}
                             onClick={e => e.stopPropagation()}
-                            className={`flex items-center justify-center cursor-grab shrink-0 text-base ${sel ? 'text-blue-300 hover:text-white' : 'text-gray-300 hover:text-gray-500'}`}
+                            className={`flex items-center justify-center cursor-grab shrink-0 text-base h-full ${cellBorder(sel)} ${sel ? 'text-blue-300 hover:text-white' : 'text-gray-300 hover:text-gray-500'}`}
                             style={{ width: 32 }}
                             title="드래그하여 순서 변경"
                           >≡</div>
                           {/* 번호 */}
-                          <div className={`text-center shrink-0 font-mono ${sel ? 'text-blue-200' : 'text-gray-300'}`} style={{ width: 32, fontSize: 10 }}>{filteredIdx + 1}</div>
+                          <div className={`flex items-center justify-center text-center shrink-0 font-mono h-full ${cellBorder(sel)} ${sel ? 'text-blue-200' : 'text-gray-300'}`} style={{ width: 32, fontSize: 10 }}>{filteredIdx + 1}</div>
                           {/* 구역명 + 확장 토글 */}
-                          <div className="flex-1 flex items-center gap-1 min-w-0 px-1">
+                          <div className={`flex-1 flex items-center gap-1 min-w-0 px-1 h-full ${cellBorder(sel)}`}>
                             <button
                               onClick={e => { e.stopPropagation(); setExpandedRows(prev => { const s = new Set(prev); s.has(group.key) ? s.delete(group.key) : s.add(group.key); return s; }); }}
                               className={`shrink-0 text-[10px] transition-transform ${isExpanded ? 'rotate-90' : ''} ${sel ? 'text-blue-200' : 'text-gray-400'}`}
@@ -622,9 +645,9 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                             <span className={`font-medium truncate ${sel ? 'text-white' : 'text-gray-800'}`}>{group.name}</span>
                           </div>
                           {/* 분류 */}
-                          <div className={`shrink-0 text-center truncate px-0.5 ${sel ? 'text-blue-100' : 'text-gray-400'}`} style={{ width: 60, fontSize: 10 }}>{group.category}</div>
+                          <div className={`flex items-center justify-center shrink-0 text-center truncate px-0.5 h-full ${cellBorder(sel)} ${sel ? 'text-blue-100' : 'text-gray-400'}`} style={{ width: 60, fontSize: 10 }}>{group.category}</div>
                           {/* 청정등급 */}
-                          <div className="shrink-0 text-center" style={{ width: 70 }}>
+                          <div className={`flex items-center justify-center shrink-0 text-center h-full ${cellBorder(sel)}`} style={{ width: 70 }}>
                             {firstZone?.clean_grade ? (
                               <span className={`text-[9px] px-1 py-px rounded ${sel ? 'bg-blue-400 text-white' : (CLEAN_GRADE_COLORS[firstZone.clean_grade] || 'bg-gray-100 text-gray-500')}`}>
                                 {firstZone.clean_grade}
@@ -632,7 +655,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                             ) : <span className={`text-[9px] ${sel ? 'text-blue-200' : 'text-gray-300'}`}>—</span>}
                           </div>
                           {/* 시작일 */}
-                          <div className={`shrink-0 text-center ${sel ? 'text-blue-100' : 'text-gray-400'}`} style={{ width: 100, fontSize: 10 }}>
+                          <div className={`flex items-center justify-center shrink-0 text-center h-full ${cellBorder(sel)} ${sel ? 'text-blue-100' : 'text-gray-400'}`} style={{ width: 100, fontSize: 10 }}>
                             {activeZone?.schedule_start || '—'}
                           </div>
                           {/* 측정포인트 */}
@@ -642,15 +665,15 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                             ['points_surface', 48],
                             ['points_particle', 48],
                           ].map(([field, w]) => (
-                            <div key={field} className={`shrink-0 text-center ${sel ? 'text-blue-100' : 'text-gray-400'}`} style={{ width: w, fontSize: 10 }}>
-                              {activeZone?.[field] ?? '—'}
+                            <div key={field} className={`flex items-center justify-center shrink-0 text-center h-full ${cellBorder(sel)} ${sel ? 'text-blue-100' : 'text-gray-400'}`} style={{ width: w, fontSize: 10 }}>
+                              {getZoneValue(activeZone || {}, field) ?? '—'}
                             </div>
                           ))}
-                          {/* 등급 칩들 */}
-                          <div className="flex items-center justify-center gap-0.5 shrink-0" style={{ width: 80 }}>
-                            {group.zones.map(z => (
-                              <span key={z.id} className={`text-[9px] px-0.5 py-px rounded ${sel ? 'bg-blue-400 text-white' : (GRADE_COLORS[z.grade] || 'bg-gray-100 text-gray-600')}`}>{z.grade}</span>
-                            ))}
+                          {/* 등급 — 현재 진행중인 등급만 표시 */}
+                          <div className={`flex items-center justify-center gap-0.5 shrink-0 h-full ${cellBorder(sel)}`} style={{ width: 80 }}>
+                            {activeZone && (
+                              <span className={`text-[9px] px-1 py-px rounded font-bold ${sel ? 'bg-blue-400 text-white' : (GRADE_COLORS[activeZone.grade] || 'bg-gray-100 text-gray-600')}`}>{activeZone.grade}</span>
+                            )}
                           </div>
                           {/* 삭제 (행 삭제는 없음, 서브행에서 등급 삭제) */}
                           <div className="shrink-0" style={{ width: 28 }} />
@@ -676,8 +699,17 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                               </div>
                               {/* 구역명 (편집 없음) */}
                               <div className="flex-1 min-w-0 px-1 text-gray-500 text-[10px] truncate">{zone.name}</div>
-                              {/* 분류 (표시만) */}
-                              <div className="shrink-0 text-center text-gray-400 text-[10px]" style={{ width: 60 }}>{zone.category}</div>
+                              {/* 분류 (그룹 일괄 변경) */}
+                              <div className="shrink-0 flex items-center justify-center" style={{ width: 60 }}>
+                                <select
+                                  value={getZoneValue(zone, 'category') || group.category}
+                                  onChange={e => editGroupCategory(group.key, e.target.value)}
+                                  onClick={e => e.stopPropagation()}
+                                  className="text-[10px] border border-gray-200 rounded px-0.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 w-[54px]"
+                                >
+                                  {CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                                </select>
+                              </div>
                               {/* 청정등급 select */}
                               <div className="shrink-0 flex items-center justify-center" style={{ width: 70 }}>
                                 <select
@@ -916,13 +948,15 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
         )}
 
         {/* 크기 조절 핸들 */}
-        <div onMouseDown={startResize} className="absolute bottom-0 right-0 cursor-se-resize" style={{ width: 16, height: 16 }}>
-          <svg viewBox="0 0 16 16" fill="none" width="16" height="16">
-            <path d="M16 4L4 16" stroke="#9ca3af" strokeWidth="1.5" />
-            <path d="M16 9L9 16" stroke="#9ca3af" strokeWidth="1.5" />
-            <path d="M16 14L14 16" stroke="#9ca3af" strokeWidth="1.5" />
-          </svg>
-        </div>
+        {!docked && (
+          <div onMouseDown={startResize} className="absolute bottom-0 right-0 cursor-se-resize" style={{ width: 16, height: 16 }}>
+            <svg viewBox="0 0 16 16" fill="none" width="16" height="16">
+              <path d="M16 4L4 16" stroke="#9ca3af" strokeWidth="1.5" />
+              <path d="M16 9L9 16" stroke="#9ca3af" strokeWidth="1.5" />
+              <path d="M16 14L14 16" stroke="#9ca3af" strokeWidth="1.5" />
+            </svg>
+          </div>
+        )}
 
         {error && (
           <div className="absolute top-12 left-1/2 -translate-x-1/2 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg text-xs z-10 flex items-center gap-2">

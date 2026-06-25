@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, fetchScheduleConfig, saveScheduleConfig } from '../lib/api';
+import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, alignGroupSchedules } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
@@ -229,8 +229,37 @@ export default function CalendarView({ year: initYear, onYearChange }) {
       setCompletions(new Set(comps.map(c => `${c.zoneId}_${c.num}`)));
       setTempSchedules(temps);
       setLoading(false);
+      // 월별 모니터링에 입력한 측정포인트를 구역 points_*로 backfill (비어있는 구역만)
+      backfillZonePointsFromMonitoring(zns, [year - 1, year, year + 1])
+        .then(({ zones: filled, changed }) => { if (changed) setZones(filled); })
+        .catch(() => {});
     });
   }, [year, month]);
+
+  // 순서/그룹 관리 — Electron 별도 창(항상 위) 우선, 없으면 인앱 오버레이
+  function openOrderManagerPopup() {
+    if (window.electronAPI?.openOrderManager) {
+      window.electronAPI.openOrderManager();
+    } else {
+      setShowOrderManager(true);
+    }
+  }
+
+  // 구역/그룹/공휴일 다시 불러오기 (별도 창에서 저장 후 동기화)
+  async function reloadZonesGroups() {
+    try {
+      const [zns, grps, hols] = await Promise.all([fetchZones(), fetchGroups(), fetchHolidays()]);
+      setZones(zns);
+      setGroups(grps);
+      setHolidayDefs(hols);
+    } catch { /* ignore */ }
+  }
+
+  // 별도 창에서 데이터 변경 시 메인 창 새로고침
+  useEffect(() => {
+    if (!window.electronAPI?.onDataChanged) return;
+    return window.electronAPI.onDataChanged(() => { reloadZonesGroups(); });
+  }, []);
 
   useEffect(() => {
     if (!colorPicker) return;
@@ -1506,7 +1535,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
             ⚙ 일정 설정
           </button>
           <button
-            onClick={() => setShowOrderManager(true)}
+            onClick={openOrderManagerPopup}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
           >
             🗂 순서/그룹 관리

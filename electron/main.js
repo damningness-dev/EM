@@ -13,6 +13,7 @@ const META_URL = 'https://github.com/damningness-dev/EM/releases/latest/download
 const ASAR_URL = 'https://github.com/damningness-dev/EM/releases/latest/download/app-patch.asar';
 
 let mainWin = null;
+let orderManagerWin = null;
 
 function sendStatus(status) {
   if (mainWin && !mainWin.isDestroyed()) {
@@ -255,6 +256,48 @@ function registerHandlers() {
   ipcMain.handle('update:check', checkForUpdate);
   ipcMain.handle('update:download', downloadUpdate);
   ipcMain.handle('update:install', applyUpdateAndRestart);
+
+  // ── 순서/그룹 관리 별도 창 (항상 위) ──
+  ipcMain.handle('orderManager:open', () => {
+    if (orderManagerWin && !orderManagerWin.isDestroyed()) {
+      orderManagerWin.show();
+      orderManagerWin.focus();
+      return;
+    }
+    orderManagerWin = new BrowserWindow({
+      width: 1000,
+      height: 660,
+      minWidth: 760,
+      minHeight: 460,
+      alwaysOnTop: true,
+      title: '구역 순서 / 그룹 · 측정주기 관리',
+      backgroundColor: '#ffffff',
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    });
+    orderManagerWin.setAlwaysOnTop(true, 'screen-saver');
+    orderManagerWin.removeMenu();
+    if (isDev) {
+      orderManagerWin.loadURL('http://localhost:5173/#order-manager');
+    } else {
+      orderManagerWin.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'order-manager' });
+    }
+    orderManagerWin.on('closed', () => { orderManagerWin = null; });
+  });
+
+  ipcMain.on('orderManager:close', () => {
+    if (orderManagerWin && !orderManagerWin.isDestroyed()) orderManagerWin.close();
+  });
+
+  // 데이터 변경 브로드캐스트 — 모든 창에 새로고침 신호
+  ipcMain.on('app:dataChanged', () => {
+    BrowserWindow.getAllWindows().forEach(w => {
+      if (!w.isDestroyed()) w.webContents.send('app:dataChanged');
+    });
+  });
 
   // ── 교정 ──
   ipcMain.handle('calibration:getAll', () => {

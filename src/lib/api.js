@@ -28,6 +28,37 @@ export async function deleteZone(id) {
   return api.invoke('zones:delete', id);
 }
 
+// 월별 모니터링에 입력해 둔 측정포인트(부유균/낙하균/표면균/부유입자)를
+// 구역의 points_* 필드로 backfill — points가 비어있는 구역만 채우고 영구 저장.
+//   airborne=부유균→points_float, settle=낙하균→points_fall,
+//   surface=표면균→points_surface, particle=부유입자→points_particle
+export async function backfillZonePointsFromMonitoring(zones, years) {
+  const num = v => { const n = parseInt(v); return Number.isFinite(n) ? n : 0; };
+  const latest = {}; // zoneId → 가장 최근(병합된) 모니터링 엔트리
+  for (const y of years) {
+    let yearData;
+    try { yearData = await fetchAllMonitoringData(y); } catch { continue; }
+    Object.entries(yearData || {}).forEach(([key, val]) => {
+      const zoneId = key.slice(0, key.lastIndexOf('_'));
+      latest[zoneId] = { ...(latest[zoneId] || {}), ...val };
+    });
+  }
+  const updated = [];
+  const result = zones.map(z => {
+    const hasPoints = z.points_float || z.points_fall || z.points_surface || z.points_particle;
+    if (hasPoints) return z;
+    const e = latest[z.id];
+    if (!e) return z;
+    const pf = num(e.airborne), pl = num(e.settle), ps = num(e.surface), pp = num(e.particle);
+    if (!pf && !pl && !ps && !pp) return z;
+    const nz = { ...z, points_float: pf, points_fall: pl, points_surface: ps, points_particle: pp };
+    updated.push(nz);
+    return nz;
+  });
+  for (const u of updated) { try { await upsertZone(u); } catch {} }
+  return { zones: result, changed: updated.length };
+}
+
 // ─── 월별 모니터링 ────────────────────────────────────────────────────────────
 
 export async function fetchMonitoringData(year, month) {
