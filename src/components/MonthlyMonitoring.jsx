@@ -211,10 +211,19 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
   }
 
   // 스케줄이 있는 구역은 달력 완료 수(completions)를 count 초기값으로 사용
+  // 측정포인트 수는 달력(zone.points_*)과 동기화 — 구역 값이 있으면 우선 사용
   function openEntryModal(zone) {
     const entry = getEntry(zone.id);
     const sched = scheduleThisMonth[zone.id];
-    setEntryForm({ ...entry, count: sched ? sched.done : (entry.count || 0) });
+    const pt = (zv, ev) => (zv != null && zv !== 0 ? String(zv) : (ev ?? ''));
+    setEntryForm({
+      ...entry,
+      count: sched ? sched.done : (entry.count || 0),
+      airborne: pt(zone.points_float, entry.airborne),
+      settle: pt(zone.points_fall, entry.settle),
+      surface: pt(zone.points_surface, entry.surface),
+      particle: pt(zone.points_particle, entry.particle),
+    });
     setEditEntry(zone);
   }
 
@@ -578,6 +587,23 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
       const saved = await upsertMonitoringEntry(payload);
       setMonData(p => ({ ...p, [editEntry.id]: saved }));
 
+      // 측정포인트 수를 달력(zone.points_*)과 동기화
+      const num = v => parseInt(v) || 0;
+      const ptUpdate = {
+        points_float: num(entryForm.airborne),
+        points_fall: num(entryForm.settle),
+        points_surface: num(entryForm.surface),
+        points_particle: num(entryForm.particle),
+      };
+      const curZone = zones.find(z => z.id === editEntry.id) || editEntry;
+      const changed = ['points_float','points_fall','points_surface','points_particle']
+        .some(k => (curZone[k] || 0) !== ptUpdate[k]);
+      if (changed) {
+        const updatedZone = { ...curZone, ...ptUpdate };
+        await upsertZone(updatedZone);
+        setZones(prev => prev.map(z => z.id === updatedZone.id ? updatedZone : z));
+      }
+
       // 달력(completions)과 동기화 — schedule_start가 있는 구역에만 적용
       if (editEntry.schedule_start) {
         const monthStr = `${year}-${String(month).padStart(2, '0')}`;
@@ -798,10 +824,10 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                             </div>
                           ) : <span className="text-gray-300 text-xs">-</span>}
                         </td>
-                        <td className="px-3 py-3 text-center text-xs text-gray-500">{entry?.airborne || '-'}</td>
-                        <td className="px-3 py-3 text-center text-xs text-gray-500">{entry?.settle || '-'}</td>
-                        <td className="px-3 py-3 text-center text-xs text-gray-500">{entry?.surface || '-'}</td>
-                        <td className="px-3 py-3 text-center text-xs text-gray-500">{entry?.particle || '-'}</td>
+                        <td className="px-3 py-3 text-center text-xs text-gray-500">{activeZone?.points_float || entry?.airborne || '-'}</td>
+                        <td className="px-3 py-3 text-center text-xs text-gray-500">{activeZone?.points_fall || entry?.settle || '-'}</td>
+                        <td className="px-3 py-3 text-center text-xs text-gray-500">{activeZone?.points_surface || entry?.surface || '-'}</td>
+                        <td className="px-3 py-3 text-center text-xs text-gray-500">{activeZone?.points_particle || entry?.particle || '-'}</td>
                         <td className="px-3 py-3 text-center">
                           <span className={`text-xs px-2 py-1 rounded-full font-medium ${
                             isComplete ? 'bg-green-100 text-green-700' :
@@ -948,13 +974,16 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                 <input type="number" min="0" className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={entryForm.count || ''} onChange={e => setEntryForm(f => ({ ...f, count: parseInt(e.target.value) || 0 }))} />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              {[['airborne','부유균'],['settle','낙하균'],['surface','표면균'],['particle','부유입자']].map(([key, label]) => (
-                <div key={key}>
-                  <label className="text-xs text-gray-500">{label}</label>
-                  <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" placeholder="측정값" value={entryForm[key] || ''} onChange={e => setEntryForm(f => ({ ...f, [key]: e.target.value }))} />
-                </div>
-              ))}
+            <div>
+              <label className="text-xs text-gray-500">측정포인트 수 <span className="ml-1 text-blue-500">· 달력 연동</span></label>
+              <div className="grid grid-cols-4 gap-2 mt-0.5">
+                {[['airborne','부유균'],['settle','낙하균'],['surface','표면균'],['particle','부유입자']].map(([key, label]) => (
+                  <div key={key}>
+                    <label className="text-[11px] text-gray-400 block text-center">{label}</label>
+                    <input type="number" min="0" className="w-full border rounded px-2 py-1.5 text-sm text-center" placeholder="0" value={entryForm[key] || ''} onChange={e => setEntryForm(f => ({ ...f, [key]: e.target.value }))} />
+                  </div>
+                ))}
+              </div>
             </div>
             <div>
               <label className="text-xs text-gray-500">비고</label>
