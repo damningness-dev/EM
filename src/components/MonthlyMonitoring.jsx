@@ -171,6 +171,17 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
     });
   }
 
+  // Called on onChange — saves the date immediately without resetting overrides or running cascade,
+  // so the native date picker isn't interrupted by cascade-triggered re-renders.
+  async function handleZoneStartChange(zoneId, dateStr) {
+    const zone = zones.find(z => z.id === zoneId);
+    if (!zone) return;
+    const updated = { ...zone, schedule_start: dateStr || null };
+    await upsertZone(updated);
+    setZones(prev => prev.map(z => z.id === zoneId ? updated : z));
+  }
+
+  // Called on onBlur — resets overrides and runs cascade after the user finishes picking.
   async function handleZoneStart(zoneId, dateStr) {
     const zone = zones.find(z => z.id === zoneId);
     if (!zone) return;
@@ -577,7 +588,8 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                                         <input
                                           type="date"
                                           value={zone.schedule_start || ''}
-                                          onChange={e => handleZoneStart(zone.id, e.target.value)}
+                                          onChange={e => handleZoneStartChange(zone.id, e.target.value)}
+                                          onBlur={e => handleZoneStart(zone.id, e.target.value)}
                                           onClick={e => e.stopPropagation()}
                                           className="text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 w-32 shrink-0"
                                         />
