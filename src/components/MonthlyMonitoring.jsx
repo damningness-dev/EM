@@ -215,7 +215,11 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
     if (group.zones.some(z => z.grade === grade)) return;
     try {
       const cleanGrade = group.zones.find(z => z.clean_grade)?.clean_grade || null;
-      const saved = await upsertZone({ name: group.name, category: group.category, grade, clean_grade: cleanGrade, sort_order: zones.length, schedule_overrides: {} });
+      // Inherit the group's max sort_order so the new zone stays within the group's position
+      // (groupOrderKey uses min; assigning sort_order: zones.length could be lower than
+      // existing sort_orders set by moveGroup and would pull the group to the top)
+      const groupMaxOrder = Math.max(...group.zones.map(z => typeof z.sort_order === 'number' ? z.sort_order : 0));
+      const saved = await upsertZone({ name: group.name, category: group.category, grade, clean_grade: cleanGrade, sort_order: groupMaxOrder + 1, schedule_overrides: {} });
       setZones(prev => [...prev, saved]);
     } catch (e) { setErrorMsg('추가 실패: ' + e.message); }
   }
