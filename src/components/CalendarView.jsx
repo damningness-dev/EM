@@ -502,7 +502,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     setOptimizing(true);
     try {
       const overrides = optimizeMonthSchedule({
-        zones, tempSchedules, completions, year, month, capacities: caps, holidayMap: holidays,
+        zones, tempSchedules, completions, year, month, capacities: caps, holidayMap: holidays, namedGroups: groups,
       });
       const zoneIds = Object.keys(overrides);
       if (!zoneIds.length) {
@@ -611,7 +611,8 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     const anchor = groupZones.reduce((best, z) => {
       return (GRADE_PRIORITY[z.grade] || 0) > (GRADE_PRIORITY[best.grade] || 0) ? z : best;
     });
-    const toSync = groupZones.filter(z => z.id !== anchor.id && z.schedule_start !== anchor.schedule_start);
+    // 시작일 동기화는 같은 등급 구역끼리만: 카스케이드(P2→P3→유지관리)는 각자 다른 시작일을 가짐
+    const toSync = groupZones.filter(z => z.id !== anchor.id && z.grade === anchor.grade && z.schedule_start !== anchor.schedule_start);
     const startUpdates = await Promise.all(
       toSync.map(z => {
         const u = { ...z, schedule_start: anchor.schedule_start, schedule_overrides: {} };

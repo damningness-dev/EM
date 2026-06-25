@@ -271,7 +271,7 @@ const COMBINED_CATS = ['질소가스', '압축공기'];
 // - surface/float/fall/particle: daily cap per type, evaluated PER CATEGORY
 // - combined: daily total cap for 질소가스+압축공기 together
 // Returns { [zoneId]: { [num]: 'yyyy-MM-dd' } } of new overrides to persist.
-export function optimizeMonthSchedule({ zones, tempSchedules = [], completions = new Set(), year, month, capacities, holidayMap = {} }) {
+export function optimizeMonthSchedule({ zones, tempSchedules = [], completions = new Set(), year, month, capacities, holidayMap = {}, namedGroups = [] }) {
   const prefix = `${year}-${String(month).padStart(2, '0')}-`;
   const TYPES = ['surface', 'float', 'fall', 'particle'];
 
@@ -396,6 +396,107 @@ export function optimizeMonthSchedule({ zones, tempSchedules = [], completions =
     }
     e.ds = target;
     overrides[e.zoneId] = { ...(overrides[e.zoneId] || {}), [e.num]: target };
+  }
+
+  // Post-optimization: consolidate same-group measurements to the same day within each period.
+  // Capacity constraints are respected; if a day can't fit all group members, skip that cluster.
+  if (namedGroups.length > 0) {
+    const zoneToGroup = new Map();
+    namedGroups.forEach(g => { (g.zoneIds || []).forEach(zid => zoneToGroup.set(zid, g.id)); });
+
+    const groupEvtMap = new Map();
+    events.forEach(e => {
+      const gid = zoneToGroup.get(e.zoneId);
+      if (gid == null) return;
+      if (!groupEvtMap.has(gid)) groupEvtMap.set(gid, []);
+      groupEvtMap.get(gid).push(e);
+    });
+
+    groupEvtMap.forEach(gevts => {
+      if (gevts.length < 2) return;
+
+      // Cluster events whose measurement-period windows overlap
+      const visited = new Set();
+      for (let i = 0; i < gevts.length; i++) {
+        if (visited.has(i)) continue;
+        const cluster = [i];
+        visited.add(i);
+        for (let j = i + 1; j < gevts.length; j++) {
+          if (visited.has(j)) continue;
+          const overlaps = cluster.some(ci => {
+            const a = gevts[ci], b = gevts[j];
+            return a.bounds.max >= b.bounds.min && a.bounds.min <= b.bounds.max;
+          });
+          if (overlaps) { cluster.push(j); visited.add(j); }
+        }
+
+        const clusterEvts = cluster.map(ci => gevts[ci]);
+        if (clusterEvts.length < 2) continue;
+
+        const movableCluster = clusterEvts.filter(e => !e.done && e.ptTotal > 0 && e.win && e.win.length > 0);
+        if (movableCluster.length < 1) continue;
+
+        // Intersection of all movable events' allowed day windows
+        const commonDays = movableCluster.reduce(
+          (days, e) => days.filter(d => e.win.includes(d)),
+          movableCluster[0].win.slice()
+        );
+        if (commonDays.length === 0) continue;
+
+        // Prefer days where already-completed events in this cluster are scheduled
+        const doneDays = new Set(clusterEvts.filter(e => e.done || e.ptTotal === 0).map(e => e.ds));
+        const tryDays = commonDays.filter(d => doneDays.has(d)).length > 0
+          ? commonDays.filter(d => doneDays.has(d))
+          : commonDays;
+
+        let bestDay = null, bestLoad = Infinity;
+        for (const day of tryDays) {
+          // Delta on target day if all movable events move there
+          const catDelta = {};
+          let combDelta = 0;
+          for (const e of movableCluster) {
+            if (e.ds === day) continue;
+            if (!catDelta[e.category]) catDelta[e.category] = { surface:0, float:0, fall:0, particle:0 };
+            TYPES.forEach(t => { catDelta[e.category][t] += e.pts[t]; });
+            if (COMBINED_CATS.includes(e.category)) combDelta += e.ptTotal;
+          }
+
+          let valid = true;
+          for (const cat in catDelta) {
+            const dl = catLoad[cat]?.[day] || {};
+            for (const t of TYPES) {
+              if (capacities[t] > 0 && (dl[t] || 0) + catDelta[cat][t] > capacities[t]) { valid = false; break; }
+            }
+            if (!valid) break;
+          }
+          if (valid && combDelta > 0 && capacities.combined > 0 && effCombined(day) + combDelta > capacities.combined) valid = false;
+          if (!valid) continue;
+
+          const load = Object.values(catLoad).reduce((s, cm) => {
+            const dl = cm[day];
+            return s + (dl ? TYPES.reduce((ss, t) => ss + dl[t], 0) : 0);
+          }, 0);
+          if (load < bestLoad) { bestLoad = load; bestDay = day; }
+        }
+
+        if (!bestDay) continue;
+
+        for (const e of movableCluster) {
+          if (e.ds === bestDay) continue;
+          const fc = catLoad[e.category]?.[e.ds];
+          if (fc) TYPES.forEach(t => { fc[t] -= e.pts[t]; });
+          if (!catLoad[e.category]) catLoad[e.category] = {};
+          if (!catLoad[e.category][bestDay]) catLoad[e.category][bestDay] = { surface:0, float:0, fall:0, particle:0 };
+          TYPES.forEach(t => { catLoad[e.category][bestDay][t] += e.pts[t]; });
+          if (COMBINED_CATS.includes(e.category)) {
+            combinedLoad[e.ds] = (combinedLoad[e.ds] || 0) - e.ptTotal;
+            combinedLoad[bestDay] = (combinedLoad[bestDay] || 0) + e.ptTotal;
+          }
+          e.ds = bestDay;
+          overrides[e.zoneId] = { ...(overrides[e.zoneId] || {}), [e.num]: bestDay };
+        }
+      }
+    });
   }
 
   return overrides;
