@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
-import { fetchZones, upsertZone, deleteZone, fetchMonitoringData, upsertMonitoringEntry, fetchCompletions, fetchHolidays, fetchGroups, upsertGroup } from '../lib/api';
+import { fetchZones, upsertZone, deleteZone, fetchMonitoringData, upsertMonitoringEntry, fetchCompletions, setCompletion, deleteCompletion, fetchHolidays, fetchGroups, upsertGroup } from '../lib/api';
 import { GRADE_TARGETS, GRADE_COLORS, CLEAN_GRADES, CLEAN_GRADE_COLORS } from '../data/initialData';
 import { calcMeasurements, calcEndDate, GRADE_PRIORITY, buildHolidayMap, computeCascadeSchedules } from '../lib/schedule';
 import { format } from 'date-fns';
@@ -173,6 +173,14 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
 
   function getEntry(zoneId) {
     return monData[zoneId] || { airborne:'', settle:'', surface:'', particle:'', count:0, note:'', start_date:'', done:false };
+  }
+
+  // 스케줄이 있는 구역은 달력 완료 수(completions)를 count 초기값으로 사용
+  function openEntryModal(zone) {
+    const entry = getEntry(zone.id);
+    const sched = scheduleThisMonth[zone.id];
+    setEntryForm({ ...entry, count: sched ? sched.done : (entry.count || 0) });
+    setEditEntry(zone);
   }
 
   function getActiveZone(group) {
@@ -411,17 +419,36 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
 
   async function saveEntry() {
     setSaving(true);
+    const countVal = parseInt(entryForm.count) || 0;
     const payload = {
       zone_id: editEntry.id, year, month,
       airborne: entryForm.airborne || null, settle: entryForm.settle || null,
       surface: entryForm.surface || null, particle: entryForm.particle || null,
-      count: parseInt(entryForm.count) || 0, note: entryForm.note || null,
+      count: countVal, note: entryForm.note || null,
       start_date: entryForm.start_date || null, done: entryForm.done || false,
       ...(entryForm.id ? { id: entryForm.id } : {}),
     };
     try {
       const saved = await upsertMonitoringEntry(payload);
       setMonData(p => ({ ...p, [editEntry.id]: saved }));
+
+      // 달력(completions)과 동기화 — schedule_start가 있는 구역에만 적용
+      if (editEntry.schedule_start) {
+        const monthStr = `${year}-${String(month).padStart(2, '0')}`;
+        const ms = calcMeasurements(editEntry).filter(m => format(m.date, 'yyyy-MM') === monthStr);
+        const target = Math.min(countVal, ms.length);
+        const next = new Set(completions);
+        for (let i = 0; i < ms.length; i++) {
+          const key = `${editEntry.id}_${ms[i].num}`;
+          if (i < target) {
+            if (!next.has(key)) { await setCompletion(editEntry.id, ms[i].num); next.add(key); }
+          } else {
+            if (next.has(key)) { await deleteCompletion(editEntry.id, ms[i].num); next.delete(key); }
+          }
+        }
+        setCompletions(next);
+      }
+
       setEditEntry(null);
     } catch (e) { setErrorMsg('저장 실패: ' + e.message); }
     setSaving(false);
@@ -641,7 +668,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                           <div className="flex items-center justify-center gap-1">
                             {activeZone && (
                               <button
-                                onClick={() => { setEntryForm({ ...getEntry(activeZone.id) }); setEditEntry(activeZone); }}
+                                onClick={() => openEntryModal(activeZone)}
                                 className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-50 rounded"
                               >수정</button>
                             )}
@@ -710,7 +737,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                                         )}
                                       </div>
                                       <div className="flex gap-1 shrink-0" onClick={e => e.stopPropagation()}>
-                                        <button onClick={() => { setEntryForm({ ...getEntry(zone.id) }); setEditEntry(zone); }} className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-100 rounded">수정</button>
+                                        <button onClick={() => openEntryModal(zone)} className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-100 rounded">수정</button>
                                         <button onClick={() => setDeleteConfirm({ ids: [zone.id], name: `${zone.name}[${zone.grade}]` })} className="text-xs px-2 py-1 text-red-400 hover:bg-red-50 rounded">삭제</button>
                                       </div>
                                     </div>
@@ -733,7 +760,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                                   <span className={`text-xs font-bold px-2 py-1 rounded shrink-0 ${GRADE_COLORS[zone.grade] || 'bg-gray-100 text-gray-600'}`}>{zone.grade}</span>
                                   <span className="text-xs text-gray-500 flex-1">{zone.name}</span>
                                   <div className="flex gap-1 shrink-0" onClick={e => e.stopPropagation()}>
-                                    <button onClick={() => { setEntryForm({ ...getEntry(zone.id) }); setEditEntry(zone); }} className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-100 rounded">수정</button>
+                                    <button onClick={() => openEntryModal(zone)} className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-100 rounded">수정</button>
                                     <button onClick={() => setDeleteConfirm({ ids: [zone.id], name: `${zone.name}[${zone.grade}]` })} className="text-xs px-2 py-1 text-red-400 hover:bg-red-50 rounded">삭제</button>
                                   </div>
                                 </div>
@@ -766,7 +793,10 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                 <input type="date" className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={entryForm.start_date || ''} onChange={e => setEntryForm(f => ({ ...f, start_date: e.target.value }))} />
               </div>
               <div>
-                <label className="text-xs text-gray-500">완료 횟수 (목표: {GRADE_TARGETS[editEntry.grade] || 1}회)</label>
+                <label className="text-xs text-gray-500">
+                  완료 횟수 (목표: {GRADE_TARGETS[editEntry.grade] || 1}회)
+                  {editEntry.schedule_start && <span className="ml-1 text-blue-500">· 달력 연동</span>}
+                </label>
                 <input type="number" min="0" className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={entryForm.count || ''} onChange={e => setEntryForm(f => ({ ...f, count: parseInt(e.target.value) || 0 }))} />
               </div>
             </div>
