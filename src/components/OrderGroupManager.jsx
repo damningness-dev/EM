@@ -247,38 +247,32 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
   }
 
   function handleDateBlur(zone) {
-    // cascade: P1/P2/P3인 경우 computeCascadeSchedules 호출
+    // cascade: P1/P2/P3인 경우 이후 등급 시작일 자동 계산
     if (!PROGRESSION.includes(zone.grade)) return;
     const dateStr = getZoneValue(zone, 'schedule_start');
     if (!dateStr) return;
     try {
       const startYear = new Date(dateStr).getFullYear();
       const holidayMap = buildHolidayMap(holidayDefs, startYear, startYear + 4);
-      // 모든 현재 zones + localEdits 반영한 merged 배열
       const allZones = modalGroups.flatMap(g =>
-        g.zones.map(z => ({
-          ...z,
-          ...(localEdits[z.id] || {}),
-        }))
+        g.zones.map(z => ({ ...z, ...(localEdits[z.id] || {}) }))
       );
-      // 현재 zone도 edits 반영
       const mergedZone = { ...zone, ...(localEdits[zone.id] || {}) };
+      // computeCascadeSchedules returns [{ zoneData }]
       const cascadeResult = computeCascadeSchedules(mergedZone, allZones, holidayMap);
-      // cascade 결과를 localEdits에 반영
-      if (cascadeResult && Array.isArray(cascadeResult)) {
+      if (cascadeResult && cascadeResult.length > 0) {
         const newEdits = { ...localEdits };
-        cascadeResult.forEach(updated => {
-          if (updated.id !== zone.id) {
-            newEdits[updated.id] = { ...(newEdits[updated.id] || {}), schedule_start: updated.schedule_start };
+        cascadeResult.forEach(({ zoneData: zd }) => {
+          if (zd.id && zd.id !== zone.id) {
+            newEdits[zd.id] = { ...(newEdits[zd.id] || {}), schedule_start: zd.schedule_start, schedule_overrides: {} };
           }
         });
         setLocalEdits(newEdits);
-        // modalGroups의 zones도 업데이트
         setModalGroups(prev => prev.map(g => ({
           ...g,
           zones: g.zones.map(z => {
-            const found = cascadeResult.find(u => u.id === z.id);
-            return found ? { ...z, ...found } : z;
+            const hit = cascadeResult.find(({ zoneData: zd }) => zd.id === z.id);
+            return hit ? { ...z, ...hit.zoneData } : z;
           })
         })));
       }
@@ -579,14 +573,17 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
             <div className="flex flex-1 min-h-0">
               {/* 왼쪽: 구역 목록 */}
               <div className="flex flex-col flex-1 min-w-0">
-                {/* 컬럼 헤더 */}
-                <div className="flex items-stretch bg-gray-100 border-b border-gray-300 text-xs font-semibold text-gray-600 shrink-0 select-none" style={{ height: 30 }}>
+                  {/* 목록 (헤더 포함 — sticky로 스크롤바 폭 자동 보정) */}
+                <div ref={listRef} className="flex-1 overflow-y-auto">
+                {/* sticky 컬럼 헤더 */}
+                <div className="sticky top-0 z-10 flex items-stretch bg-gray-100 border-b border-gray-300 text-xs font-semibold text-gray-600 select-none" style={{ height: 30 }}>
                   <div className="shrink-0 flex items-center justify-center text-center text-gray-300 border-r border-gray-200" style={{ width: 32 }}>≡</div>
                   <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 32 }}>#</div>
                   <div className="flex-1 flex items-center justify-center text-center min-w-0 border-r border-gray-200">구역명</div>
                   <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 60 }}>분류</div>
                   <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 70 }}>청정등급</div>
-                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 100 }}>시작일</div>
+                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 90 }}>시작일</div>
+                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 90 }}>종료예정일</div>
                   <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 48 }}>부유균</div>
                   <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 48 }}>낙하균</div>
                   <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 48 }}>표면균</div>
@@ -594,9 +591,6 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                   <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 80 }}>등급</div>
                   <div className="shrink-0" style={{ width: 28 }}></div>
                 </div>
-
-                {/* 목록 */}
-                <div ref={listRef} className="flex-1 overflow-y-auto">
                   {filteredGroups.map((group, filteredIdx) => {
                     const sel = filteredIdx === modalSelectedIdx;
                     const isDragOver = dropIdx === filteredIdx && dragIdx !== filteredIdx;
@@ -655,8 +649,12 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                             ) : <span className={`text-[9px] ${sel ? 'text-blue-200' : 'text-gray-300'}`}>—</span>}
                           </div>
                           {/* 시작일 */}
-                          <div className={`flex items-center justify-center shrink-0 text-center h-full ${cellBorder(sel)} ${sel ? 'text-blue-100' : 'text-gray-400'}`} style={{ width: 100, fontSize: 10 }}>
+                          <div className={`flex items-center justify-center shrink-0 text-center h-full ${cellBorder(sel)} ${sel ? 'text-blue-100' : 'text-gray-400'}`} style={{ width: 90, fontSize: 10 }}>
                             {activeZone?.schedule_start || '—'}
+                          </div>
+                          {/* 종료예정일 */}
+                          <div className={`flex items-center justify-center shrink-0 text-center h-full ${cellBorder(sel)} ${sel ? 'text-blue-100' : 'text-gray-400'}`} style={{ width: 90, fontSize: 10 }}>
+                            {(() => { const ed = activeZone ? calcEndDate({ ...activeZone, ...(localEdits[activeZone.id] || {}) }) : null; return ed ? `${ed.getFullYear()}-${String(ed.getMonth()+1).padStart(2,'0')}-${String(ed.getDate()).padStart(2,'0')}` : '—'; })()}
                           </div>
                           {/* 측정포인트 */}
                           {[
@@ -723,15 +721,19 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                                 </select>
                               </div>
                               {/* 시작일 */}
-                              <div className="shrink-0 flex items-center justify-center" style={{ width: 100 }}>
+                              <div className="shrink-0 flex items-center justify-center" style={{ width: 90 }}>
                                 <input
                                   type="date"
                                   value={startVal}
                                   onChange={e => editZoneField(zone.id, 'schedule_start', e.target.value)}
                                   onBlur={() => handleDateBlur(zone)}
                                   onClick={e => e.stopPropagation()}
-                                  className="text-[10px] border border-gray-200 rounded px-0.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 w-24"
+                                  className="text-[10px] border border-gray-200 rounded px-0.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 w-[82px]"
                                 />
+                              </div>
+                              {/* 종료예정일 (자동 계산, 읽기 전용) */}
+                              <div className="shrink-0 flex items-center justify-center text-[10px] text-gray-400" style={{ width: 90 }}>
+                                {(() => { const ed = startVal ? calcEndDate({ ...zone, ...(localEdits[zone.id] || {}) }) : null; return ed ? `${ed.getFullYear()}-${String(ed.getMonth()+1).padStart(2,'0')}-${String(ed.getDate()).padStart(2,'0')}` : '—'; })()}
                               </div>
                               {/* 측정포인트 inputs */}
                               {[
