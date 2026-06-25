@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, Fragment } from 'react';
+import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
 import { fetchZones, upsertZone, deleteZone, fetchMonitoringData, upsertMonitoringEntry, fetchCompletions, fetchHolidays, fetchGroups, upsertGroup } from '../lib/api';
 import { GRADE_TARGETS, GRADE_COLORS, CLEAN_GRADES, CLEAN_GRADE_COLORS } from '../data/initialData';
 import { calcMeasurements, calcEndDate, GRADE_PRIORITY, buildHolidayMap, computeCascadeSchedules } from '../lib/schedule';
@@ -31,6 +31,15 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
   const [saving, setSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(null); // { id, name }
   const [errorMsg, setErrorMsg] = useState(null);
+  // 순서/그룹 관리 팝업
+  const [showOrderModal, setShowOrderModal] = useState(false);
+  const [modalGroups, setModalGroups] = useState([]);
+  const [modalSelectedIdx, setModalSelectedIdx] = useState(null);
+  const [modalNamedGroups, setModalNamedGroups] = useState([]);
+  const [modalPos, setModalPos] = useState({ x: 60, y: 40 });
+  const [modalSaving, setModalSaving] = useState(false);
+  const modalDragOffset = useRef(null);
+  const modalListRef = useRef(null);
 
   useEffect(() => {
     Promise.all([fetchZones(), fetchCompletions(), fetchHolidays(), fetchGroups()]).then(([zns, comps, hols, grps]) => {
@@ -51,6 +60,13 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
     setLoading(true);
     fetchMonitoringData(year, month).then(d => { setMonData(d); setLoading(false); });
   }, [year, month]);
+
+  // 모달 목록에서 선택된 행 자동 스크롤
+  useEffect(() => {
+    if (modalSelectedIdx === null || !modalListRef.current) return;
+    const row = modalListRef.current.querySelector(`[data-modal-row="${modalSelectedIdx}"]`);
+    if (row) row.scrollIntoView({ block: 'nearest' });
+  }, [modalSelectedIdx]);
 
   // Group all zones by name+category; one P1/P2/P3/유지관리 per group
   const zoneGroups = useMemo(() => {
@@ -169,6 +185,84 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
       next.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
+  }
+
+  // ─── 순서/그룹 관리 팝업 ──────────────────────────────────────────────────────
+
+  function openOrderModal() {
+    setModalGroups(orderedAllGroups.map(g => ({ ...g, zones: [...g.zones] })));
+    setModalNamedGroups(namedGroups.map(g => ({ ...g, zoneIds: [...(g.zoneIds || [])] })));
+    setModalSelectedIdx(null);
+    setShowOrderModal(true);
+  }
+
+  function moveModalSelected(dir) {
+    if (modalSelectedIdx === null) return;
+    const arr = [...modalGroups];
+    let newIdx;
+    if (dir === 'top') newIdx = 0;
+    else if (dir === 'bottom') newIdx = arr.length - 1;
+    else if (dir === 'up10') newIdx = Math.max(0, modalSelectedIdx - 10);
+    else if (dir === 'down10') newIdx = Math.min(arr.length - 1, modalSelectedIdx + 10);
+    else return;
+    if (newIdx === modalSelectedIdx) return;
+    const [item] = arr.splice(modalSelectedIdx, 1);
+    arr.splice(newIdx, 0, item);
+    setModalGroups(arr);
+    setModalSelectedIdx(newIdx);
+  }
+
+  function modalGroupOf(zoneGroup) {
+    const ids = zoneGroup.zones.map(z => z.id);
+    return modalNamedGroups.find(g => (g.zoneIds || []).some(id => ids.includes(id))) || null;
+  }
+
+  function modalAssignGroup(idx, namedGroupId) {
+    const ids = modalGroups[idx].zones.map(z => z.id);
+    setModalNamedGroups(prev => prev.map(g => {
+      const has = (g.zoneIds || []).some(id => ids.includes(id));
+      const shouldHave = String(g.id) === String(namedGroupId);
+      if (has && !shouldHave) return { ...g, zoneIds: g.zoneIds.filter(id => !ids.includes(id)) };
+      if (!has && shouldHave) return { ...g, zoneIds: [...new Set([...(g.zoneIds || []), ...ids])] };
+      return g;
+    }));
+  }
+
+  async function saveOrderModal() {
+    setModalSaving(true);
+    try {
+      const zoneUpdates = [];
+      modalGroups.forEach((g, gi) => {
+        g.zones.forEach((z, zi) => {
+          zoneUpdates.push({ ...z, sort_order: gi * 1000 + zi });
+        });
+      });
+      for (const u of zoneUpdates) await upsertZone(u);
+      setZones(prev => prev.map(z => zoneUpdates.find(u => u.id === z.id) || z));
+      for (const g of modalNamedGroups) await upsertGroup(g);
+      setNamedGroups(modalNamedGroups);
+      setShowOrderModal(false);
+    } catch (e) {
+      setErrorMsg('저장 실패: ' + e.message);
+    }
+    setModalSaving(false);
+  }
+
+  function startModalDrag(e) {
+    if (e.button !== 0) return;
+    modalDragOffset.current = { x: e.clientX - modalPos.x, y: e.clientY - modalPos.y };
+    const onMove = ev => {
+      if (!modalDragOffset.current) return;
+      setModalPos({ x: ev.clientX - modalDragOffset.current.x, y: ev.clientY - modalDragOffset.current.y });
+    };
+    const onUp = () => {
+      modalDragOffset.current = null;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    e.preventDefault();
   }
 
   // Called on onChange — saves the date immediately without resetting overrides or running cascade,
@@ -404,6 +498,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
           onClick={() => setGroupBy(v => !v)}
           className={`px-3 py-1.5 rounded-lg text-sm border font-medium ${groupBy ? 'bg-purple-600 text-white border-purple-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
         >📁 그룹으로 보기</button>
+        <button onClick={openOrderModal} className="px-3 py-1.5 rounded-lg text-sm border border-gray-300 text-gray-700 hover:bg-gray-100 font-medium">🗂 순서/그룹 관리</button>
         <button onClick={() => { setShowAddZone(true); setZoneForm({}); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 ml-auto">+ 구역 추가</button>
       </div>
 
@@ -786,6 +881,222 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
             <div className="flex gap-2 pt-2">
               <button onClick={createGroupAndAssign} disabled={!newGroupName.trim()} className="flex-1 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 disabled:opacity-50">만들기</button>
               <button onClick={() => setNewGroupModal(null)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600">취소</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 순서/그룹 관리 팝업 — Windows 탐색기 스타일, 항상 최상위 */}
+      {showOrderModal && (
+        <div className="fixed inset-0 z-[500]" style={{ pointerEvents: 'none' }}>
+          <div
+            className="absolute flex flex-col"
+            style={{
+              left: modalPos.x,
+              top: modalPos.y,
+              width: 780,
+              minWidth: 580,
+              pointerEvents: 'auto',
+              border: '1px solid #7a7a7a',
+              boxShadow: '4px 4px 16px rgba(0,0,0,0.45)',
+              userSelect: 'none',
+            }}
+          >
+            {/* 제목 표시줄 */}
+            <div
+              onMouseDown={startModalDrag}
+              style={{
+                background: 'linear-gradient(180deg,#4f9de8 0%,#1461c4 55%,#1155b0 100%)',
+                height: 28,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '0 6px 0 8px',
+                cursor: 'move',
+                flexShrink: 0,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <svg width="14" height="12" viewBox="0 0 16 13" fill="none">
+                  <rect width="16" height="10" rx="1" fill="#ffd85e" y="2.5" />
+                  <rect width="7" height="2" fill="#e09800" y="1" x="0.5" rx="0.5" />
+                </svg>
+                <span style={{ color: '#fff', fontSize: 12, fontWeight: 600, textShadow: '0 1px 2px rgba(0,0,0,0.5)', fontFamily: 'Segoe UI, Arial, sans-serif' }}>
+                  구역 순서 / 그룹 관리
+                </span>
+              </div>
+              <button
+                onClick={() => setShowOrderModal(false)}
+                title="닫기"
+                style={{
+                  width: 22, height: 18, border: '1px solid rgba(255,255,255,0.3)',
+                  background: 'linear-gradient(180deg,#e05050,#c02020)',
+                  color: '#fff', fontSize: 11, cursor: 'pointer', borderRadius: 2,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >✕</button>
+            </div>
+
+            {/* 도구 모음 */}
+            <div style={{ background: '#ece9d8', borderBottom: '1px solid #aca899', padding: '3px 6px', display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+              {[
+                { dir: 'top',    icon: '⏫', label: '가장위로',   disabled: modalSelectedIdx === null || modalSelectedIdx === 0 },
+                { dir: 'up10',   icon: '🔼', label: '10개 위로',  disabled: modalSelectedIdx === null || modalSelectedIdx === 0 },
+                { dir: 'down10', icon: '🔽', label: '10개 아래로',disabled: modalSelectedIdx === null || modalSelectedIdx >= modalGroups.length - 1 },
+                { dir: 'bottom', icon: '⏬', label: '가장아래로', disabled: modalSelectedIdx === null || modalSelectedIdx >= modalGroups.length - 1 },
+              ].map(btn => (
+                <button
+                  key={btn.dir}
+                  onClick={() => moveModalSelected(btn.dir)}
+                  disabled={btn.disabled}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 3,
+                    padding: '2px 8px', fontSize: 11,
+                    border: btn.disabled ? '1px solid transparent' : '1px solid #aaa',
+                    background: btn.disabled ? 'transparent' : 'linear-gradient(180deg,#fff 0%,#e0e0e0 100%)',
+                    color: btn.disabled ? '#aaa' : '#333',
+                    borderRadius: 3, cursor: btn.disabled ? 'default' : 'pointer',
+                    boxShadow: btn.disabled ? 'none' : '0 1px 2px rgba(0,0,0,0.12)',
+                    fontFamily: 'Segoe UI, Arial, sans-serif',
+                  }}
+                >
+                  <span>{btn.icon}</span><span>{btn.label}</span>
+                </button>
+              ))}
+              <div style={{ width: 1, height: 18, background: '#b0b0b0', margin: '0 4px' }} />
+              <span style={{ fontSize: 11, color: '#555', fontFamily: 'Segoe UI, Arial, sans-serif' }}>
+                {modalSelectedIdx !== null
+                  ? `${modalSelectedIdx + 1}번 선택 / 전체 ${modalGroups.length}개`
+                  : `전체 ${modalGroups.length}개 구역`}
+              </span>
+            </div>
+
+            {/* 열 머리글 */}
+            <div style={{
+              display: 'flex', alignItems: 'center',
+              background: 'linear-gradient(180deg,#f0ede0 0%,#dedad0 100%)',
+              borderBottom: '2px solid #aca899',
+              height: 22, paddingLeft: 4, flexShrink: 0,
+              fontFamily: 'Segoe UI, Arial, sans-serif', fontSize: 11, fontWeight: 700, color: '#333',
+            }}>
+              <div style={{ width: 38, textAlign: 'center' }}>#</div>
+              <div style={{ flex: 1, paddingLeft: 18 }}>구역명</div>
+              <div style={{ width: 76, textAlign: 'center' }}>분류</div>
+              <div style={{ width: 164, textAlign: 'center' }}>일정그룹</div>
+              <div style={{ width: 108, textAlign: 'center' }}>등급</div>
+            </div>
+
+            {/* 파일 목록 */}
+            <div ref={modalListRef} style={{ height: 400, overflowY: 'auto', background: '#fff', flexShrink: 0 }}>
+              {modalGroups.map((group, idx) => {
+                const sel = idx === modalSelectedIdx;
+                const ng = modalGroupOf(group);
+                return (
+                  <div
+                    key={group.key}
+                    data-modal-row={idx}
+                    onClick={() => setModalSelectedIdx(idx)}
+                    style={{
+                      display: 'flex', alignItems: 'center',
+                      height: 22, paddingLeft: 4,
+                      background: sel ? '#316ac5' : idx % 2 === 0 ? '#fff' : '#f5f3ec',
+                      borderBottom: '1px solid #e8e6e0',
+                      cursor: 'pointer',
+                      fontFamily: 'Segoe UI, Arial, sans-serif', fontSize: 12,
+                    }}
+                  >
+                    <div style={{ width: 38, textAlign: 'center', color: sel ? '#c8daf8' : '#aaa', fontSize: 10 }}>
+                      {idx + 1}
+                    </div>
+                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+                      {/* 폴더 아이콘 */}
+                      <svg width="14" height="12" viewBox="0 0 16 13" fill="none" style={{ flexShrink: 0 }}>
+                        <rect width="16" height="10" rx="1" fill={sel ? '#90baff' : '#ffd85e'} y="2.5" />
+                        <rect width="7" height="2" fill={sel ? '#6090e0' : '#e09800'} y="1" x="0.5" rx="0.5" />
+                      </svg>
+                      <span style={{ color: sel ? '#fff' : '#1a1a1a', fontWeight: sel ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {group.name}
+                      </span>
+                    </div>
+                    <div style={{ width: 76, textAlign: 'center', fontSize: 10, color: sel ? '#c0d8ff' : '#555', flexShrink: 0 }}>
+                      {group.category}
+                    </div>
+                    <div style={{ width: 164, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                      <select
+                        value={ng?.id || ''}
+                        onChange={e => modalAssignGroup(idx, e.target.value)}
+                        style={{
+                          width: '100%', fontSize: 10, height: 18,
+                          border: '1px solid', borderColor: sel ? '#7aaaf0' : '#ccc',
+                          background: sel ? '#2255a0' : '#fff',
+                          color: sel ? '#fff' : '#333',
+                          padding: '0 2px', outline: 'none', cursor: 'pointer',
+                        }}
+                      >
+                        <option value="">그룹 없음</option>
+                        {modalNamedGroups.map(g => <option key={g.id} value={String(g.id)}>{g.name}</option>)}
+                      </select>
+                    </div>
+                    <div style={{ width: 108, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 2, flexShrink: 0 }}>
+                      {group.zones.map(z => (
+                        <span
+                          key={z.id}
+                          style={{
+                            fontSize: 9, padding: '1px 3px', borderRadius: 2,
+                            background: sel ? '#4478c8' : '#e0e0e0',
+                            color: sel ? '#fff' : '#444',
+                          }}
+                        >{z.grade}</span>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+              {modalGroups.length === 0 && (
+                <div style={{ textAlign: 'center', padding: '40px 0', color: '#aaa', fontSize: 12, fontFamily: 'Segoe UI, Arial, sans-serif' }}>
+                  표시할 구역이 없습니다
+                </div>
+              )}
+            </div>
+
+            {/* 상태 표시줄 + 저장/닫기 */}
+            <div style={{
+              background: 'linear-gradient(180deg,#ece9d8 0%,#d4d0c8 100%)',
+              borderTop: '2px solid #aca899',
+              height: 36, display: 'flex', alignItems: 'center',
+              justifyContent: 'space-between', padding: '0 10px', flexShrink: 0,
+              fontFamily: 'Segoe UI, Arial, sans-serif',
+            }}>
+              <span style={{ fontSize: 11, color: '#555' }}>
+                {modalSelectedIdx !== null
+                  ? `"${modalGroups[modalSelectedIdx]?.name}" 선택됨 — 이동 버튼으로 순서를 변경하세요`
+                  : '구역을 클릭하여 선택하세요'}
+              </span>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  onClick={saveOrderModal}
+                  disabled={modalSaving}
+                  style={{
+                    padding: '3px 18px', fontSize: 12, fontWeight: 600,
+                    border: '1px solid #2255a0',
+                    background: modalSaving ? '#aaa' : 'linear-gradient(180deg,#5090e0,#1a5cc8)',
+                    color: '#fff', borderRadius: 3, cursor: modalSaving ? 'default' : 'pointer',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                    fontFamily: 'Segoe UI, Arial, sans-serif',
+                  }}
+                >{modalSaving ? '저장 중…' : '저장'}</button>
+                <button
+                  onClick={() => setShowOrderModal(false)}
+                  style={{
+                    padding: '3px 18px', fontSize: 12,
+                    border: '1px solid #9a9a9a',
+                    background: 'linear-gradient(180deg,#fff,#e0e0d8)',
+                    color: '#333', borderRadius: 3, cursor: 'pointer',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+                    fontFamily: 'Segoe UI, Arial, sans-serif',
+                  }}
+                >닫기</button>
+              </div>
             </div>
           </div>
         </div>
