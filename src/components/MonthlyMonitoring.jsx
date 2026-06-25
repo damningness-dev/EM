@@ -1,13 +1,22 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
-import { fetchZones, upsertZone, deleteZone, fetchMonitoringData, upsertMonitoringEntry, fetchCompletions, setCompletion, deleteCompletion, fetchHolidays, fetchGroups, upsertGroup } from '../lib/api';
+import { fetchZones, upsertZone, deleteZone, fetchMonitoringData, upsertMonitoringEntry, fetchCompletions, setCompletion, deleteCompletion, fetchHolidays, fetchGroups, upsertGroup, fetchScheduleConfig, saveScheduleConfig } from '../lib/api';
 import { GRADE_TARGETS, GRADE_COLORS, CLEAN_GRADES, CLEAN_GRADE_COLORS } from '../data/initialData';
-import { calcMeasurements, calcEndDate, GRADE_PRIORITY, buildHolidayMap, computeCascadeSchedules } from '../lib/schedule';
+import { calcMeasurements, calcEndDate, GRADE_PRIORITY, buildHolidayMap, computeCascadeSchedules, DEFAULT_SCHEDULE_SPECS, setScheduleConfig, getScheduleConfig } from '../lib/schedule';
 import { format } from 'date-fns';
 
 const MONTHS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
-const CATEGORIES = ['공조', '질소가스', '압축공기'];
 const GRADES = ['P1', 'P2', 'P3', '유지관리', 'OQ', 'PQ'];
 const PROGRESSION = ['P1', 'P2', 'P3', '유지관리'];
+const CYCLE_TYPES = [
+  { value: 'daily',     label: '매일(일1회)' },
+  { value: 'weekly',    label: '주1회' },
+  { value: 'biweekly',  label: '격주(2주)' },
+  { value: 'monthly',   label: '월1회' },
+  { value: 'quarterly', label: '분기1회(3개월)' },
+];
+const DEFAULT_INTERVAL = { daily: 1, weekly: 7, biweekly: 14 };
+const CYCLE_GRADES = ['P1', 'P2', 'P3', '유지관리'];
+const CATEGORY_BG = { '질소가스': '#faf5ff', '압축공기': '#fffbeb' };
 
 export default function MonthlyMonitoring({ year, onYearChange }) {
   const [month, setMonth] = useState(new Date().getMonth() + 1);
@@ -37,9 +46,21 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
   const [modalSelectedIdx, setModalSelectedIdx] = useState(null);
   const [modalNamedGroups, setModalNamedGroups] = useState([]);
   const [modalPos, setModalPos] = useState({ x: 60, y: 40 });
+  const [modalSize, setModalSize] = useState({ w: 840, h: 560 });
   const [modalSaving, setModalSaving] = useState(false);
+  const [dragIdx, setDragIdx] = useState(null);
+  const [dropIdx, setDropIdx] = useState(null);
+  const [dragOverFolder, setDragOverFolder] = useState(null);
+  const [modalNewFolderName, setModalNewFolderName] = useState('');
+  const [showModalNewFolder, setShowModalNewFolder] = useState(false);
   const modalDragOffset = useRef(null);
   const modalListRef = useRef(null);
+  const resizeDragRef = useRef(null);
+  // 측정주기 설정 모달
+  const [showCycleModal, setShowCycleModal] = useState(false);
+  const [cycleConfig, setCycleConfig] = useState(() => getScheduleConfig());
+  const [cycleCatTab, setCycleCatTab] = useState(() => Object.keys(getScheduleConfig())[0] || '공조');
+  const [newCatName, setNewCatName] = useState('');
 
   useEffect(() => {
     Promise.all([fetchZones(), fetchCompletions(), fetchHolidays(), fetchGroups()]).then(([zns, comps, hols, grps]) => {
@@ -67,6 +88,20 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
     const row = modalListRef.current.querySelector(`[data-modal-row="${modalSelectedIdx}"]`);
     if (row) row.scrollIntoView({ block: 'nearest' });
   }, [modalSelectedIdx]);
+
+  // 측정주기 설정 — 앱 로드 후 모듈 변수와 동기화
+  useEffect(() => {
+    fetchScheduleConfig().then(cfg => {
+      if (cfg) {
+        setScheduleConfig(cfg);
+        setCycleConfig(cfg);
+        setCycleCatTab(Object.keys(cfg)[0] || '공조');
+      }
+    }).catch(() => {});
+  }, []);
+
+  // 분류 목록 = 측정주기 설정 키 (동적)
+  const categories = useMemo(() => Object.keys(cycleConfig), [cycleConfig]);
 
   // Group all zones by name+category; one P1/P2/P3/유지관리 per group
   const zoneGroups = useMemo(() => {
@@ -208,16 +243,61 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
     if (modalSelectedIdx === null) return;
     const arr = [...modalGroups];
     let newIdx;
-    if (dir === 'top') newIdx = 0;
-    else if (dir === 'bottom') newIdx = arr.length - 1;
-    else if (dir === 'up10') newIdx = Math.max(0, modalSelectedIdx - 10);
+    if (dir === 'top')    newIdx = 0;
+    else if (dir === 'up10')   newIdx = Math.max(0, modalSelectedIdx - 10);
+    else if (dir === 'up1')    newIdx = Math.max(0, modalSelectedIdx - 1);
+    else if (dir === 'down1')  newIdx = Math.min(arr.length - 1, modalSelectedIdx + 1);
     else if (dir === 'down10') newIdx = Math.min(arr.length - 1, modalSelectedIdx + 10);
+    else if (dir === 'bottom') newIdx = arr.length - 1;
     else return;
     if (newIdx === modalSelectedIdx) return;
     const [item] = arr.splice(modalSelectedIdx, 1);
     arr.splice(newIdx, 0, item);
     setModalGroups(arr);
     setModalSelectedIdx(newIdx);
+  }
+
+  function handleModalDrop(e, targetIdx) {
+    e.preventDefault();
+    const fromStr = e.dataTransfer.getData('modalDragIdx');
+    if (!fromStr) return;
+    const fromIdx = parseInt(fromStr);
+    if (!isNaN(fromIdx) && fromIdx !== targetIdx) {
+      const arr = [...modalGroups];
+      const [item] = arr.splice(fromIdx, 1);
+      arr.splice(targetIdx, 0, item);
+      setModalGroups(arr);
+      setModalSelectedIdx(targetIdx);
+    }
+    setDragIdx(null); setDropIdx(null);
+  }
+
+  function handleFolderDrop(e, namedGroupId) {
+    e.preventDefault();
+    const fromStr = e.dataTransfer.getData('modalDragIdx');
+    if (!fromStr) return;
+    const fromIdx = parseInt(fromStr);
+    if (!isNaN(fromIdx)) modalAssignGroup(fromIdx, namedGroupId || '');
+    setDragIdx(null); setDragOverFolder(null);
+  }
+
+  async function addModalNewFolder() {
+    const name = modalNewFolderName.trim();
+    if (!name) return;
+    const saved = await upsertGroup({ name, zoneIds: [] });
+    setModalNamedGroups(prev => [...prev, saved]);
+    setModalNewFolderName('');
+    setShowModalNewFolder(false);
+  }
+
+  function startResize(e) {
+    e.preventDefault(); e.stopPropagation();
+    const startX = e.clientX, startY = e.clientY;
+    const startW = modalSize.w, startH = modalSize.h;
+    const onMove = ev => setModalSize({ w: Math.max(580, startW + ev.clientX - startX), h: Math.max(320, startH + ev.clientY - startY) });
+    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
   }
 
   function modalGroupOf(zoneGroup) {
@@ -271,6 +351,72 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
     e.preventDefault();
+  }
+
+  // ─── 측정주기 설정 ──────────────────────────────────────────────────────────────
+
+  function applyCycleConfig(nextCfg) {
+    setScheduleConfig(nextCfg);
+    setCycleConfig(nextCfg);
+    saveScheduleConfig(nextCfg);
+  }
+
+  function editCyclePhase(cat, grade, idx, field, value) {
+    const next = JSON.parse(JSON.stringify(cycleConfig));
+    if (!next[cat]?.[grade]?.[idx]) return;
+    const phase = next[cat][grade][idx];
+    if (field === 'type') {
+      phase.type = value;
+      if (value === 'monthly' || value === 'quarterly') phase.intervalDays = null;
+      else if (phase.intervalDays == null) phase.intervalDays = DEFAULT_INTERVAL[value] ?? 7;
+    } else if (field === 'count') {
+      phase.count = Math.max(1, parseInt(value) || 1);
+    } else if (field === 'intervalDays') {
+      phase.intervalDays = Math.max(1, parseInt(value) || 1);
+    }
+    applyCycleConfig(next);
+  }
+
+  function addCyclePhase(cat, grade) {
+    const next = JSON.parse(JSON.stringify(cycleConfig));
+    if (!next[cat]) next[cat] = {};
+    if (!next[cat][grade]) next[cat][grade] = [];
+    next[cat][grade].push({ count: 1, intervalDays: 14, type: 'biweekly' });
+    applyCycleConfig(next);
+  }
+
+  function removeCyclePhase(cat, grade, idx) {
+    const next = JSON.parse(JSON.stringify(cycleConfig));
+    next[cat][grade].splice(idx, 1);
+    applyCycleConfig(next);
+  }
+
+  function resetCycleCategory(cat) {
+    const next = JSON.parse(JSON.stringify(cycleConfig));
+    if (DEFAULT_SCHEDULE_SPECS[cat]) {
+      next[cat] = JSON.parse(JSON.stringify(DEFAULT_SCHEDULE_SPECS[cat]));
+    } else {
+      next[cat] = {}; CYCLE_GRADES.forEach(g => { next[cat][g] = []; });
+    }
+    applyCycleConfig(next);
+  }
+
+  function addCycleCategory() {
+    const name = newCatName.trim();
+    if (!name || cycleConfig[name]) return;
+    const next = JSON.parse(JSON.stringify(cycleConfig));
+    next[name] = {}; CYCLE_GRADES.forEach(g => { next[name][g] = []; });
+    applyCycleConfig(next);
+    setCycleCatTab(name);
+    setNewCatName('');
+  }
+
+  function removeCycleCategory(cat) {
+    if (['공조', '압축공기', '질소가스'].includes(cat)) return;
+    const next = JSON.parse(JSON.stringify(cycleConfig));
+    delete next[cat];
+    applyCycleConfig(next);
+    setCycleCatTab(Object.keys(next)[0] || '공조');
   }
 
   // Called on onChange — saves the date immediately without resetting overrides or running cascade,
@@ -510,7 +656,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
         {/* 분류 필터 */}
         <div className="flex gap-1.5 flex-wrap">
           <button onClick={() => setCategoryFilter('all')} className={`px-3 py-1.5 rounded-lg text-sm border ${categoryFilter === 'all' ? 'bg-gray-700 text-white border-gray-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>전체분류</button>
-          {CATEGORIES.map(c => (
+          {categories.map(c => (
             <button key={c} onClick={() => setCategoryFilter(c)} className={`px-3 py-1.5 rounded-lg text-sm border ${categoryFilter === c ? 'bg-indigo-600 text-white border-indigo-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>{c}</button>
           ))}
         </div>
@@ -526,6 +672,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
           className={`px-3 py-1.5 rounded-lg text-sm border font-medium ${groupBy ? 'bg-purple-600 text-white border-purple-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
         >📁 그룹으로 보기</button>
         <button onClick={openOrderModal} className="px-3 py-1.5 rounded-lg text-sm border border-gray-300 text-gray-700 hover:bg-gray-100 font-medium">🗂 순서/그룹 관리</button>
+        <button onClick={() => setShowCycleModal(true)} className="px-3 py-1.5 rounded-lg text-sm border border-gray-300 text-gray-700 hover:bg-gray-100 font-medium">⚙ 측정주기 설정</button>
         <button onClick={() => { setShowAddZone(true); setZoneForm({}); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 ml-auto">+ 구역 추가</button>
       </div>
 
@@ -583,7 +730,8 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                     <Fragment key={group.key}>
                       {/* Group summary row */}
                       <tr
-                        className={`border-b border-gray-100 cursor-pointer select-none hover:bg-gray-50/50 ${isExpanded ? 'bg-blue-50/30 border-blue-100' : ''} ${isGroupActive && !isExpanded ? 'bg-blue-50/10' : ''}`}
+                        className={`border-b border-gray-100 cursor-pointer select-none transition-colors ${isExpanded ? 'border-blue-100' : ''}`}
+                        style={{ backgroundColor: isExpanded ? 'rgba(219,234,254,0.35)' : isGroupActive ? 'rgba(219,234,254,0.15)' : CATEGORY_BG[group.category] }}
                         onClick={() => toggleGroup(group.key)}
                       >
                         <td className="px-2 py-3 text-center" onClick={e => e.stopPropagation()}>
@@ -611,7 +759,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                             onChange={e => handleChangeGroupCategory(group, e.target.value)}
                             className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
                           >
-                            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                            {categories.map(c => <option key={c} value={c}>{c}</option>)}
                           </select>
                         </td>
                         <td className="px-3 py-3 text-center" onClick={e => e.stopPropagation()}>
@@ -916,217 +1064,282 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
         </div>
       )}
 
-      {/* 순서/그룹 관리 팝업 — Windows 탐색기 스타일, 항상 최상위 */}
+      {/* ─── 순서/그룹 관리 팝업 ─────────────────────────────────────────────── */}
       {showOrderModal && (
         <div className="fixed inset-0 z-[500]" style={{ pointerEvents: 'none' }}>
+          {/* ── 팝업 컨테이너 (앱 스타일) ── */}
           <div
-            className="absolute flex flex-col"
-            style={{
-              left: modalPos.x,
-              top: modalPos.y,
-              width: 780,
-              minWidth: 580,
-              pointerEvents: 'auto',
-              border: '1px solid #7a7a7a',
-              boxShadow: '4px 4px 16px rgba(0,0,0,0.45)',
-              userSelect: 'none',
-            }}
+            className="absolute flex flex-col bg-white rounded-xl overflow-hidden"
+            style={{ left: modalPos.x, top: modalPos.y, width: modalSize.w, height: modalSize.h, pointerEvents: 'auto', boxShadow: '0 24px 64px rgba(0,0,0,0.30)', border: '1px solid #e5e7eb' }}
           >
-            {/* 제목 표시줄 */}
-            <div
-              onMouseDown={startModalDrag}
-              style={{
-                background: 'linear-gradient(180deg,#4f9de8 0%,#1461c4 55%,#1155b0 100%)',
-                height: 28,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '0 6px 0 8px',
-                cursor: 'move',
-                flexShrink: 0,
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <svg width="14" height="12" viewBox="0 0 16 13" fill="none">
-                  <rect width="16" height="10" rx="1" fill="#ffd85e" y="2.5" />
-                  <rect width="7" height="2" fill="#e09800" y="1" x="0.5" rx="0.5" />
+            {/* 헤더 — 앱 사이드바 스타일 */}
+            <div onMouseDown={startModalDrag} className="flex items-center justify-between px-4 bg-gray-900 text-white cursor-move shrink-0" style={{ height: 46 }}>
+              <div className="flex items-center gap-2">
+                <svg width="16" height="14" viewBox="0 0 16 13" fill="none">
+                  <rect width="16" height="10" rx="1.5" fill="#fbbf24" y="2.5" />
+                  <rect width="7" height="2.5" fill="#f59e0b" y="0.5" x="0.5" rx="1" />
                 </svg>
-                <span style={{ color: '#fff', fontSize: 12, fontWeight: 600, textShadow: '0 1px 2px rgba(0,0,0,0.5)', fontFamily: 'Segoe UI, Arial, sans-serif' }}>
-                  구역 순서 / 그룹 관리
-                </span>
+                <span className="font-semibold text-sm">구역 순서 / 그룹 관리</span>
               </div>
-              <button
-                onClick={() => setShowOrderModal(false)}
-                title="닫기"
-                style={{
-                  width: 22, height: 18, border: '1px solid rgba(255,255,255,0.3)',
-                  background: 'linear-gradient(180deg,#e05050,#c02020)',
-                  color: '#fff', fontSize: 11, cursor: 'pointer', borderRadius: 2,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}
-              >✕</button>
+              <button onClick={() => setShowOrderModal(false)} className="w-7 h-7 flex items-center justify-center rounded hover:bg-white/20 text-gray-400 hover:text-white text-sm transition-colors">✕</button>
             </div>
 
             {/* 도구 모음 */}
-            <div style={{ background: '#ece9d8', borderBottom: '1px solid #aca899', padding: '3px 6px', display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+            <div className="flex items-center gap-1 px-3 py-2 bg-white border-b border-gray-200 shrink-0 flex-wrap">
               {[
-                { dir: 'top',    icon: '⏫', label: '가장위로',   disabled: modalSelectedIdx === null || modalSelectedIdx === 0 },
-                { dir: 'up10',   icon: '🔼', label: '10개 위로',  disabled: modalSelectedIdx === null || modalSelectedIdx === 0 },
-                { dir: 'down10', icon: '🔽', label: '10개 아래로',disabled: modalSelectedIdx === null || modalSelectedIdx >= modalGroups.length - 1 },
-                { dir: 'bottom', icon: '⏬', label: '가장아래로', disabled: modalSelectedIdx === null || modalSelectedIdx >= modalGroups.length - 1 },
+                { dir: 'top',    label: '맨위로',    icon: '⏫', dis: modalSelectedIdx === null || modalSelectedIdx === 0 },
+                { dir: 'up10',   label: '10위',      icon: '▲▲', dis: modalSelectedIdx === null || modalSelectedIdx === 0 },
+                { dir: 'up1',    label: '위로',      icon: '▲',  dis: modalSelectedIdx === null || modalSelectedIdx === 0 },
+                { dir: 'down1',  label: '아래로',    icon: '▼',  dis: modalSelectedIdx === null || modalSelectedIdx >= modalGroups.length - 1 },
+                { dir: 'down10', label: '10아래',    icon: '▼▼', dis: modalSelectedIdx === null || modalSelectedIdx >= modalGroups.length - 1 },
+                { dir: 'bottom', label: '맨아래로',  icon: '⏬', dis: modalSelectedIdx === null || modalSelectedIdx >= modalGroups.length - 1 },
               ].map(btn => (
-                <button
-                  key={btn.dir}
-                  onClick={() => moveModalSelected(btn.dir)}
-                  disabled={btn.disabled}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 3,
-                    padding: '2px 8px', fontSize: 11,
-                    border: btn.disabled ? '1px solid transparent' : '1px solid #aaa',
-                    background: btn.disabled ? 'transparent' : 'linear-gradient(180deg,#fff 0%,#e0e0e0 100%)',
-                    color: btn.disabled ? '#aaa' : '#333',
-                    borderRadius: 3, cursor: btn.disabled ? 'default' : 'pointer',
-                    boxShadow: btn.disabled ? 'none' : '0 1px 2px rgba(0,0,0,0.12)',
-                    fontFamily: 'Segoe UI, Arial, sans-serif',
-                  }}
+                <button key={btn.dir} onClick={() => moveModalSelected(btn.dir)} disabled={btn.dis}
+                  className={`flex items-center gap-1 px-2 py-1 text-xs rounded border font-medium transition-colors ${btn.dis ? 'border-transparent text-gray-300 cursor-default' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 hover:border-gray-400 shadow-sm'}`}
+                  title={btn.label}
                 >
-                  <span>{btn.icon}</span><span>{btn.label}</span>
+                  <span className="text-[10px]">{btn.icon}</span>
+                  <span className="hidden sm:inline">{btn.label}</span>
                 </button>
               ))}
-              <div style={{ width: 1, height: 18, background: '#b0b0b0', margin: '0 4px' }} />
-              <span style={{ fontSize: 11, color: '#555', fontFamily: 'Segoe UI, Arial, sans-serif' }}>
-                {modalSelectedIdx !== null
-                  ? `${modalSelectedIdx + 1}번 선택 / 전체 ${modalGroups.length}개`
-                  : `전체 ${modalGroups.length}개 구역`}
+              <div className="w-px h-5 bg-gray-200 mx-1" />
+              <span className="text-xs text-gray-400">
+                {modalSelectedIdx !== null ? `${modalSelectedIdx + 1} / ${modalGroups.length}` : `${modalGroups.length}개`}
               </span>
             </div>
 
-            {/* 열 머리글 */}
-            <div style={{
-              display: 'flex', alignItems: 'center',
-              background: 'linear-gradient(180deg,#f0ede0 0%,#dedad0 100%)',
-              borderBottom: '2px solid #aca899',
-              height: 22, paddingLeft: 4, flexShrink: 0,
-              fontFamily: 'Segoe UI, Arial, sans-serif', fontSize: 11, fontWeight: 700, color: '#333',
-            }}>
-              <div style={{ width: 38, textAlign: 'center' }}>#</div>
-              <div style={{ flex: 1, paddingLeft: 18 }}>구역명</div>
-              <div style={{ width: 76, textAlign: 'center' }}>분류</div>
-              <div style={{ width: 164, textAlign: 'center' }}>일정그룹</div>
-              <div style={{ width: 108, textAlign: 'center' }}>등급</div>
+            {/* 두 패널 — 왼쪽: 구역 목록, 오른쪽: 폴더 */}
+            <div className="flex flex-1 min-h-0">
+              {/* 왼쪽: 구역 목록 */}
+              <div className="flex flex-col flex-1 min-w-0">
+                {/* 열 머리글 */}
+                <div className="flex items-center bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-500 shrink-0" style={{ height: 28 }}>
+                  <div className="w-8 text-center shrink-0 text-gray-300">≡</div>
+                  <div className="w-8 text-center shrink-0">#</div>
+                  <div className="flex-1 pl-1">구역명</div>
+                  <div className="w-18 text-center shrink-0" style={{ width: 68 }}>분류</div>
+                  <div className="text-center shrink-0" style={{ width: 96 }}>등급</div>
+                </div>
+                {/* 행 목록 */}
+                <div ref={modalListRef} className="flex-1 overflow-y-auto">
+                  {modalGroups.map((group, idx) => {
+                    const sel = idx === modalSelectedIdx;
+                    const isDragOver = dropIdx === idx && dragIdx !== idx;
+                    return (
+                      <div
+                        key={group.key}
+                        data-modal-row={idx}
+                        onClick={() => setModalSelectedIdx(idx)}
+                        onDragOver={e => { e.preventDefault(); setDropIdx(idx); }}
+                        onDragLeave={() => setDropIdx(null)}
+                        onDrop={e => handleModalDrop(e, idx)}
+                        className={`flex items-center text-xs cursor-pointer select-none transition-colors ${sel ? 'bg-blue-600 text-white' : idx % 2 === 0 ? 'bg-white hover:bg-blue-50' : 'bg-gray-50/60 hover:bg-blue-50'}`}
+                        style={{ height: 28, borderTop: isDragOver ? '2px solid #2563eb' : '1px solid transparent', borderBottom: '1px solid #f3f4f6' }}
+                      >
+                        {/* 드래그 핸들 */}
+                        <div
+                          draggable
+                          onDragStart={e => { e.dataTransfer.setData('modalDragIdx', String(idx)); e.dataTransfer.effectAllowed = 'move'; setDragIdx(idx); }}
+                          onDragEnd={() => { setDragIdx(null); setDropIdx(null); }}
+                          onClick={e => e.stopPropagation()}
+                          className={`w-8 flex items-center justify-center cursor-grab shrink-0 text-base ${sel ? 'text-blue-300 hover:text-white' : 'text-gray-300 hover:text-gray-500'}`}
+                          title="드래그하여 순서 변경"
+                        >≡</div>
+                        <div className={`w-8 text-center shrink-0 font-mono ${sel ? 'text-blue-200' : 'text-gray-300'}`} style={{ fontSize: 10 }}>{idx + 1}</div>
+                        <div className="flex-1 flex items-center gap-2 min-w-0 px-1">
+                          <svg width="14" height="12" viewBox="0 0 16 13" fill="none" className="shrink-0">
+                            <rect width="16" height="10" rx="1" fill={sel ? '#93c5fd' : '#fbbf24'} y="2.5" />
+                            <rect width="7" height="2.5" fill={sel ? '#60a5fa' : '#f59e0b'} y="0.5" x="0.5" rx="0.8" />
+                          </svg>
+                          <span className={`font-medium truncate ${sel ? 'text-white' : 'text-gray-800'}`}>{group.name}</span>
+                        </div>
+                        <div className={`text-center shrink-0 ${sel ? 'text-blue-100' : 'text-gray-400'}`} style={{ width: 68, fontSize: 10 }}>{group.category}</div>
+                        <div className="flex items-center justify-center gap-1 shrink-0" style={{ width: 96 }}>
+                          {group.zones.map(z => (
+                            <span key={z.id} className={`text-[9px] px-1 py-px rounded ${sel ? 'bg-blue-400 text-white' : 'bg-gray-200 text-gray-600'}`}>{z.grade}</span>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {modalGroups.length === 0 && (
+                    <div className="text-center py-10 text-sm text-gray-400">구역이 없습니다</div>
+                  )}
+                </div>
+              </div>
+
+              {/* 오른쪽: 폴더(일정그룹) 패널 */}
+              <div className="shrink-0 border-l border-gray-200 flex flex-col" style={{ width: 168 }}>
+                <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 bg-gray-50 border-b border-gray-200 shrink-0">일정그룹 (폴더화)</div>
+                <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
+                  <div
+                    onDragOver={e => { e.preventDefault(); setDragOverFolder('__none__'); }}
+                    onDragLeave={() => setDragOverFolder(null)}
+                    onDrop={e => handleFolderDrop(e, '')}
+                    className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs border cursor-pointer transition-colors ${dragOverFolder === '__none__' ? 'bg-blue-100 border-blue-400 text-blue-700' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'}`}
+                  >
+                    <span>📂</span><span>그룹 없음</span>
+                  </div>
+                  {modalNamedGroups.map(g => (
+                    <div
+                      key={g.id}
+                      onDragOver={e => { e.preventDefault(); setDragOverFolder(String(g.id)); }}
+                      onDragLeave={() => setDragOverFolder(null)}
+                      onDrop={e => handleFolderDrop(e, String(g.id))}
+                      className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs border cursor-pointer transition-colors ${dragOverFolder === String(g.id) ? 'bg-blue-100 border-blue-400 text-blue-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-blue-50 hover:border-blue-200'}`}
+                    >
+                      <span>📁</span>
+                      <span className="font-medium truncate flex-1">{g.name}</span>
+                      <span className="text-gray-400 shrink-0">{(g.zoneIds||[]).length}</span>
+                    </div>
+                  ))}
+                  {showModalNewFolder ? (
+                    <div className="space-y-1">
+                      <input
+                        autoFocus
+                        className="w-full text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        placeholder="폴더명"
+                        value={modalNewFolderName}
+                        onChange={e => setModalNewFolderName(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') addModalNewFolder(); if (e.key === 'Escape') setShowModalNewFolder(false); }}
+                      />
+                      <div className="flex gap-1">
+                        <button onClick={addModalNewFolder} disabled={!modalNewFolderName.trim()} className="flex-1 text-xs py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40">만들기</button>
+                        <button onClick={() => { setShowModalNewFolder(false); setModalNewFolderName(''); }} className="flex-1 text-xs py-0.5 border border-gray-200 rounded text-gray-500 hover:bg-gray-50">취소</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setShowModalNewFolder(true)} className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs border border-dashed border-gray-300 text-gray-400 hover:bg-gray-50 hover:border-gray-400 hover:text-gray-600 transition-colors">
+                      <span>+</span><span>새 폴더</span>
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
 
-            {/* 파일 목록 */}
-            <div ref={modalListRef} style={{ height: 400, overflowY: 'auto', background: '#fff', flexShrink: 0 }}>
-              {modalGroups.map((group, idx) => {
-                const sel = idx === modalSelectedIdx;
-                const ng = modalGroupOf(group);
+            {/* 상태 표시줄 */}
+            <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 border-t border-gray-200 shrink-0">
+              <span className="text-xs text-gray-500">
+                {modalSelectedIdx !== null
+                  ? `"${modalGroups[modalSelectedIdx]?.name}" 선택 — 버튼이나 ≡ 드래그로 이동 / 폴더에 드래그하여 그룹 배정`
+                  : '구역 클릭 선택 후 이동, 또는 ≡ 핸들을 드래그하여 순서 변경'}
+              </span>
+              <div className="flex gap-2 shrink-0">
+                <button onClick={saveOrderModal} disabled={modalSaving} className="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-semibold hover:bg-blue-700 disabled:opacity-50 transition-colors">{modalSaving ? '저장 중…' : '저장'}</button>
+                <button onClick={() => setShowOrderModal(false)} className="px-4 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-xs hover:bg-gray-100 transition-colors">닫기</button>
+              </div>
+            </div>
+
+            {/* 크기 조절 핸들 */}
+            <div onMouseDown={startResize} className="absolute bottom-0 right-0 cursor-se-resize" style={{ width: 16, height: 16 }}>
+              <svg viewBox="0 0 16 16" fill="none" width="16" height="16">
+                <path d="M16 4L4 16" stroke="#9ca3af" strokeWidth="1.5"/>
+                <path d="M16 9L9 16" stroke="#9ca3af" strokeWidth="1.5"/>
+                <path d="M16 14L14 16" stroke="#9ca3af" strokeWidth="1.5"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── 측정주기 설정 모달 ───────────────────────────────────────────────── */}
+      {showCycleModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[400] p-4">
+          <div className="bg-white rounded-2xl shadow-2xl flex flex-col" style={{ width: 560, maxHeight: '85vh' }}>
+            {/* 헤더 */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <div>
+                <h2 className="font-bold text-gray-800">측정주기 설정</h2>
+                <p className="text-xs text-gray-400 mt-0.5">변경 시 달력 일정이 즉시 재계산됩니다</p>
+              </div>
+              <button onClick={() => setShowCycleModal(false)} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+            </div>
+            {/* 분류 탭 */}
+            <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-gray-100 shrink-0 flex-wrap">
+              {categories.map(cat => (
+                <button key={cat} onClick={() => setCycleCatTab(cat)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${cycleCatTab === cat ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                >{cat}</button>
+              ))}
+              <div className="flex-1" />
+              {/* 새 분류 추가 */}
+              {newCatName !== undefined && (
+                <div className="flex items-center gap-1">
+                  <input
+                    className="text-xs border border-gray-300 rounded px-2 py-0.5 w-24 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    placeholder="새 분류명"
+                    value={newCatName}
+                    onChange={e => setNewCatName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') addCycleCategory(); }}
+                  />
+                  <button onClick={addCycleCategory} disabled={!newCatName.trim() || !!cycleConfig[newCatName.trim()]}
+                    className="text-xs px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40">추가</button>
+                </div>
+              )}
+            </div>
+            {/* 현재 분류 관리 */}
+            <div className="px-4 py-2 border-b border-gray-100 flex items-center justify-between shrink-0">
+              <p className="text-xs text-gray-400">등급별 측정 횟수·간격을 설정합니다.</p>
+              <div className="flex gap-2">
+                {!['공조','압축공기','질소가스'].includes(cycleCatTab) && (
+                  <button onClick={() => removeCycleCategory(cycleCatTab)} className="text-xs px-2 py-1 bg-red-50 text-red-500 rounded hover:bg-red-100">분류 삭제</button>
+                )}
+                <button onClick={() => resetCycleCategory(cycleCatTab)} className="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded hover:bg-gray-200">기본값</button>
+              </div>
+            </div>
+            {/* 등급별 설정 */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {CYCLE_GRADES.map(grade => {
+                const phases = cycleConfig[cycleCatTab]?.[grade] || [];
+                const totalCnt = phases.reduce((s, p) => s + (p.count || 0), 0);
                 return (
-                  <div
-                    key={group.key}
-                    data-modal-row={idx}
-                    onClick={() => setModalSelectedIdx(idx)}
-                    style={{
-                      display: 'flex', alignItems: 'center',
-                      height: 22, paddingLeft: 4,
-                      background: sel ? '#316ac5' : idx % 2 === 0 ? '#fff' : '#f5f3ec',
-                      borderBottom: '1px solid #e8e6e0',
-                      cursor: 'pointer',
-                      fontFamily: 'Segoe UI, Arial, sans-serif', fontSize: 12,
-                    }}
-                  >
-                    <div style={{ width: 38, textAlign: 'center', color: sel ? '#c8daf8' : '#aaa', fontSize: 10 }}>
-                      {idx + 1}
+                  <div key={grade} className="border border-gray-200 rounded-xl overflow-hidden">
+                    <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b border-gray-100">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded ${GRADE_COLORS[grade] || 'bg-gray-100 text-gray-600'}`}>{grade}</span>
+                        <span className="text-xs text-gray-400">총 {totalCnt}회</span>
+                      </div>
+                      <button onClick={() => addCyclePhase(cycleCatTab, grade)} className="text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium">+ 구간</button>
                     </div>
-                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-                      {/* 폴더 아이콘 */}
-                      <svg width="14" height="12" viewBox="0 0 16 13" fill="none" style={{ flexShrink: 0 }}>
-                        <rect width="16" height="10" rx="1" fill={sel ? '#90baff' : '#ffd85e'} y="2.5" />
-                        <rect width="7" height="2" fill={sel ? '#6090e0' : '#e09800'} y="1" x="0.5" rx="0.5" />
-                      </svg>
-                      <span style={{ color: sel ? '#fff' : '#1a1a1a', fontWeight: sel ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {group.name}
-                      </span>
-                    </div>
-                    <div style={{ width: 76, textAlign: 'center', fontSize: 10, color: sel ? '#c0d8ff' : '#555', flexShrink: 0 }}>
-                      {group.category}
-                    </div>
-                    <div style={{ width: 164, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-                      <select
-                        value={ng?.id || ''}
-                        onChange={e => modalAssignGroup(idx, e.target.value)}
-                        style={{
-                          width: '100%', fontSize: 10, height: 18,
-                          border: '1px solid', borderColor: sel ? '#7aaaf0' : '#ccc',
-                          background: sel ? '#2255a0' : '#fff',
-                          color: sel ? '#fff' : '#333',
-                          padding: '0 2px', outline: 'none', cursor: 'pointer',
-                        }}
-                      >
-                        <option value="">그룹 없음</option>
-                        {modalNamedGroups.map(g => <option key={g.id} value={String(g.id)}>{g.name}</option>)}
-                      </select>
-                    </div>
-                    <div style={{ width: 108, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 2, flexShrink: 0 }}>
-                      {group.zones.map(z => (
-                        <span
-                          key={z.id}
-                          style={{
-                            fontSize: 9, padding: '1px 3px', borderRadius: 2,
-                            background: sel ? '#4478c8' : '#e0e0e0',
-                            color: sel ? '#fff' : '#444',
-                          }}
-                        >{z.grade}</span>
-                      ))}
+                    <div className="divide-y divide-gray-50">
+                      {phases.length === 0 && <p className="px-3 py-2 text-xs text-gray-400 italic">구간 없음 — + 구간으로 추가</p>}
+                      {phases.map((phase, idx) => {
+                        const isMonthly = phase.type === 'monthly' || phase.type === 'quarterly';
+                        return (
+                          <div key={idx} className="flex items-center gap-2 px-3 py-2 flex-wrap">
+                            <span className="text-[10px] text-gray-300 w-4 shrink-0">{idx + 1}</span>
+                            <select value={phase.type} onChange={e => editCyclePhase(cycleCatTab, grade, idx, 'type', e.target.value)}
+                              className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                              {CYCLE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                            </select>
+                            <div className="flex items-center gap-1">
+                              <input type="number" min="1" max="999" value={phase.count}
+                                onChange={e => editCyclePhase(cycleCatTab, grade, idx, 'count', e.target.value)}
+                                className="w-12 text-xs border border-gray-200 rounded px-1 py-1 text-center focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                              <span className="text-xs text-gray-400">회</span>
+                            </div>
+                            {isMonthly ? (
+                              <span className="text-xs text-gray-400">{phase.type === 'monthly' ? '1개월 간격' : '3개월 간격'}</span>
+                            ) : (
+                              <div className="flex items-center gap-1">
+                                <span className="text-xs text-gray-400">간격</span>
+                                <input type="number" min="1" max="365" value={phase.intervalDays ?? ''}
+                                  onChange={e => editCyclePhase(cycleCatTab, grade, idx, 'intervalDays', e.target.value)}
+                                  className="w-12 text-xs border border-gray-200 rounded px-1 py-1 text-center focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                                <span className="text-xs text-gray-400">일</span>
+                              </div>
+                            )}
+                            <button onClick={() => removeCyclePhase(cycleCatTab, grade, idx)} className="ml-auto text-xs text-gray-300 hover:text-red-500 shrink-0" title="삭제">✕</button>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 );
               })}
-              {modalGroups.length === 0 && (
-                <div style={{ textAlign: 'center', padding: '40px 0', color: '#aaa', fontSize: 12, fontFamily: 'Segoe UI, Arial, sans-serif' }}>
-                  표시할 구역이 없습니다
-                </div>
-              )}
             </div>
-
-            {/* 상태 표시줄 + 저장/닫기 */}
-            <div style={{
-              background: 'linear-gradient(180deg,#ece9d8 0%,#d4d0c8 100%)',
-              borderTop: '2px solid #aca899',
-              height: 36, display: 'flex', alignItems: 'center',
-              justifyContent: 'space-between', padding: '0 10px', flexShrink: 0,
-              fontFamily: 'Segoe UI, Arial, sans-serif',
-            }}>
-              <span style={{ fontSize: 11, color: '#555' }}>
-                {modalSelectedIdx !== null
-                  ? `"${modalGroups[modalSelectedIdx]?.name}" 선택됨 — 이동 버튼으로 순서를 변경하세요`
-                  : '구역을 클릭하여 선택하세요'}
-              </span>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button
-                  onClick={saveOrderModal}
-                  disabled={modalSaving}
-                  style={{
-                    padding: '3px 18px', fontSize: 12, fontWeight: 600,
-                    border: '1px solid #2255a0',
-                    background: modalSaving ? '#aaa' : 'linear-gradient(180deg,#5090e0,#1a5cc8)',
-                    color: '#fff', borderRadius: 3, cursor: modalSaving ? 'default' : 'pointer',
-                    boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
-                    fontFamily: 'Segoe UI, Arial, sans-serif',
-                  }}
-                >{modalSaving ? '저장 중…' : '저장'}</button>
-                <button
-                  onClick={() => setShowOrderModal(false)}
-                  style={{
-                    padding: '3px 18px', fontSize: 12,
-                    border: '1px solid #9a9a9a',
-                    background: 'linear-gradient(180deg,#fff,#e0e0d8)',
-                    color: '#333', borderRadius: 3, cursor: 'pointer',
-                    boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
-                    fontFamily: 'Segoe UI, Arial, sans-serif',
-                  }}
-                >닫기</button>
-              </div>
+            <div className="px-6 py-4 border-t border-gray-100 shrink-0">
+              <button onClick={() => setShowCycleModal(false)} className="w-full py-2 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700">확인</button>
             </div>
           </div>
         </div>
