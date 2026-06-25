@@ -38,6 +38,39 @@ function cellBorder(sel) {
   return sel ? 'border-r border-blue-400/40' : 'border-r border-gray-100';
 }
 
+// 컬럼 정의 — 헤더 드래그로 순서 변경, 우측 핸들로 너비 조절
+const COL_DEFS = {
+  num:         { label: '#',        width: 36 },
+  name:        { label: '구역명',    flex: true, minWidth: 120 },
+  category:    { label: '분류',      width: 60 },
+  clean_grade: { label: '청정등급',  width: 70 },
+  start:       { label: '시작일',    width: 92 },
+  end:         { label: '종료예정일', width: 92 },
+  dday:        { label: 'D-day',     width: 64 },
+  float:       { label: '부유균',    width: 48 },
+  fall:        { label: '낙하균',    width: 48 },
+  surface:     { label: '표면균',    width: 48 },
+  particle:    { label: '부유입자',  width: 52 },
+  count:       { label: '측정횟수',  width: 64 },
+  progress:    { label: '진행상황',  width: 72 },
+  grade:       { label: '구분',      width: 60 },
+};
+const DEFAULT_COL_ORDER = Object.keys(COL_DEFS);
+const POINT_FIELD = { float: 'points_float', fall: 'points_fall', surface: 'points_surface', particle: 'points_particle' };
+const STATUS_STYLE = { '예정': 'bg-gray-100 text-gray-500', '진행중': 'bg-blue-100 text-blue-600', '완료': 'bg-emerald-100 text-emerald-600' };
+const HANDLE_W = 32;
+const ACTION_W = 28;
+
+function fmtDate(d) {
+  return d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '—';
+}
+function ddayLabel(n) {
+  if (n == null) return '—';
+  if (n > 0) return `D-${n}`;
+  if (n === 0) return 'D-DAY';
+  return `D+${-n}`;
+}
+
 /**
  * 구역 순서 / 그룹(폴더) 관리 + 측정주기 설정 통합 팝업.
  *
@@ -85,6 +118,24 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
   const [cycleConfig, setCycleConfig] = useState(() => getScheduleConfig());
   const [cycleCatTab, setCycleCatTab] = useState(() => Object.keys(getScheduleConfig())[0] || '공조');
   const [newCatName, setNewCatName] = useState('');
+  // 컬럼 순서 / 너비 (localStorage 영속)
+  const [colOrder, setColOrder] = useState(() => {
+    try {
+      const s = JSON.parse(localStorage.getItem('em-ogm-col-order'));
+      if (Array.isArray(s)) {
+        const valid = s.filter(k => COL_DEFS[k]);
+        DEFAULT_COL_ORDER.forEach(k => { if (!valid.includes(k)) valid.push(k); });
+        return valid;
+      }
+    } catch { /* ignore */ }
+    return [...DEFAULT_COL_ORDER];
+  });
+  const [colWidths, setColWidths] = useState(() => {
+    try { const s = JSON.parse(localStorage.getItem('em-ogm-col-widths')); if (s && typeof s === 'object') return s; } catch { /* ignore */ }
+    return {};
+  });
+  const [colDragKey, setColDragKey] = useState(null);
+  const [colDropKey, setColDropKey] = useState(null);
 
   const dragOffset = useRef(null);
   const listRef = useRef(null);
@@ -477,6 +528,97 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     return candidates[0] || group.zones[0];
   }
 
+  // ─── 컬럼 순서/너비 ─────────────────────────────────────────
+  useEffect(() => { try { localStorage.setItem('em-ogm-col-order', JSON.stringify(colOrder)); } catch { /* ignore */ } }, [colOrder]);
+  useEffect(() => { try { localStorage.setItem('em-ogm-col-widths', JSON.stringify(colWidths)); } catch { /* ignore */ } }, [colWidths]);
+
+  function colWidth(key) { return colWidths[key] ?? COL_DEFS[key].width; }
+
+  function startColResize(e, key) {
+    e.preventDefault(); e.stopPropagation();
+    const startX = e.clientX;
+    const startW = colWidth(key) || 60;
+    const onMove = ev => {
+      const w = Math.max(28, startW + ev.clientX - startX);
+      setColWidths(prev => ({ ...prev, [key]: w }));
+    };
+    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }
+
+  function reorderCol(fromKey, toKey) {
+    if (!fromKey || fromKey === toKey) return;
+    setColOrder(prev => {
+      const arr = prev.filter(k => k !== fromKey);
+      const ti = arr.indexOf(toKey);
+      if (ti < 0) return prev;
+      arr.splice(ti, 0, fromKey);
+      return arr;
+    });
+  }
+
+  // 측정 진행 통계
+  const todayMid = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
+  const statHolidayMap = useMemo(() => {
+    const y = todayMid.getFullYear();
+    try { return buildHolidayMap(holidayDefs, y - 2, y + 5); } catch { return {}; }
+  }, [holidayDefs, todayMid]);
+
+  function zoneStats(zone) {
+    const z = { ...zone, ...(localEdits[zone.id] || {}) };
+    if (!z.schedule_start) return { status: null, done: 0, total: 0, endDate: null, dday: null };
+    let ms = [];
+    try { ms = calcMeasurements(z, statHolidayMap); } catch { /* ignore */ }
+    const total = ms.length;
+    const done = ms.filter(m => m.date <= todayMid).length;
+    let endDate = null;
+    try { endDate = calcEndDate(z); } catch { /* ignore */ }
+    const startDate = new Date(z.schedule_start + 'T00:00:00');
+    let status;
+    if (todayMid < startDate) status = '예정';
+    else if (total > 0 && done >= total) status = '완료';
+    else status = '진행중';
+    const dday = endDate ? Math.ceil((endDate - todayMid) / 86400000) : null;
+    return { status, done, total, endDate, dday };
+  }
+
+  // 헤더 셀 렌더링 (드래그 순서 변경 + 너비 조절)
+  function renderHeaderCell(key) {
+    const def = COL_DEFS[key];
+    const isFlex = !!def.flex;
+    const isDrop = colDropKey === key && colDragKey && colDragKey !== key;
+    return (
+      <div
+        key={key}
+        onDragOver={e => { if (colDragKey) { e.preventDefault(); setColDropKey(key); } }}
+        onDragLeave={() => setColDropKey(c => (c === key ? null : c))}
+        onDrop={e => { const fk = e.dataTransfer.getData('colDragKey'); if (fk) { e.preventDefault(); reorderCol(fk, key); } setColDragKey(null); setColDropKey(null); }}
+        className={`relative flex items-center justify-center text-center border-r border-gray-200 ${isFlex ? 'flex-1 min-w-0' : 'shrink-0'} ${isDrop ? 'bg-blue-200' : ''}`}
+        style={isFlex ? { minWidth: def.minWidth } : { width: colWidth(key) }}
+      >
+        <span
+          draggable
+          onDragStart={e => { e.dataTransfer.setData('colDragKey', key); e.dataTransfer.effectAllowed = 'move'; setColDragKey(key); }}
+          onDragEnd={() => { setColDragKey(null); setColDropKey(null); }}
+          className={`truncate px-1 cursor-move ${colDragKey === key ? 'opacity-40' : ''}`}
+          title="드래그하여 컬럼 순서 변경"
+        >{def.label}</span>
+        {!isFlex && (
+          <div
+            onMouseDown={e => startColResize(e, key)}
+            onClick={e => e.stopPropagation()}
+            draggable={false}
+            onDragStart={e => e.preventDefault()}
+            className="absolute top-0 h-full cursor-col-resize hover:bg-blue-400/50"
+            style={{ right: 0, width: 6, transform: 'translateX(50%)', zIndex: 2 }}
+            title="드래그하여 너비 조절"
+          />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className={docked ? 'fixed inset-0 z-[500]' : 'fixed inset-0 z-[500]'} style={{ pointerEvents: docked ? 'auto' : 'none' }}>
       <div
@@ -576,20 +718,10 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                   {/* 목록 (헤더 포함 — sticky로 스크롤바 폭 자동 보정) */}
                 <div ref={listRef} className="flex-1 overflow-y-auto">
                 {/* sticky 컬럼 헤더 */}
-                <div className="sticky top-0 z-10 flex items-stretch bg-gray-100 border-b border-gray-300 text-xs font-semibold text-gray-600 select-none" style={{ height: 30 }}>
-                  <div className="shrink-0 flex items-center justify-center text-center text-gray-300 border-r border-gray-200" style={{ width: 32 }}>≡</div>
-                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 32 }}>#</div>
-                  <div className="flex-1 flex items-center justify-center text-center min-w-0 border-r border-gray-200">구역명</div>
-                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 60 }}>분류</div>
-                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 70 }}>청정등급</div>
-                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 90 }}>시작일</div>
-                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 90 }}>종료예정일</div>
-                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 48 }}>부유균</div>
-                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 48 }}>낙하균</div>
-                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 48 }}>표면균</div>
-                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 48 }}>부유입자</div>
-                  <div className="shrink-0 flex items-center justify-center text-center border-r border-gray-200" style={{ width: 80 }}>등급</div>
-                  <div className="shrink-0" style={{ width: 28 }}></div>
+                <div className="sticky top-0 z-20 flex items-stretch bg-gray-100 border-b border-gray-300 text-xs font-semibold text-gray-600 select-none" style={{ height: 30 }}>
+                  <div className="shrink-0 flex items-center justify-center text-center text-gray-300 border-r border-gray-200" style={{ width: HANDLE_W }}>≡</div>
+                  {colOrder.map(renderHeaderCell)}
+                  <div className="shrink-0" style={{ width: ACTION_W }}></div>
                 </div>
                   {filteredGroups.map((group, filteredIdx) => {
                     const sel = filteredIdx === modalSelectedIdx;
@@ -597,6 +729,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                     const isExpanded = expandedRows.has(group.key);
                     const activeZone = getActiveZone(group);
                     const firstZone = group.zones[0];
+                    const stats = activeZone ? zoneStats(activeZone) : { status: null, done: 0, total: 0, endDate: null, dday: null };
 
                     return (
                       <div key={group.key}>
@@ -624,142 +757,125 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                             style={{ width: 32 }}
                             title="드래그하여 순서 변경"
                           >≡</div>
-                          {/* 번호 */}
-                          <div className={`flex items-center justify-center text-center shrink-0 font-mono h-full ${cellBorder(sel)} ${sel ? 'text-blue-200' : 'text-gray-300'}`} style={{ width: 32, fontSize: 10 }}>{filteredIdx + 1}</div>
-                          {/* 구역명 + 확장 토글 */}
-                          <div className={`flex-1 flex items-center gap-1 min-w-0 px-1 h-full ${cellBorder(sel)}`}>
-                            <button
-                              onClick={e => { e.stopPropagation(); setExpandedRows(prev => { const s = new Set(prev); s.has(group.key) ? s.delete(group.key) : s.add(group.key); return s; }); }}
-                              className={`shrink-0 text-[10px] transition-transform ${isExpanded ? 'rotate-90' : ''} ${sel ? 'text-blue-200' : 'text-gray-400'}`}
-                            >▶</button>
-                            <svg width="12" height="10" viewBox="0 0 16 13" fill="none" className="shrink-0">
-                              <rect width="16" height="10" rx="1" fill={sel ? '#93c5fd' : '#fbbf24'} y="2.5" />
-                              <rect width="7" height="2.5" fill={sel ? '#60a5fa' : '#f59e0b'} y="0.5" x="0.5" rx="0.8" />
-                            </svg>
-                            <span className={`font-medium truncate ${sel ? 'text-white' : 'text-gray-800'}`}>{group.name}</span>
-                          </div>
-                          {/* 분류 */}
-                          <div className={`flex items-center justify-center shrink-0 text-center truncate px-0.5 h-full ${cellBorder(sel)} ${sel ? 'text-blue-100' : 'text-gray-400'}`} style={{ width: 60, fontSize: 10 }}>{group.category}</div>
-                          {/* 청정등급 */}
-                          <div className={`flex items-center justify-center shrink-0 text-center h-full ${cellBorder(sel)}`} style={{ width: 70 }}>
-                            {firstZone?.clean_grade ? (
-                              <span className={`text-[9px] px-1 py-px rounded ${sel ? 'bg-blue-400 text-white' : (CLEAN_GRADE_COLORS[firstZone.clean_grade] || 'bg-gray-100 text-gray-500')}`}>
-                                {firstZone.clean_grade}
-                              </span>
-                            ) : <span className={`text-[9px] ${sel ? 'text-blue-200' : 'text-gray-300'}`}>—</span>}
-                          </div>
-                          {/* 시작일 */}
-                          <div className={`flex items-center justify-center shrink-0 text-center h-full ${cellBorder(sel)} ${sel ? 'text-blue-100' : 'text-gray-400'}`} style={{ width: 90, fontSize: 10 }}>
-                            {activeZone?.schedule_start || '—'}
-                          </div>
-                          {/* 종료예정일 */}
-                          <div className={`flex items-center justify-center shrink-0 text-center h-full ${cellBorder(sel)} ${sel ? 'text-blue-100' : 'text-gray-400'}`} style={{ width: 90, fontSize: 10 }}>
-                            {(() => { const ed = activeZone ? calcEndDate({ ...activeZone, ...(localEdits[activeZone.id] || {}) }) : null; return ed ? `${ed.getFullYear()}-${String(ed.getMonth()+1).padStart(2,'0')}-${String(ed.getDate()).padStart(2,'0')}` : '—'; })()}
-                          </div>
-                          {/* 측정포인트 */}
-                          {[
-                            ['points_float', 48],
-                            ['points_fall', 48],
-                            ['points_surface', 48],
-                            ['points_particle', 48],
-                          ].map(([field, w]) => (
-                            <div key={field} className={`flex items-center justify-center shrink-0 text-center h-full ${cellBorder(sel)} ${sel ? 'text-blue-100' : 'text-gray-400'}`} style={{ width: w, fontSize: 10 }}>
-                              {getZoneValue(activeZone || {}, field) ?? '—'}
-                            </div>
-                          ))}
-                          {/* 등급 — 현재 진행중인 등급만 표시 */}
-                          <div className={`flex items-center justify-center gap-0.5 shrink-0 h-full ${cellBorder(sel)}`} style={{ width: 80 }}>
-                            {activeZone && (
-                              <span className={`text-[9px] px-1 py-px rounded font-bold ${sel ? 'bg-blue-400 text-white' : (GRADE_COLORS[activeZone.grade] || 'bg-gray-100 text-gray-600')}`}>{activeZone.grade}</span>
-                            )}
-                          </div>
+                          {colOrder.map(key => {
+                            const def = COL_DEFS[key];
+                            const isFlex = !!def.flex;
+                            const wStyle = isFlex ? { minWidth: def.minWidth } : { width: colWidth(key) };
+                            const wClass = isFlex ? 'flex-1 min-w-0' : 'shrink-0';
+                            const base = `flex items-center justify-center text-center h-full ${wClass} ${cellBorder(sel)}`;
+                            const dim = sel ? 'text-blue-100' : 'text-gray-400';
+                            if (key === 'name') {
+                              return (
+                                <div key={key} className={`flex items-center gap-1 min-w-0 px-1 h-full flex-1 ${cellBorder(sel)}`} style={{ minWidth: def.minWidth }}>
+                                  <button
+                                    onClick={e => { e.stopPropagation(); setExpandedRows(prev => { const s = new Set(prev); s.has(group.key) ? s.delete(group.key) : s.add(group.key); return s; }); }}
+                                    className={`shrink-0 text-[10px] transition-transform ${isExpanded ? 'rotate-90' : ''} ${sel ? 'text-blue-200' : 'text-gray-400'}`}
+                                  >▶</button>
+                                  <svg width="12" height="10" viewBox="0 0 16 13" fill="none" className="shrink-0">
+                                    <rect width="16" height="10" rx="1" fill={sel ? '#93c5fd' : '#fbbf24'} y="2.5" />
+                                    <rect width="7" height="2.5" fill={sel ? '#60a5fa' : '#f59e0b'} y="0.5" x="0.5" rx="0.8" />
+                                  </svg>
+                                  <span className={`font-medium truncate ${sel ? 'text-white' : 'text-gray-800'}`}>{group.name}</span>
+                                </div>
+                              );
+                            }
+                            if (key === 'num') return <div key={key} className={`${base} font-mono ${sel ? 'text-blue-200' : 'text-gray-300'}`} style={{ ...wStyle, fontSize: 10 }}>{filteredIdx + 1}</div>;
+                            if (key === 'category') return <div key={key} className={`${base} ${dim} truncate px-0.5`} style={{ ...wStyle, fontSize: 10 }}>{group.category}</div>;
+                            if (key === 'clean_grade') return (
+                              <div key={key} className={base} style={wStyle}>
+                                {firstZone?.clean_grade
+                                  ? <span className={`text-[9px] px-1 py-px rounded ${sel ? 'bg-blue-400 text-white' : (CLEAN_GRADE_COLORS[firstZone.clean_grade] || 'bg-gray-100 text-gray-500')}`}>{firstZone.clean_grade}</span>
+                                  : <span className={`text-[9px] ${sel ? 'text-blue-200' : 'text-gray-300'}`}>—</span>}
+                              </div>
+                            );
+                            if (key === 'start') return <div key={key} className={`${base} ${dim}`} style={{ ...wStyle, fontSize: 10 }}>{activeZone?.schedule_start || '—'}</div>;
+                            if (key === 'end') return <div key={key} className={`${base} ${dim}`} style={{ ...wStyle, fontSize: 10 }}>{fmtDate(stats.endDate)}</div>;
+                            if (key === 'dday') return <div key={key} className={`${base} font-mono ${sel ? 'text-blue-100' : (stats.dday != null && stats.dday < 0 ? 'text-gray-300' : 'text-rose-500')}`} style={{ ...wStyle, fontSize: 10 }}>{ddayLabel(stats.dday)}</div>;
+                            if (POINT_FIELD[key]) return <div key={key} className={`${base} ${dim}`} style={{ ...wStyle, fontSize: 10 }}>{getZoneValue(activeZone || {}, POINT_FIELD[key]) ?? '—'}</div>;
+                            if (key === 'count') return <div key={key} className={`${base} font-mono ${dim}`} style={{ ...wStyle, fontSize: 10 }}>{stats.total ? `${stats.done}/${stats.total}` : '—'}</div>;
+                            if (key === 'progress') return (
+                              <div key={key} className={base} style={wStyle}>
+                                {stats.status
+                                  ? <span className={`text-[9px] px-1.5 py-px rounded font-medium ${sel ? 'bg-blue-400 text-white' : STATUS_STYLE[stats.status]}`}>{stats.status}</span>
+                                  : <span className={`text-[9px] ${sel ? 'text-blue-200' : 'text-gray-300'}`}>—</span>}
+                              </div>
+                            );
+                            if (key === 'grade') return (
+                              <div key={key} className={base} style={wStyle}>
+                                {activeZone && <span className={`text-[9px] px-1 py-px rounded font-bold ${sel ? 'bg-blue-400 text-white' : (GRADE_COLORS[activeZone.grade] || 'bg-gray-100 text-gray-600')}`}>{activeZone.grade}</span>}
+                              </div>
+                            );
+                            return <div key={key} className={base} style={wStyle} />;
+                          })}
                           {/* 삭제 (행 삭제는 없음, 서브행에서 등급 삭제) */}
-                          <div className="shrink-0" style={{ width: 28 }} />
+                          <div className="shrink-0" style={{ width: ACTION_W }} />
                         </div>
 
                         {/* 확장된 서브행 (등급별 인라인 편집) */}
-                        {isExpanded && group.zones.map((zone, zi) => {
+                        {isExpanded && group.zones.map((zone) => {
                           const startVal = getZoneValue(zone, 'schedule_start') || '';
                           const cleanVal = getZoneValue(zone, 'clean_grade') || '';
-                          const floatVal = getZoneValue(zone, 'points_float') ?? '';
-                          const fallVal = getZoneValue(zone, 'points_fall') ?? '';
-                          const surfaceVal = getZoneValue(zone, 'points_surface') ?? '';
-                          const particleVal = getZoneValue(zone, 'points_particle') ?? '';
+                          const subStats = zoneStats(zone);
                           return (
                             <div key={zone.id}
                               className="flex items-center text-xs bg-blue-50/40 border-b border-blue-100"
-                              style={{ height: 32, paddingLeft: 32 }}
+                              style={{ height: 32 }}
                             >
-                              <div className="shrink-0" style={{ width: 32 }} />
-                              {/* 등급 칩 */}
-                              <div className="shrink-0 flex items-center justify-center" style={{ width: 32 }}>
-                                <span className={`text-[9px] px-1 py-px rounded font-bold ${GRADE_COLORS[zone.grade] || 'bg-gray-100 text-gray-600'}`}>{zone.grade}</span>
-                              </div>
-                              {/* 구역명 (편집 없음) */}
-                              <div className="flex-1 min-w-0 px-1 text-gray-500 text-[10px] truncate">{zone.name}</div>
-                              {/* 분류 (그룹 일괄 변경) */}
-                              <div className="shrink-0 flex items-center justify-center" style={{ width: 60 }}>
-                                <select
-                                  value={getZoneValue(zone, 'category') || group.category}
-                                  onChange={e => editGroupCategory(group.key, e.target.value)}
-                                  onClick={e => e.stopPropagation()}
-                                  className="text-[10px] border border-gray-200 rounded px-0.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 w-[54px]"
-                                >
-                                  {CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
-                                </select>
-                              </div>
-                              {/* 청정등급 select */}
-                              <div className="shrink-0 flex items-center justify-center" style={{ width: 70 }}>
-                                <select
-                                  value={cleanVal}
-                                  onChange={e => editZoneField(zone.id, 'clean_grade', e.target.value)}
-                                  onClick={e => e.stopPropagation()}
-                                  className="text-[10px] border border-gray-200 rounded px-0.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 w-14"
-                                >
-                                  <option value="">—</option>
-                                  {CLEAN_GRADES.map(g => <option key={g} value={g}>{g}</option>)}
-                                </select>
-                              </div>
-                              {/* 시작일 */}
-                              <div className="shrink-0 flex items-center justify-center" style={{ width: 90 }}>
-                                <input
-                                  type="date"
-                                  value={startVal}
-                                  onChange={e => editZoneField(zone.id, 'schedule_start', e.target.value)}
-                                  onBlur={() => handleDateBlur(zone)}
-                                  onClick={e => e.stopPropagation()}
-                                  className="text-[10px] border border-gray-200 rounded px-0.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 w-[82px]"
-                                />
-                              </div>
-                              {/* 종료예정일 (자동 계산, 읽기 전용) */}
-                              <div className="shrink-0 flex items-center justify-center text-[10px] text-gray-400" style={{ width: 90 }}>
-                                {(() => { const ed = startVal ? calcEndDate({ ...zone, ...(localEdits[zone.id] || {}) }) : null; return ed ? `${ed.getFullYear()}-${String(ed.getMonth()+1).padStart(2,'0')}-${String(ed.getDate()).padStart(2,'0')}` : '—'; })()}
-                              </div>
-                              {/* 측정포인트 inputs */}
-                              {[
-                                ['points_float', floatVal, 48],
-                                ['points_fall', fallVal, 48],
-                                ['points_surface', surfaceVal, 48],
-                                ['points_particle', particleVal, 48],
-                              ].map(([field, val, w]) => (
-                                <div key={field} className="shrink-0 flex items-center justify-center" style={{ width: w }}>
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    max="999"
-                                    value={val}
-                                    onChange={e => editZoneField(zone.id, field, e.target.value === '' ? null : Number(e.target.value))}
-                                    onClick={e => e.stopPropagation()}
-                                    className="text-[10px] border border-gray-200 rounded px-0.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 w-10 text-center"
-                                  />
-                                </div>
-                              ))}
-                              {/* 등급 표시 */}
-                              <div className="shrink-0 flex items-center justify-center" style={{ width: 80 }}>
-                                <span className={`text-[9px] px-1 py-px rounded ${GRADE_COLORS[zone.grade] || 'bg-gray-100 text-gray-600'}`}>{zone.grade}</span>
-                              </div>
+                              <div className="shrink-0" style={{ width: HANDLE_W }} />
+                              {colOrder.map(key => {
+                                const def = COL_DEFS[key];
+                                const isFlex = !!def.flex;
+                                const wStyle = isFlex ? { minWidth: def.minWidth } : { width: colWidth(key) };
+                                const wClass = isFlex ? 'flex-1 min-w-0' : 'shrink-0';
+                                const cell = `flex items-center justify-center h-full ${wClass} border-r border-blue-100`;
+                                if (key === 'name') return <div key={key} className={`flex items-center flex-1 min-w-0 px-1 text-gray-500 text-[10px] truncate border-r border-blue-100`} style={{ minWidth: def.minWidth }}>{zone.name}</div>;
+                                if (key === 'num') return <div key={key} className={cell} style={wStyle}><span className={`text-[9px] px-1 py-px rounded font-bold ${GRADE_COLORS[zone.grade] || 'bg-gray-100 text-gray-600'}`}>{zone.grade}</span></div>;
+                                if (key === 'category') return (
+                                  <div key={key} className={cell} style={wStyle}>
+                                    <select value={getZoneValue(zone, 'category') || group.category} onChange={e => editGroupCategory(group.key, e.target.value)} onClick={e => e.stopPropagation()}
+                                      className="text-[10px] border border-gray-200 rounded px-0.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 w-full max-w-[56px]">
+                                      {CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                                    </select>
+                                  </div>
+                                );
+                                if (key === 'clean_grade') return (
+                                  <div key={key} className={cell} style={wStyle}>
+                                    <select value={cleanVal} onChange={e => editZoneField(zone.id, 'clean_grade', e.target.value)} onClick={e => e.stopPropagation()}
+                                      className="text-[10px] border border-gray-200 rounded px-0.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 w-full max-w-[60px]">
+                                      <option value="">—</option>
+                                      {CLEAN_GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+                                    </select>
+                                  </div>
+                                );
+                                if (key === 'start') return (
+                                  <div key={key} className={cell} style={wStyle}>
+                                    <input type="date" value={startVal} onChange={e => editZoneField(zone.id, 'schedule_start', e.target.value)} onBlur={() => handleDateBlur(zone)} onClick={e => e.stopPropagation()}
+                                      className="text-[10px] border border-gray-200 rounded px-0.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 w-full" />
+                                  </div>
+                                );
+                                if (key === 'end') return <div key={key} className={`${cell} text-[10px] text-gray-400`} style={wStyle}>{fmtDate(startVal ? subStats.endDate : null)}</div>;
+                                if (key === 'dday') return <div key={key} className={`${cell} text-[10px] font-mono ${subStats.dday != null && subStats.dday < 0 ? 'text-gray-300' : 'text-rose-500'}`} style={wStyle}>{startVal ? ddayLabel(subStats.dday) : '—'}</div>;
+                                if (POINT_FIELD[key]) {
+                                  const val = getZoneValue(zone, POINT_FIELD[key]) ?? '';
+                                  return (
+                                    <div key={key} className={cell} style={wStyle}>
+                                      <input type="number" min="0" max="999" value={val}
+                                        onChange={e => editZoneField(zone.id, POINT_FIELD[key], e.target.value === '' ? null : Number(e.target.value))} onClick={e => e.stopPropagation()}
+                                        className="text-[10px] border border-gray-200 rounded px-0.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 w-full max-w-[40px] text-center" />
+                                    </div>
+                                  );
+                                }
+                                if (key === 'count') return <div key={key} className={`${cell} text-[10px] font-mono text-gray-400`} style={wStyle}>{subStats.total ? `${subStats.done}/${subStats.total}` : '—'}</div>;
+                                if (key === 'progress') return (
+                                  <div key={key} className={cell} style={wStyle}>
+                                    {subStats.status ? <span className={`text-[9px] px-1.5 py-px rounded font-medium ${STATUS_STYLE[subStats.status]}`}>{subStats.status}</span> : <span className="text-[9px] text-gray-300">—</span>}
+                                  </div>
+                                );
+                                if (key === 'grade') return <div key={key} className={cell} style={wStyle}><span className={`text-[9px] px-1 py-px rounded ${GRADE_COLORS[zone.grade] || 'bg-gray-100 text-gray-600'}`}>{zone.grade}</span></div>;
+                                return <div key={key} className={cell} style={wStyle} />;
+                              })}
                               {/* 삭제 버튼 */}
-                              <div className="shrink-0 flex items-center justify-center" style={{ width: 28 }}>
+                              <div className="shrink-0 flex items-center justify-center" style={{ width: ACTION_W }}>
                                 <button
                                   onClick={e => { e.stopPropagation(); handleDeleteZoneGrade(group.key, zone.id); }}
                                   className="text-gray-300 hover:text-red-500 text-xs leading-none"
