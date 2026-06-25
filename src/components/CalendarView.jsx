@@ -3,6 +3,7 @@ import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, ups
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, alignGroupSchedules } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
+import OrderGroupManager from './OrderGroupManager';
 
 const DOW_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 const MONTH_KR = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
@@ -101,6 +102,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   const [annualPlan, setAnnualPlan] = useState({});
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
+  const [showOrderManager, setShowOrderManager] = useState(false);
   const [settingsTab, setSettingsTab] = useState('zones'); // 'zones' | 'groups'
   const [dragOverDay, setDragOverDay] = useState(null);
   const [toast, setToast] = useState(null);
@@ -976,6 +978,20 @@ export default function CalendarView({ year: initYear, onYearChange }) {
         </div>
       )}
 
+      {/* 순서/그룹 · 측정주기 관리 팝업 */}
+      {showOrderManager && (
+        <OrderGroupManager
+          zones={zones}
+          groups={groups}
+          onClose={() => setShowOrderManager(false)}
+          onSaved={(updatedZones, updatedGroups, cycleCfg) => {
+            setZones(updatedZones);
+            setGroups(updatedGroups);
+            if (cycleCfg) applyScheduleConfig(cycleCfg);
+          }}
+        />
+      )}
+
       {/* Schedule settings drawer */}
       {showSettings && (
         <div className="fixed inset-0 z-50 flex">
@@ -1486,6 +1502,12 @@ export default function CalendarView({ year: initYear, onYearChange }) {
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
           >
             ⚙ 일정 설정
+          </button>
+          <button
+            onClick={() => setShowOrderManager(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
+          >
+            🗂 순서/그룹 관리
           </button>
           <button
             onClick={() => setCalSettingsPopup(true)}
