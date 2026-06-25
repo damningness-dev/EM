@@ -70,6 +70,14 @@ function ddayLabel(n) {
   if (n === 0) return 'D-DAY';
   return `D+${-n}`;
 }
+function ddayColor(n, sel) {
+  if (sel) return 'text-blue-100';
+  if (n == null) return 'text-gray-300';
+  if (n > 30) return 'text-emerald-600';
+  if (n > 7)  return 'text-amber-500';
+  if (n >= 0) return 'text-yellow-500';
+  return 'text-red-500';
+}
 
 /**
  * 구역 순서 / 그룹(폴더) 관리 + 측정주기 설정 통합 팝업.
@@ -94,8 +102,14 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
   const [modalSelectedIdx, setModalSelectedIdx] = useState(null);
   const [expandedRows, setExpandedRows] = useState(new Set());
   const [folderFilter, setFolderFilter] = useState(null); // null = 전체, or namedGroup id
-  const [pos, setPos] = useState({ x: 80, y: 60 });
-  const [size, setSize] = useState({ w: 980, h: 600 });
+  const [pos, setPos] = useState(() => {
+    try { const s = JSON.parse(localStorage.getItem('em-ogm-pos')); if (s && typeof s.x === 'number') return s; } catch { /* ignore */ }
+    return { x: 80, y: 60 };
+  });
+  const [size, setSize] = useState(() => {
+    try { const s = JSON.parse(localStorage.getItem('em-ogm-size')); if (s && typeof s.w === 'number') return s; } catch { /* ignore */ }
+    return { w: 980, h: 600 };
+  });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [dragIdx, setDragIdx] = useState(null);
@@ -531,6 +545,8 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
   // ─── 컬럼 순서/너비 ─────────────────────────────────────────
   useEffect(() => { try { localStorage.setItem('em-ogm-col-order', JSON.stringify(colOrder)); } catch { /* ignore */ } }, [colOrder]);
   useEffect(() => { try { localStorage.setItem('em-ogm-col-widths', JSON.stringify(colWidths)); } catch { /* ignore */ } }, [colWidths]);
+  useEffect(() => { try { localStorage.setItem('em-ogm-pos', JSON.stringify(pos)); } catch { /* ignore */ } }, [pos]);
+  useEffect(() => { try { localStorage.setItem('em-ogm-size', JSON.stringify(size)); } catch { /* ignore */ } }, [size]);
 
   function colWidth(key) { return colWidths[key] ?? COL_DEFS[key].width; }
 
@@ -771,10 +787,6 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                                     onClick={e => { e.stopPropagation(); setExpandedRows(prev => { const s = new Set(prev); s.has(group.key) ? s.delete(group.key) : s.add(group.key); return s; }); }}
                                     className={`shrink-0 text-[10px] transition-transform ${isExpanded ? 'rotate-90' : ''} ${sel ? 'text-blue-200' : 'text-gray-400'}`}
                                   >▶</button>
-                                  <svg width="12" height="10" viewBox="0 0 16 13" fill="none" className="shrink-0">
-                                    <rect width="16" height="10" rx="1" fill={sel ? '#93c5fd' : '#fbbf24'} y="2.5" />
-                                    <rect width="7" height="2.5" fill={sel ? '#60a5fa' : '#f59e0b'} y="0.5" x="0.5" rx="0.8" />
-                                  </svg>
                                   <span className={`font-medium truncate ${sel ? 'text-white' : 'text-gray-800'}`}>{group.name}</span>
                                 </div>
                               );
@@ -790,7 +802,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                             );
                             if (key === 'start') return <div key={key} className={`${base} ${dim}`} style={{ ...wStyle, fontSize: 10 }}>{activeZone?.schedule_start || '—'}</div>;
                             if (key === 'end') return <div key={key} className={`${base} ${dim}`} style={{ ...wStyle, fontSize: 10 }}>{fmtDate(stats.endDate)}</div>;
-                            if (key === 'dday') return <div key={key} className={`${base} font-mono ${sel ? 'text-blue-100' : (stats.dday != null && stats.dday < 0 ? 'text-gray-300' : 'text-rose-500')}`} style={{ ...wStyle, fontSize: 10 }}>{ddayLabel(stats.dday)}</div>;
+                            if (key === 'dday') return <div key={key} className={`${base} font-mono ${ddayColor(stats.dday, sel)}`} style={{ ...wStyle, fontSize: 10 }}>{ddayLabel(stats.dday)}</div>;
                             if (POINT_FIELD[key]) return <div key={key} className={`${base} ${dim}`} style={{ ...wStyle, fontSize: 10 }}>{getZoneValue(activeZone || {}, POINT_FIELD[key]) ?? '—'}</div>;
                             if (key === 'count') return <div key={key} className={`${base} font-mono ${dim}`} style={{ ...wStyle, fontSize: 10 }}>{stats.total ? `${stats.done}/${stats.total}` : '—'}</div>;
                             if (key === 'progress') return (
@@ -854,7 +866,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                                   </div>
                                 );
                                 if (key === 'end') return <div key={key} className={`${cell} text-[10px] text-gray-400`} style={wStyle}>{fmtDate(startVal ? subStats.endDate : null)}</div>;
-                                if (key === 'dday') return <div key={key} className={`${cell} text-[10px] font-mono ${subStats.dday != null && subStats.dday < 0 ? 'text-gray-300' : 'text-rose-500'}`} style={wStyle}>{startVal ? ddayLabel(subStats.dday) : '—'}</div>;
+                                if (key === 'dday') return <div key={key} className={`${cell} text-[10px] font-mono ${ddayColor(startVal ? subStats.dday : null, false)}`} style={wStyle}>{startVal ? ddayLabel(subStats.dday) : '—'}</div>;
                                 if (POINT_FIELD[key]) {
                                   const val = getZoneValue(zone, POINT_FIELD[key]) ?? '';
                                   return (
