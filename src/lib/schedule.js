@@ -505,31 +505,31 @@ export function optimizeMonthSchedule({ zones, tempSchedules = [], completions =
 // Build a date→name map for a given year range, expanding recurring holiday defs.
 export function buildHolidayMap(holidayDefs, fromYear, toYear) {
   const map = {};
+  const pad = n => String(n).padStart(2, '0');
+  // 모든 발생일 수집 (대체공휴일 처리를 위해 기본 공휴일을 먼저 모두 등록한 뒤 처리)
+  const occurrences = []; // { date, name, substitute }
   holidayDefs.forEach(h => {
+    const sub = !!h.substitute;
+    const push = dateStr => occurrences.push({ date: dateStr, name: h.name, substitute: sub });
     if (!h.repeat || h.repeat.type === 'none') {
-      map[h.date] = h.name;
-      return;
-    }
-    if (h.repeat.type === 'yearly') {
+      push(h.date);
+    } else if (h.repeat.type === 'yearly') {
       const [, mm, dd] = h.date.split('-');
-      for (let yr = fromYear; yr <= toYear; yr++) map[`${yr}-${mm}-${dd}`] = h.name;
-      return;
-    }
-    for (let yr = fromYear; yr <= toYear; yr++) {
-      for (let mo = 1; mo <= 12; mo++) {
-        const daysInMo = new Date(yr, mo, 0).getDate();
-        if (h.repeat.type === 'monthly') {
-          const d = Number(h.date.split('-')[2]);
-          if (d <= daysInMo) map[`${yr}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`] = h.name;
-        } else if (h.repeat.type === 'nth-weekday') {
-          const { nth, dow } = h.repeat;
-          let count = 0;
-          for (let d = 1; d <= daysInMo; d++) {
-            if (new Date(yr, mo - 1, d).getDay() === dow) {
-              count++;
-              if (count === nth) {
-                map[`${yr}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`] = h.name;
-                break;
+      for (let yr = fromYear; yr <= toYear; yr++) push(`${yr}-${mm}-${dd}`);
+    } else {
+      for (let yr = fromYear; yr <= toYear; yr++) {
+        for (let mo = 1; mo <= 12; mo++) {
+          const daysInMo = new Date(yr, mo, 0).getDate();
+          if (h.repeat.type === 'monthly') {
+            const d = Number(h.date.split('-')[2]);
+            if (d <= daysInMo) push(`${yr}-${pad(mo)}-${pad(d)}`);
+          } else if (h.repeat.type === 'nth-weekday') {
+            const { nth, dow } = h.repeat;
+            let count = 0;
+            for (let d = 1; d <= daysInMo; d++) {
+              if (new Date(yr, mo - 1, d).getDay() === dow) {
+                count++;
+                if (count === nth) { push(`${yr}-${pad(mo)}-${pad(d)}`); break; }
               }
             }
           }
@@ -537,6 +537,25 @@ export function buildHolidayMap(holidayDefs, fromYear, toYear) {
       }
     }
   });
+
+  // 1차: 기본 공휴일 등록
+  occurrences.forEach(o => { map[o.date] = o.name; });
+
+  // 2차: 대체공휴일 — 발생일이 주말이면 다음 평일(비공휴일)을 휴무로 지정
+  occurrences.forEach(o => {
+    if (!o.substitute) return;
+    const base = new Date(o.date + 'T00:00:00');
+    const dow = base.getDay();
+    if (dow !== 0 && dow !== 6) return; // 주말이 아니면 대체 없음
+    let d = base;
+    for (let i = 0; i < 14; i++) {
+      d = addDays(d, 1);
+      const wd = d.getDay();
+      const ds = format(d, 'yyyy-MM-dd');
+      if (wd !== 0 && wd !== 6 && !map[ds]) { map[ds] = `${o.name} 대체공휴일`; break; }
+    }
+  });
+
   return map;
 }
 

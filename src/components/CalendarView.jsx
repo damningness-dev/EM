@@ -114,6 +114,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   const [newHolidayDate, setNewHolidayDate] = useState('');
   const [newHolidayName, setNewHolidayName] = useState('');
   const [newHolidayRepeat, setNewHolidayRepeat] = useState(false);
+  const [newHolidaySubstitute, setNewHolidaySubstitute] = useState(false);
   const [newHolidayRepeatType, setNewHolidayRepeatType] = useState('yearly');
   const [newHolidayNth, setNewHolidayNth] = useState(1);
   const [newHolidayDow, setNewHolidayDow] = useState(1);
@@ -827,21 +828,28 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                             ? { type: 'nth-weekday', nth: newHolidayNth, dow: newHolidayDow }
                             : { type: newHolidayRepeatType })
                         : null;
-                      const h = { date: newHolidayDate, name: newHolidayName.trim(), repeat };
+                      const h = { date: newHolidayDate, name: newHolidayName.trim(), repeat, substitute: newHolidaySubstitute };
                       const saved = await upsertHoliday(h);
                       setHolidayDefs(prev => {
                         const idx = prev.findIndex(x => x.date === saved.date);
                         return idx >= 0 ? prev.map((x,i) => i === idx ? saved : x) : [...prev, saved];
                       });
-                      setNewHolidayDate(''); setNewHolidayName(''); setNewHolidayRepeat(false);
+                      setNewHolidayDate(''); setNewHolidayName(''); setNewHolidayRepeat(false); setNewHolidaySubstitute(false);
                     }}
                     className="px-2.5 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 shrink-0"
                   >추가</button>
                 </div>
-                <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
-                  <input type="checkbox" checked={newHolidayRepeat} onChange={e => setNewHolidayRepeat(e.target.checked)} className="rounded" />
-                  반복
-                </label>
+                <div className="flex items-center gap-4">
+                  <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
+                    <input type="checkbox" checked={newHolidayRepeat} onChange={e => setNewHolidayRepeat(e.target.checked)} className="rounded" />
+                    반복
+                  </label>
+                  <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
+                    <input type="checkbox" checked={newHolidaySubstitute} onChange={e => setNewHolidaySubstitute(e.target.checked)} className="rounded" />
+                    대체공휴일
+                    <span className="text-[10px] text-gray-400">(주말이면 다음 평일 휴무)</span>
+                  </label>
+                </div>
                 {newHolidayRepeat && (
                   <div className="flex items-center gap-2 flex-wrap">
                     <select value={newHolidayRepeatType} onChange={e => setNewHolidayRepeatType(e.target.value)}
@@ -891,7 +899,16 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                       <div className="flex-1 min-w-0">
                         <span className="text-sm text-red-600 font-medium">{h.name}</span>
                         {repeatLabel && <span className="ml-1.5 text-[10px] text-blue-500 bg-blue-50 px-1 py-0.5 rounded">{repeatLabel}</span>}
+                        {h.substitute && <span className="ml-1.5 text-[10px] text-emerald-600 bg-emerald-50 px-1 py-0.5 rounded">대체공휴일</span>}
                       </div>
+                      <label className="flex items-center gap-1 text-[10px] text-gray-500 cursor-pointer select-none shrink-0" title="주말이면 다음 평일을 대체공휴일로 지정">
+                        <input type="checkbox" checked={!!h.substitute} onChange={async e => {
+                          const updated = { ...h, substitute: e.target.checked };
+                          await upsertHoliday(updated);
+                          setHolidayDefs(prev => prev.map(x => x.date === h.date ? updated : x));
+                        }} className="rounded" />
+                        대체
+                      </label>
                       <button onClick={async () => {
                         await deleteHoliday(h.date);
                         setHolidayDefs(prev => prev.filter(x => x.date !== h.date));
