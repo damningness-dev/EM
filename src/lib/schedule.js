@@ -495,7 +495,12 @@ export function optimizeMonthSchedule({ zones, tempSchedules = [], completions =
           ? commonDays.filter(d => doneDays.has(d))
           : commonDays;
 
-        let bestDay = null, bestLoad = Infinity;
+        // 같은 그룹·같은 주기의 측정은 항상 같은 날로 모은다.
+        // 용량을 지키는 날을 우선하되, 그런 날이 없으면 부하가 가장 낮은
+        // 공통 가능일로 전원 함께 이동한다(그룹 단합 우선 — 한 건이라도
+        // 옮겨야 하면 전부 같이 옮긴다).
+        let bestDay = null, bestLoad = Infinity;        // 용량 만족
+        let fallbackDay = null, fallbackLoad = Infinity; // 용량 초과 허용
         for (const day of tryDays) {
           // Delta on target day if all movable events move there
           const catDelta = {};
@@ -516,30 +521,31 @@ export function optimizeMonthSchedule({ zones, tempSchedules = [], completions =
             if (!valid) break;
           }
           if (valid && combDelta > 0 && capacities.combined > 0 && effCombined(day) + combDelta > capacities.combined) valid = false;
-          if (!valid) continue;
 
           const load = Object.values(catLoad).reduce((s, cm) => {
             const dl = cm[day];
             return s + (dl ? TYPES.reduce((ss, t) => ss + dl[t], 0) : 0);
           }, 0);
-          if (load < bestLoad) { bestLoad = load; bestDay = day; }
+          if (load < fallbackLoad) { fallbackLoad = load; fallbackDay = day; }
+          if (valid && load < bestLoad) { bestLoad = load; bestDay = day; }
         }
 
-        if (!bestDay) continue;
+        const targetDay = bestDay || fallbackDay;
+        if (!targetDay) continue;
 
         for (const e of movableCluster) {
-          if (e.ds === bestDay) continue;
+          if (e.ds === targetDay) continue;
           const fc = catLoad[e.category]?.[e.ds];
           if (fc) TYPES.forEach(t => { fc[t] -= e.pts[t]; });
           if (!catLoad[e.category]) catLoad[e.category] = {};
-          if (!catLoad[e.category][bestDay]) catLoad[e.category][bestDay] = { surface:0, float:0, fall:0, particle:0 };
-          TYPES.forEach(t => { catLoad[e.category][bestDay][t] += e.pts[t]; });
+          if (!catLoad[e.category][targetDay]) catLoad[e.category][targetDay] = { surface:0, float:0, fall:0, particle:0 };
+          TYPES.forEach(t => { catLoad[e.category][targetDay][t] += e.pts[t]; });
           if (COMBINED_CATS.includes(e.category)) {
             combinedLoad[e.ds] = (combinedLoad[e.ds] || 0) - e.ptTotal;
-            combinedLoad[bestDay] = (combinedLoad[bestDay] || 0) + e.ptTotal;
+            combinedLoad[targetDay] = (combinedLoad[targetDay] || 0) + e.ptTotal;
           }
-          e.ds = bestDay;
-          overrides[e.zoneId] = { ...(overrides[e.zoneId] || {}), [e.num]: bestDay };
+          e.ds = targetDay;
+          overrides[e.zoneId] = { ...(overrides[e.zoneId] || {}), [e.num]: targetDay };
         }
       }
     });
