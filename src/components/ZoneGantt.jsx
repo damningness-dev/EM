@@ -196,19 +196,19 @@ export default function ZoneGantt({ year, onYearChange }) {
                     {visible.map((zone) => {
                       const bar = getBarInfo(zone);
                       if (!bar) return null;
-                      const label = `${bar.startLabel}~${bar.endLabel}`;
+                      const dateRange = `${bar.startLabel}~${bar.endLabel}`;
+                      const label = `${zone.grade}(${dateRange})`;
                       const labelPx = label.length * CHAR_PX + LABEL_PAD;
                       const barPx   = (bar.widthPct / 100) * trackW;
                       const leftPx  = (bar.leftPct / 100) * trackW;
                       const rightPx = trackW - leftPx - barPx;
-                      // 막대 안에 라벨이 들어가면 안쪽, 아니면 바깥(여유 있는 쪽, 왼쪽 우선)
                       const side = barPx >= labelPx ? 'inside'
                         : (leftPx >= labelPx || leftPx >= rightPx) ? 'left' : 'right';
                       const title = `${zone.name} (${zone.grade})  ${bar.startLabel} ~ ${bar.endLabel}`;
                       return (
                         <div key={zone.id}>
                           <div
-                            className={`absolute ${GANTT_COLORS[zone.grade] || 'bg-gray-400'} rounded flex items-center overflow-hidden`}
+                            className={`absolute ${GANTT_COLORS[zone.grade] || 'bg-gray-400'} rounded flex items-center justify-center overflow-hidden`}
                             style={{ top: PAD_V, height: BAR_H, left: `${bar.leftPct}%`, width: `${bar.widthPct}%`, minWidth: 2 }}
                             title={title}
                           >
