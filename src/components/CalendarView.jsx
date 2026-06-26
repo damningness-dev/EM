@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring } from '../lib/api';
+import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
@@ -123,6 +123,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   const [completions, setCompletions] = useState(new Set());
   const [completionPrompt, setCompletionPrompt] = useState(null); // {zoneId,zoneName,grade,num,dateStr,isCompleted}
   const [tempSchedules, setTempSchedules] = useState([]);
+  const [blockedDates, setBlockedDates] = useState(new Set()); // 일정비우기 날짜('yyyy-MM-dd')
   const [addSchedPopup, setAddSchedPopup] = useState(null); // { date }
   const [addSchedName, setAddSchedName] = useState('');
   const [addSchedPts, setAddSchedPts] = useState({ surface: '', float: '', fall: '', particle: '' });
@@ -196,6 +197,13 @@ export default function CalendarView({ year: initYear, onYearChange }) {
 
   const holidays = useMemo(() => buildHolidayMap(holidayDefs, year - 1, year + 1), [holidayDefs, year]);
 
+  // 일정 계산용 회피 맵: 공휴일 + 일정비우기(차단) 날짜 → 자동 배치가 해당일을 피함
+  const scheduleAvoid = useMemo(() => {
+    const m = { ...holidays };
+    blockedDates.forEach(d => { if (!m[d]) m[d] = '일정비우기'; });
+    return m;
+  }, [holidays, blockedDates]);
+
   useEffect(() => {
     setLoading(true);
     setSelectedDay(null);
@@ -209,7 +217,8 @@ export default function CalendarView({ year: initYear, onYearChange }) {
       fetchCompletions(),
       fetchTempSchedules(),
       fetchScheduleConfig(),
-    ]).then(([cal, zns, mon, plan, grps, hols, comps, temps, schedCfg]) => {
+      fetchBlockedDates(),
+    ]).then(([cal, zns, mon, plan, grps, hols, comps, temps, schedCfg, blocked]) => {
       setCalibration(cal);
       const mergedCfg = mergeScheduleConfig(schedCfg);
       setScheduleConfig(mergedCfg);
@@ -227,6 +236,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
       setHolidayDefs(hols);
       setCompletions(new Set(comps.map(c => `${c.zoneId}_${c.num}`)));
       setTempSchedules(temps);
+      setBlockedDates(new Set(blocked || []));
       setLoading(false);
       // 월별 모니터링에 입력한 측정포인트를 구역 points_*로 backfill (비어있는 구역만)
       backfillZonePointsFromMonitoring(zns, [year - 1, year, year + 1])
@@ -314,7 +324,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     const map = {};
     zones.forEach(zone => {
       if (!zone.schedule_start) return;
-      calcMeasurements(zone, holidays).forEach(m => {
+      calcMeasurements(zone, scheduleAvoid).forEach(m => {
         const key = format(m.date, 'yyyy-MM-dd');
         if (!map[key]) map[key] = [];
         map[key].push({ zone, measurement: m });
@@ -325,7 +335,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
       (zoneOrderRank[a.zone.id] ?? 1e9) - (zoneOrderRank[b.zone.id] ?? 1e9) || a.zone.name.localeCompare(b.zone.name)
     ));
     return map;
-  }, [zones, holidays, scheduleConfig, zoneOrderRank]);
+  }, [zones, scheduleAvoid, scheduleConfig, zoneOrderRank]);
 
   const tempByDate = useMemo(() => {
     const map = {};
@@ -447,7 +457,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     setOptimizing(true);
     try {
       const overrides = optimizeMonthSchedule({
-        zones, tempSchedules, completions, year, month, capacities: caps, holidayMap: holidays, namedGroups: groups,
+        zones, tempSchedules, completions, year, month, capacities: caps, holidayMap: scheduleAvoid, namedGroups: groups,
       });
       const zoneIds = Object.keys(overrides);
       if (!zoneIds.length) {
@@ -535,6 +545,11 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     const zone = zones.find(z => z.id === dragData.zoneId);
     if (!zone) return;
 
+    if (blockedDates.has(dateStr)) {
+      showError('일정비우기가 체크되어있습니다');
+      return;
+    }
+
     if (dateStr < dragData.minDateStr || dateStr > dragData.maxDateStr) {
       const typeMsg = dragData.type === 'weekly' ? '해당 주간 내'
         : dragData.type === 'biweekly' ? '해당 주간 내'
@@ -553,6 +568,36 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     };
     await upsertZone(updated);
     setZones(prev => prev.map(z => z.id === dragData.zoneId ? updated : z));
+  }
+
+  // 일정비우기 토글: 체크 시 해당일 일정을 모두 다른 날로 옮기고 그 날짜를 차단
+  async function handleToggleBlockDay(dateStr, checked) {
+    await setBlockedDate(dateStr, checked);
+    setBlockedDates(prev => {
+      const n = new Set(prev);
+      if (checked) n.add(dateStr); else n.delete(dateStr);
+      return n;
+    });
+    if (checked) {
+      // 해당일에 override로 고정된 측정을 해제 → scheduleAvoid에 의해 자동으로 다른 날로 재배치
+      const updates = [];
+      zones.forEach(zone => {
+        const ov = zone.schedule_overrides;
+        if (!ov) return;
+        const pinned = Object.entries(ov).filter(([, v]) => v === dateStr);
+        if (!pinned.length) return;
+        const nextOv = { ...ov };
+        pinned.forEach(([k]) => { delete nextOv[k]; });
+        updates.push({ ...zone, schedule_overrides: nextOv });
+      });
+      if (updates.length) {
+        await Promise.all(updates.map(u => upsertZone(u)));
+        setZones(prev => prev.map(z => {
+          const u = updates.find(x => x.id === z.id);
+          return u || z;
+        }));
+      }
+    }
   }
 
   const selDow = selectedDay ? new Date(selectedDay + 'T00:00:00').getDay() : 0;
@@ -1178,6 +1223,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                 const boundaryBottom = (isOther && belowCellData && !belowCellData.isOther)
                                     || (!isOther && belowCellData?.isOther);
                 const isHol = !isOther && !!holidays[dateStr];
+                const isBlocked = !isOther && blockedDates.has(dateStr);
 
                 return (
                   <div
@@ -1225,17 +1271,24 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                           {tempPtsTotal > 0 && <span className="text-[9px] leading-none bg-gray-100 text-gray-500 px-0.5 py-0.5 rounded">임{tempPtsTotal}</span>}
                         </div>
                       ) : null;
+                      const blockedBadge = isBlocked
+                        ? <span className="text-[9px] leading-none text-purple-600 bg-purple-100 px-1 py-0.5 rounded shrink-0">비움</span>
+                        : null;
                       return isHol ? (
                         <div className="mb-0.5">
                           <div className="flex items-center gap-0.5">
                             <div className={dateNumClass}>{day}</div>
                             <span className="text-[9px] leading-none text-red-500 truncate">{holidays[dateStr]}</span>
+                            {blockedBadge}
                           </div>
                           {ptsChips && <div className="mt-0.5">{ptsChips}</div>}
                         </div>
                       ) : (
                         <div className="flex items-center justify-between gap-0.5 mb-0.5">
-                          <div className={dateNumClass}>{day}</div>
+                          <div className="flex items-center gap-0.5">
+                            <div className={dateNumClass}>{day}</div>
+                            {blockedBadge}
+                          </div>
                           {ptsChips}
                         </div>
                       );
@@ -1395,11 +1448,24 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                 </>
               )}
 
+              {selectedDay && (selectedScheduleEvents.length > 0 || blockedDates.has(selectedDay)) && (
+                <div className="px-4 py-1.5 bg-blue-50 border-b border-blue-100 flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-blue-600">측정 일정 ({selectedScheduleEvents.length}건)</span>
+                  <label className="flex items-center gap-1 text-xs text-gray-500 cursor-pointer select-none shrink-0"
+                    title="체크 시 이 날의 모든 일정을 다른 날로 옮기고, 이 날에는 어떤 일정도 배치되지 않습니다">
+                    <input type="checkbox" checked={blockedDates.has(selectedDay)}
+                      onChange={e => handleToggleBlockDay(selectedDay, e.target.checked)} className="rounded" />
+                    일정비우기
+                  </label>
+                </div>
+              )}
+
+              {blockedDates.has(selectedDay) && selectedScheduleEvents.length === 0 && (
+                <p className="px-4 py-3 text-sm text-gray-400">이 날은 일정비우기로 설정되어 있습니다.</p>
+              )}
+
               {selectedScheduleEvents.length > 0 && (
                 <>
-                  <div className="px-4 py-1.5 bg-blue-50 border-b border-blue-100">
-                    <span className="text-xs font-semibold text-blue-600">측정 일정 ({selectedScheduleEvents.length}건)</span>
-                  </div>
                   <div className="divide-y divide-gray-50">
                     {selectedScheduleEvents.map(({ zone, measurement }) => {
                       const bounds = getDragBounds(measurement);
@@ -1492,13 +1558,14 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                 </>
               )}
 
-              {selectedCalibEvents.length === 0 && selectedScheduleEvents.length === 0 && selectedTempEvents.length === 0 && (
+              {selectedCalibEvents.length === 0 && selectedScheduleEvents.length === 0 && selectedTempEvents.length === 0 && !blockedDates.has(selectedDay) && (
                 <p className="px-4 py-3 text-sm text-gray-400">일정 없음</p>
               )}
               </div>
               <div className="px-3 py-2 border-t border-gray-100 shrink-0">
                 <button
                   onClick={() => {
+                    if (blockedDates.has(selectedDay)) { showError('일정비우기가 체크되어있습니다'); return; }
                     setAddSchedName('');
                     setAddSchedPts({ surface: '', float: '', fall: '', particle: '' });
                     setAddSchedPopup({ date: selectedDay });

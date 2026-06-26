@@ -141,6 +141,16 @@ export async function deleteCompletion(zoneId, num) {
   return api.invoke('completions:delete', zoneId, num);
 }
 
+// ─── 일정 비우기(차단 날짜) ────────────────────────────────────────────────────
+
+export async function fetchBlockedDates() {
+  return api.invoke('blockedDates:getAll');
+}
+
+export async function setBlockedDate(date, blocked) {
+  return api.invoke('blockedDates:set', date, blocked);
+}
+
 // ─── 임시 일정 ────────────────────────────────────────────────────────────────
 
 export async function fetchTempSchedules() {

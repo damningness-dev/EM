@@ -152,7 +152,7 @@ function getDataPath() {
 function loadData() {
   const p = getDataPath();
   if (!fs.existsSync(p)) {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [] };
   }
   try {
     const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
@@ -160,9 +160,10 @@ function loadData() {
     if (!data.holidays) data.holidays = [];
     if (!data.completions) data.completions = [];
     if (!data.tempSchedules) data.tempSchedules = [];
+    if (!data.blockedDates) data.blockedDates = [];
     return data;
   } catch {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [] };
   }
 }
 
@@ -533,6 +534,18 @@ function registerHandlers() {
     const data = loadData();
     data.completions = data.completions.filter(c => `${c.zoneId}_${c.num}` !== key);
     saveData(data);
+  });
+
+  // ── 일정 비우기(차단 날짜) ──
+  ipcMain.handle('blockedDates:getAll', () => loadData().blockedDates || []);
+  ipcMain.handle('blockedDates:set', (_e, date, blocked) => {
+    const data = loadData();
+    if (!data.blockedDates) data.blockedDates = [];
+    const has = data.blockedDates.includes(date);
+    if (blocked && !has) data.blockedDates.push(date);
+    else if (!blocked && has) data.blockedDates = data.blockedDates.filter(d => d !== date);
+    saveData(data);
+    return data.blockedDates;
   });
 
   // ── 임시 일정 ──
