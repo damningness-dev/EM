@@ -1,7 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { format, differenceInDays } from 'date-fns';
 import { fetchZones } from '../lib/api';
-import { GRADE_COLORS } from '../data/initialData';
 import { calcMeasurements } from '../lib/schedule';
 
 const MONTHS = [1,2,3,4,5,6,7,8,9,10,11,12];
@@ -13,19 +12,34 @@ const GANTT_COLORS = {
   '유지관리': 'bg-orange-400',
 };
 
-const LANE_H   = 16;
-const LANE_GAP = 2;
-const PAD_V    = 4;
+const BAR_H = 18;          // 막대 높이
+const PAD_V = 5;           // 트랙 상하 여백
+const ROW_H = PAD_V * 2 + BAR_H;
+const CHAR_PX = 5.6;       // text-[10px] 숫자 한 글자 대략 폭
+const LABEL_PAD = 10;      // 라벨 좌우 여백 버퍼
 
 export default function ZoneGantt({ year, onYearChange }) {
   const [zones,   setZones]   = useState([]);
   const [loading, setLoading] = useState(true);
   const [search,  setSearch]  = useState('');
   const [showGrades, setShowGrades] = useState(new Set(GRADE_ORDER));
+  const trackRef = useRef(null);
+  const [trackW, setTrackW] = useState(0);
 
   useEffect(() => {
     fetchZones().then(z => { setZones(z); setLoading(false); });
   }, []);
+
+  // 트랙(막대 영역) 실제 픽셀 폭 측정 → 라벨이 막대 안에 들어가는지 판단
+  useLayoutEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    const update = () => setTrackW(el.clientWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [loading]);
 
   const today    = new Date();
   const yearStart = new Date(year, 0, 1);
@@ -133,7 +147,7 @@ export default function ZoneGantt({ year, onYearChange }) {
             {/* 월 헤더 */}
             <div className="flex mb-2">
               <div className="w-52 shrink-0" />
-              <div className="flex-1 flex border-l border-gray-200">
+              <div ref={trackRef} className="flex-1 flex border-l border-gray-200">
                 {MONTHS.map(m => (
                   <div
                     key={m}
@@ -149,28 +163,19 @@ export default function ZoneGantt({ year, onYearChange }) {
             {groups.map(group => {
               const visible = group.zones.filter(z => showGrades.has(z.grade));
               if (!visible.length) return null;
-              const rowH = PAD_V * 2 + visible.length * (LANE_H + LANE_GAP) - LANE_GAP;
               return (
                 <div key={group.name} className="flex items-stretch mb-1">
-                  {/* 구역명 + 등급 배지 */}
-                  <div className="w-52 shrink-0 pr-3 flex flex-col justify-center gap-0.5 py-1">
-                    <span className="text-xs font-medium text-gray-700 truncate leading-tight" title={group.name}>
+                  {/* 구역명 */}
+                  <div className="w-52 shrink-0 pr-3 flex items-center py-1">
+                    <span className="text-xs font-medium text-gray-700 truncate" title={group.name}>
                       {group.name}
                     </span>
-                    <div className="flex flex-wrap gap-0.5 mt-0.5">
-                      {visible.map(z => (
-                        <span
-                          key={z.grade}
-                          className={`text-[10px] font-semibold px-1 py-0.5 rounded leading-none ${GRADE_COLORS[z.grade] || 'bg-gray-100 text-gray-600'}`}
-                        >{z.grade}</span>
-                      ))}
-                    </div>
                   </div>
 
-                  {/* 바 트랙 */}
+                  {/* 바 트랙 — 같은 구역의 모든 등급을 한 행에 표시 */}
                   <div
                     className="flex-1 relative bg-gray-50 rounded border border-gray-100"
-                    style={{ height: rowH }}
+                    style={{ height: ROW_H }}
                   >
                     {/* 월 구분선 */}
                     {MONTHS.map(m => (
@@ -187,21 +192,24 @@ export default function ZoneGantt({ year, onYearChange }) {
                         style={{ left: `${todayPct}%` }}
                       />
                     )}
-                    {/* 등급별 바 */}
-                    {visible.map((zone, i) => {
+                    {/* 등급별 바 (단일 레인) */}
+                    {visible.map((zone) => {
                       const bar = getBarInfo(zone);
                       if (!bar) return null;
-                      const topPx = PAD_V + i * (LANE_H + LANE_GAP);
                       const label = `${bar.startLabel}~${bar.endLabel}`;
-                      // 막대가 라벨을 담을 만큼 넓으면 안쪽, 좁으면 바깥쪽(왼쪽 우선)
-                      const fitsInside = bar.widthPct >= 26;
-                      const side = fitsInside ? 'inside' : (bar.leftPct >= 18 ? 'left' : 'right');
+                      const labelPx = label.length * CHAR_PX + LABEL_PAD;
+                      const barPx   = (bar.widthPct / 100) * trackW;
+                      const leftPx  = (bar.leftPct / 100) * trackW;
+                      const rightPx = trackW - leftPx - barPx;
+                      // 막대 안에 라벨이 들어가면 안쪽, 아니면 바깥(여유 있는 쪽, 왼쪽 우선)
+                      const side = barPx >= labelPx ? 'inside'
+                        : (leftPx >= labelPx || leftPx >= rightPx) ? 'left' : 'right';
                       const title = `${zone.name} (${zone.grade})  ${bar.startLabel} ~ ${bar.endLabel}`;
                       return (
                         <div key={zone.id}>
                           <div
                             className={`absolute ${GANTT_COLORS[zone.grade] || 'bg-gray-400'} rounded flex items-center overflow-hidden`}
-                            style={{ top: topPx, height: LANE_H, left: `${bar.leftPct}%`, width: `${bar.widthPct}%`, minWidth: 2 }}
+                            style={{ top: PAD_V, height: BAR_H, left: `${bar.leftPct}%`, width: `${bar.widthPct}%`, minWidth: 2 }}
                             title={title}
                           >
                             {side === 'inside' && (
@@ -213,14 +221,14 @@ export default function ZoneGantt({ year, onYearChange }) {
                           {side === 'left' && (
                             <span
                               className="absolute flex items-center justify-end text-[10px] font-medium text-gray-600 whitespace-nowrap pr-1 z-20"
-                              style={{ top: topPx, height: LANE_H, right: `${100 - bar.leftPct}%` }}
+                              style={{ top: PAD_V, height: BAR_H, right: `${100 - bar.leftPct}%` }}
                               title={title}
                             >{label}</span>
                           )}
                           {side === 'right' && (
                             <span
                               className="absolute flex items-center text-[10px] font-medium text-gray-600 whitespace-nowrap pl-1 z-20"
-                              style={{ top: topPx, height: LANE_H, left: `${bar.leftPct + bar.widthPct}%` }}
+                              style={{ top: PAD_V, height: BAR_H, left: `${bar.leftPct + bar.widthPct}%` }}
                               title={title}
                             >{label}</span>
                           )}
