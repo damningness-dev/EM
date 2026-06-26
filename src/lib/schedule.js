@@ -43,43 +43,65 @@ function isOverrideValid(overrideDate, baseDate, type) {
 }
 
 // 카테고리·등급별 기본 측정주기 (사용자가 설정에서 변경 가능)
-// phase: { count: 횟수, unit: 'day'|'week'|'month', interval: N }
+// phase: { durationValue, durationUnit: 'day'|'week'|'month'|'year', unit: 'day'|'week'|'month', interval, count(자동계산) }
+//   "durationValue durationUnit 동안 interval unit 간격으로" → count회 자동 산출
 export const DEFAULT_SCHEDULE_SPECS = {
   '공조': {
-    'P1':     [{ count: 7,  unit: 'day',   interval: 1 }],
-    'P2':     [{ count: 4,  unit: 'week',  interval: 1 },
-               { count: 6,  unit: 'week',  interval: 2 }],
-    'P3':     [{ count: 12, unit: 'month', interval: 1 }],
-    '유지관리': [{ count: 36, unit: 'month', interval: 1 }],
+    'P1':     [{ durationValue: 7,  durationUnit: 'day',   unit: 'day',   interval: 1, count: 7 }],
+    'P2':     [{ durationValue: 4,  durationUnit: 'week',  unit: 'week',  interval: 1, count: 4 },
+               { durationValue: 12, durationUnit: 'week',  unit: 'week',  interval: 2, count: 6 }],
+    'P3':     [{ durationValue: 12, durationUnit: 'month', unit: 'month', interval: 1, count: 12 }],
+    '유지관리': [{ durationValue: 36, durationUnit: 'month', unit: 'month', interval: 1, count: 36 }],
   },
   '압축공기': {
-    'P1':     [{ count: 7,  unit: 'day',   interval: 1 }],
-    'P2':     [{ count: 13, unit: 'week',  interval: 2 }],
-    'P3':     [{ count: 12, unit: 'month', interval: 1 }],
-    '유지관리': [{ count: 12, unit: 'month', interval: 3 }],
+    'P1':     [{ durationValue: 7,  durationUnit: 'day',   unit: 'day',   interval: 1, count: 7 }],
+    'P2':     [{ durationValue: 26, durationUnit: 'week',  unit: 'week',  interval: 2, count: 13 }],
+    'P3':     [{ durationValue: 12, durationUnit: 'month', unit: 'month', interval: 1, count: 12 }],
+    '유지관리': [{ durationValue: 36, durationUnit: 'month', unit: 'month', interval: 3, count: 12 }],
   },
   '질소가스': {
-    'P1':     [{ count: 7,  unit: 'day',   interval: 1 }],
-    'P2':     [{ count: 13, unit: 'week',  interval: 2 }],
-    'P3':     [{ count: 12, unit: 'month', interval: 1 }],
-    '유지관리': [{ count: 12, unit: 'month', interval: 3 }],
+    'P1':     [{ durationValue: 7,  durationUnit: 'day',   unit: 'day',   interval: 1, count: 7 }],
+    'P2':     [{ durationValue: 26, durationUnit: 'week',  unit: 'week',  interval: 2, count: 13 }],
+    'P3':     [{ durationValue: 12, durationUnit: 'month', unit: 'month', interval: 1, count: 12 }],
+    '유지관리': [{ durationValue: 36, durationUnit: 'month', unit: 'month', interval: 3, count: 12 }],
   },
 };
 
-// 구형 phase 데이터(type+intervalDays)를 새 형식(unit+interval)으로 변환
+// 측정주기 단위 → 일수 환산(횟수 자동 계산용; 월/년은 평균값)
+export const UNIT_DAYS = { day: 1, week: 7, month: 365.25 / 12, year: 365.25 };
+
+// 기간/간격으로부터 측정 횟수 자동 계산
+export function computePhaseCount(durationValue, durationUnit, interval, unit) {
+  const durDays = (Number(durationValue) || 0) * (UNIT_DAYS[durationUnit] || 1);
+  const intDays = (Number(interval) || 1) * (UNIT_DAYS[unit] || 1);
+  if (intDays <= 0) return 1;
+  return Math.max(1, Math.round(durDays / intDays));
+}
+
+// 구형/신형 phase 데이터를 계산용 { count, unit, interval }로 정규화
 function normalizePhase(p) {
-  if (p.unit) return p;
-  switch (p.type) {
-    case 'daily':     return { count: p.count, unit: 'day',   interval: 1 };
-    case 'weekly':    return { count: p.count, unit: 'week',  interval: 1 };
-    case 'biweekly':  return { count: p.count, unit: 'week',  interval: 2 };
-    case 'monthly':   return { count: p.count, unit: 'month', interval: 1 };
-    case 'quarterly': return { count: p.count, unit: 'month', interval: 3 };
-    default:
-      if (p.intervalDays && p.intervalDays % 7 === 0)
-        return { count: p.count, unit: 'week',  interval: p.intervalDays / 7 };
-      return { count: p.count, unit: 'day', interval: p.intervalDays ?? 1 };
+  // 1) unit/interval 결정
+  let unit, interval;
+  if (p.unit) {
+    unit = p.unit;
+    interval = p.interval ?? 1;
+  } else {
+    switch (p.type) {
+      case 'daily':     unit = 'day';   interval = 1; break;
+      case 'weekly':    unit = 'week';  interval = 1; break;
+      case 'biweekly':  unit = 'week';  interval = 2; break;
+      case 'monthly':   unit = 'month'; interval = 1; break;
+      case 'quarterly': unit = 'month'; interval = 3; break;
+      default:
+        if (p.intervalDays && p.intervalDays % 7 === 0) { unit = 'week'; interval = p.intervalDays / 7; }
+        else { unit = 'day'; interval = p.intervalDays ?? 1; }
+    }
   }
+  // 2) count: 기간 정보가 있으면 자동 계산, 없으면 저장된 count
+  const count = (p.durationValue != null && p.durationUnit)
+    ? computePhaseCount(p.durationValue, p.durationUnit, interval, unit)
+    : (p.count || 1);
+  return { count, unit, interval };
 }
 
 // unit → getDragBounds/isOverrideValid에 전달할 legacy type 문자열

@@ -1,12 +1,18 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { upsertZone, deleteZone, upsertGroup, fetchScheduleConfig, saveScheduleConfig } from '../lib/api';
-import { GRADE_PRIORITY, DEFAULT_SCHEDULE_SPECS, setScheduleConfig, getScheduleConfig, buildHolidayMap, computeCascadeSchedules, calcMeasurements, calcEndDate } from '../lib/schedule';
+import { GRADE_PRIORITY, DEFAULT_SCHEDULE_SPECS, setScheduleConfig, getScheduleConfig, buildHolidayMap, computeCascadeSchedules, calcMeasurements, calcEndDate, computePhaseCount } from '../lib/schedule';
 import { GRADE_COLORS, CLEAN_GRADES, CLEAN_GRADE_COLORS } from '../data/initialData';
 
 const CYCLE_UNITS = [
   { value: 'day',   label: '일' },
   { value: 'week',  label: '주' },
   { value: 'month', label: '개월' },
+];
+const DURATION_UNITS = [
+  { value: 'day',   label: '일' },
+  { value: 'week',  label: '주' },
+  { value: 'month', label: '월' },
+  { value: 'year',  label: '년' },
 ];
 const CYCLE_GRADES = ['P1', 'P2', 'P3', '유지관리'];
 const BUILTIN_CATS = ['공조', '압축공기', '질소가스'];
@@ -463,13 +469,24 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     const next = JSON.parse(JSON.stringify(cycleConfig));
     if (!next[cat]?.[grade]?.[idx]) return;
     const phase = next[cat][grade][idx];
-    if (field === 'unit') {
+    // 구형 데이터 호환: 기간 정보 없으면 보강
+    if (phase.durationValue == null) {
+      phase.unit = phase.unit || 'week';
+      phase.interval = phase.interval ?? 1;
+      phase.durationUnit = phase.unit;
+      phase.durationValue = (phase.count || 1) * phase.interval;
+    }
+    if (field === 'durationValue') {
+      phase.durationValue = Math.max(1, parseInt(value) || 1);
+    } else if (field === 'durationUnit') {
+      phase.durationUnit = value;
+    } else if (field === 'unit') {
       phase.unit = value;
     } else if (field === 'interval') {
       phase.interval = Math.max(1, parseInt(value) || 1);
-    } else if (field === 'count') {
-      phase.count = Math.max(1, parseInt(value) || 1);
     }
+    // 횟수 자동 계산
+    phase.count = computePhaseCount(phase.durationValue, phase.durationUnit, phase.interval, phase.unit);
     applyCycleConfig(next);
   }
 
@@ -477,7 +494,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     const next = JSON.parse(JSON.stringify(cycleConfig));
     if (!next[cat]) next[cat] = {};
     if (!next[cat][grade]) next[cat][grade] = [];
-    next[cat][grade].push({ count: 1, unit: 'week', interval: 2 });
+    next[cat][grade].push({ durationValue: 4, durationUnit: 'week', unit: 'week', interval: 1, count: 4 });
     applyCycleConfig(next);
   }
 
@@ -1030,7 +1047,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                     <div className="divide-y divide-gray-50">
                       {phases.length === 0 && <p className="px-3 py-2 text-xs text-gray-400 italic">구간 없음 — + 구간으로 추가</p>}
                       {phases.map((phase, idx) => {
-                        // 구형 데이터 호환 — unit 없으면 표시용으로 변환
+                        // 구형 데이터 호환 — unit/interval 보강
                         const unit = phase.unit || (
                           phase.type === 'monthly' ? 'month' :
                           phase.type === 'quarterly' ? 'month' :
@@ -1042,29 +1059,37 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                           phase.type === 'biweekly' ? 2 :
                           phase.intervalDays ?? 1
                         );
+                        // 기간(동안) — 구형 데이터는 count*interval로 환산해 표시
+                        const durationUnit = phase.durationUnit || unit;
+                        const durationValue = phase.durationValue ?? ((phase.count || 1) * interval);
+                        const count = phase.durationValue != null
+                          ? computePhaseCount(durationValue, durationUnit, interval, unit)
+                          : (phase.count || 1);
                         return (
-                          <div key={idx} className="flex items-center gap-2 px-3 py-2 flex-wrap">
+                          <div key={idx} className="flex items-center gap-1.5 px-3 py-2 flex-wrap">
                             <span className="text-[10px] text-gray-300 w-4 shrink-0">{idx + 1}</span>
-                            {/* 간격 숫자 */}
-                            <div className="flex items-center gap-1">
-                              <input type="number" min="1" max="365" value={interval}
-                                onChange={e => editCyclePhase(cycleCatTab, grade, idx, 'interval', e.target.value)}
-                                className="w-12 text-xs border border-gray-200 rounded px-1 py-1 text-center focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                              {/* 단위 */}
-                              <select value={unit}
-                                onChange={e => editCyclePhase(cycleCatTab, grade, idx, 'unit', e.target.value)}
-                                className="text-xs border border-gray-200 rounded px-1 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
-                                {CYCLE_UNITS.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
-                              </select>
-                              <span className="text-xs text-gray-400">간격</span>
-                            </div>
-                            {/* 횟수 */}
-                            <div className="flex items-center gap-1">
-                              <input type="number" min="1" max="999" value={phase.count}
-                                onChange={e => editCyclePhase(cycleCatTab, grade, idx, 'count', e.target.value)}
-                                className="w-12 text-xs border border-gray-200 rounded px-1 py-1 text-center focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                              <span className="text-xs text-gray-400">회</span>
-                            </div>
+                            {/* 기간: N 일/주/월/년 동안 */}
+                            <input type="number" min="1" max="999" value={durationValue}
+                              onChange={e => editCyclePhase(cycleCatTab, grade, idx, 'durationValue', e.target.value)}
+                              className="w-12 text-xs border border-gray-200 rounded px-1 py-1 text-center focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                            <select value={durationUnit}
+                              onChange={e => editCyclePhase(cycleCatTab, grade, idx, 'durationUnit', e.target.value)}
+                              className="text-xs border border-gray-200 rounded px-1 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                              {DURATION_UNITS.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
+                            </select>
+                            <span className="text-xs text-gray-400">동안</span>
+                            {/* 간격: N 일/주/개월 간격으로 */}
+                            <input type="number" min="1" max="365" value={interval}
+                              onChange={e => editCyclePhase(cycleCatTab, grade, idx, 'interval', e.target.value)}
+                              className="w-12 text-xs border border-gray-200 rounded px-1 py-1 text-center focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                            <select value={unit}
+                              onChange={e => editCyclePhase(cycleCatTab, grade, idx, 'unit', e.target.value)}
+                              className="text-xs border border-gray-200 rounded px-1 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                              {CYCLE_UNITS.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
+                            </select>
+                            <span className="text-xs text-gray-400">간격으로</span>
+                            {/* 횟수: 자동 계산 */}
+                            <span className="text-xs font-semibold text-blue-600 ml-0.5">{count}회</span>
                             <button onClick={() => removeCyclePhase(cycleCatTab, grade, idx)} className="ml-auto text-xs text-gray-300 hover:text-red-500 shrink-0" title="삭제">✕</button>
                           </div>
                         );
