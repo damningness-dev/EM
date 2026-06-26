@@ -289,7 +289,8 @@ function registerHandlers() {
       ...(saved && typeof saved.x === 'number' ? { x: saved.x, y: saved.y } : {}),
       minWidth: 760,
       minHeight: 460,
-      alwaysOnTop: true,
+      // 모든 창이 아니라 메인 창보다만 위로 유지 (자식 창)
+      ...(mainWin && !mainWin.isDestroyed() ? { parent: mainWin } : {}),
       frame: false,
       backgroundColor: '#ffffff',
       webPreferences: {
@@ -298,7 +299,6 @@ function registerHandlers() {
         nodeIntegration: false,
       },
     });
-    orderManagerWin.setAlwaysOnTop(true, 'screen-saver');
     orderManagerWin.removeMenu();
     if (isDev) {
       orderManagerWin.loadURL('http://localhost:5173/#order-manager');
