@@ -177,7 +177,7 @@ function newId() {
 // ─── 윈도우 생성 ────────────────────────────────────────────────────────────────
 
 function createWindow() {
-  const win = new BrowserWindow({
+  mainWin = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 900,
@@ -192,15 +192,20 @@ function createWindow() {
   });
 
   if (isDev) {
-    win.loadURL('http://localhost:5173');
+    mainWin.loadURL('http://localhost:5173');
   } else {
-    win.loadFile(path.join(__dirname, '../dist/index.html'));
+    mainWin.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
-  win.removeMenu();
+  mainWin.removeMenu();
 
-  win.webContents.on('did-finish-load', () => {
-    setupAsarUpdater(win);
+  mainWin.webContents.on('did-finish-load', () => {
+    setupAsarUpdater(mainWin);
+  });
+
+  mainWin.on('closed', () => {
+    if (orderManagerWin && !orderManagerWin.isDestroyed()) orderManagerWin.close();
+    mainWin = null;
   });
 }
 
@@ -285,7 +290,7 @@ function registerHandlers() {
       minWidth: 760,
       minHeight: 460,
       alwaysOnTop: true,
-      title: '구역 순서 / 그룹 · 측정주기 관리',
+      frame: false,
       backgroundColor: '#ffffff',
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),

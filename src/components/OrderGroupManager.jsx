@@ -644,15 +644,15 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
           : { left: pos.x, top: pos.y, width: size.w, height: size.h, pointerEvents: 'auto', boxShadow: '0 24px 64px rgba(0,0,0,0.30)', border: '1px solid #e5e7eb' }}
       >
         {/* 헤더 */}
-        <div onMouseDown={docked ? undefined : startDrag} className={`flex items-center justify-between px-4 bg-gray-900 text-white shrink-0 ${docked ? '' : 'cursor-move'}`} style={{ height: 46 }}>
-          <div className="flex items-center gap-2">
+        <div onMouseDown={docked ? undefined : startDrag} className={`flex items-center justify-between px-4 bg-gray-900 text-white shrink-0 ${docked ? '' : 'cursor-move'}`} style={{ height: 46, ...(docked ? { WebkitAppRegion: 'drag' } : {}) }}>
+          <div className="flex items-center gap-2" style={docked ? { WebkitAppRegion: 'drag' } : {}}>
             <svg width="16" height="14" viewBox="0 0 16 13" fill="none">
               <rect width="16" height="10" rx="1.5" fill="#fbbf24" y="2.5" />
               <rect width="7" height="2.5" fill="#f59e0b" y="0.5" x="0.5" rx="1" />
             </svg>
             <span className="font-semibold text-sm">구역 순서 / 그룹 · 측정주기 관리</span>
           </div>
-          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded hover:bg-white/20 text-gray-400 hover:text-white text-sm transition-colors">✕</button>
+          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded hover:bg-white/20 text-gray-400 hover:text-white text-sm transition-colors" style={docked ? { WebkitAppRegion: 'no-drag' } : {}}>✕</button>
         </div>
 
         {/* 탭 */}
