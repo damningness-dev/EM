@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { upsertZone, deleteZone, upsertGroup, fetchScheduleConfig, saveScheduleConfig } from '../lib/api';
-import { GRADE_PRIORITY, DEFAULT_SCHEDULE_SPECS, setScheduleConfig, getScheduleConfig, buildHolidayMap, computeCascadeSchedules, calcMeasurements, calcEndDate, computePhaseCount } from '../lib/schedule';
+import { GRADE_PRIORITY, DEFAULT_SCHEDULE_SPECS, setScheduleConfig, getScheduleConfig, buildHolidayMap, computeCascadeSchedules, calcMeasurements, calcEndDate, computePhaseCount, UNIT_DAYS } from '../lib/schedule';
 import { GRADE_COLORS, CLEAN_GRADES, CLEAN_GRADE_COLORS } from '../data/initialData';
 
 const CYCLE_UNITS = [
@@ -127,6 +127,13 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
   const [addZoneCategory, setAddZoneCategory] = useState('공조');
   const [addZoneGrade, setAddZoneGrade] = useState('P1');
   const [addZoneCleanGrade, setAddZoneCleanGrade] = useState('A');
+  // 폴더 이름 편집
+  const [editingFolderId, setEditingFolderId] = useState(null);
+  const [editingFolderName, setEditingFolderName] = useState('');
+  // 구역 추가 — 시작일 입력 모드
+  const [addZoneStartMode, setAddZoneStartMode] = useState('direct'); // 'direct' | 'reverse'
+  const [addZoneStartDate, setAddZoneStartDate] = useState('');
+  const [addZoneCurrentCount, setAddZoneCurrentCount] = useState(1);
   // 우클릭 컨텍스트 메뉴
   const [contextMenu, setContextMenu] = useState(null); // { x, y, groupIdx }
   const contextMenuRef = useRef(null);
@@ -273,6 +280,31 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     } catch (e) { setError('폴더 생성 실패: ' + e.message); }
   }
 
+  async function renameFolder(id, newName) {
+    const name = newName.trim();
+    setEditingFolderId(null);
+    if (!name) return;
+    try {
+      const g = modalNamedGroups.find(mg => String(mg.id) === String(id));
+      if (!g) return;
+      const saved = await upsertGroup({ ...g, name });
+      setModalNamedGroups(prev => prev.map(mg => String(mg.id) === String(id) ? { ...mg, name: saved?.name || name } : mg));
+    } catch (e) { setError('이름 변경 실패: ' + e.message); }
+  }
+
+  function reverseCalcStartDate(category, grade, currentCount) {
+    const phases = cycleConfig[category]?.[grade] || [];
+    if (!phases.length || currentCount < 1) return '';
+    const phase = phases[0];
+    const unit = phase.unit || (phase.type === 'monthly' ? 'month' : phase.type === 'quarterly' ? 'month' : phase.type === 'weekly' ? 'week' : 'day');
+    const interval = phase.interval ?? (phase.type === 'quarterly' ? 3 : phase.type === 'biweekly' ? 2 : 1);
+    const intervalDays = interval * (UNIT_DAYS[unit] || 1);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const startMs = today.getTime() - (currentCount - 1) * intervalDays * 86400000;
+    const d = new Date(startMs);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
   function modalAssignGroup(realIdx, namedGroupId) {
     const ids = modalGroups[realIdx]?.zones.map(z => z.id) || [];
     setModalNamedGroups(prev => prev.map(g => {
@@ -353,12 +385,19 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     const name = addZoneName.trim();
     if (!name) return;
     try {
+      let schedule_start;
+      if (addZoneStartMode === 'direct') {
+        schedule_start = addZoneStartDate || undefined;
+      } else {
+        schedule_start = reverseCalcStartDate(addZoneCategory, addZoneGrade, addZoneCurrentCount) || undefined;
+      }
       const newZone = {
         name,
         category: addZoneCategory,
         grade: addZoneGrade,
         clean_grade: addZoneCleanGrade,
         sort_order: modalGroups.length * 1000,
+        ...(schedule_start ? { schedule_start } : {}),
       };
       const saved = await upsertZone(newZone);
       const key = `${saved.category}|||${saved.name}`;
@@ -376,6 +415,9 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
       setAddZoneName('');
       setAddZoneGrade('P1');
       setAddZoneCleanGrade('A');
+      setAddZoneStartDate('');
+      setAddZoneCurrentCount(1);
+      setAddZoneStartMode('direct');
       setShowAddZone(false);
     } catch (e) {
       setError('구역 추가 실패: ' + e.message);
@@ -710,31 +752,65 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
 
             {/* 구역 추가 인라인 폼 */}
             {showAddZone && (
-              <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border-b border-blue-200 shrink-0 flex-wrap">
-                <input
-                  autoFocus
-                  className="text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 w-36"
-                  placeholder="구역명"
-                  value={addZoneName}
-                  onChange={e => setAddZoneName(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') handleAddZone(); if (e.key === 'Escape') setShowAddZone(false); }}
-                />
-                <select value={addZoneCategory} onChange={e => setAddZoneCategory(e.target.value)}
-                  className="text-xs border border-gray-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
-                  {categories.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-                <select value={addZoneGrade} onChange={e => setAddZoneGrade(e.target.value)}
-                  className="text-xs border border-gray-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
-                  {GRADES.map(g => <option key={g} value={g}>{g}</option>)}
-                </select>
-                <select value={addZoneCleanGrade} onChange={e => setAddZoneCleanGrade(e.target.value)}
-                  className="text-xs border border-gray-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
-                  {CLEAN_GRADES.map(g => <option key={g} value={g}>청정{g}</option>)}
-                </select>
-                <button onClick={handleAddZone} disabled={!addZoneName.trim()}
-                  className="text-xs px-2.5 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40">추가</button>
-                <button onClick={() => { setShowAddZone(false); setAddZoneName(''); }}
-                  className="text-xs px-2 py-1 border border-gray-200 rounded text-gray-500 hover:bg-gray-50">취소</button>
+              <div className="flex flex-col gap-1.5 px-3 py-2 bg-blue-50 border-b border-blue-200 shrink-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <input
+                    autoFocus
+                    className="text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 w-36"
+                    placeholder="구역명"
+                    value={addZoneName}
+                    onChange={e => setAddZoneName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleAddZone(); if (e.key === 'Escape') setShowAddZone(false); }}
+                  />
+                  <select value={addZoneCategory} onChange={e => setAddZoneCategory(e.target.value)}
+                    className="text-xs border border-gray-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                    {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  <select value={addZoneGrade} onChange={e => setAddZoneGrade(e.target.value)}
+                    className="text-xs border border-gray-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                    {GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+                  </select>
+                  <select value={addZoneCleanGrade} onChange={e => setAddZoneCleanGrade(e.target.value)}
+                    className="text-xs border border-gray-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                    {CLEAN_GRADES.map(g => <option key={g} value={g}>청정{g}</option>)}
+                  </select>
+                </div>
+                {/* 시작일 입력 모드 */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex rounded border border-gray-300 overflow-hidden text-[10px] shrink-0">
+                    <button
+                      onClick={() => setAddZoneStartMode('direct')}
+                      className={`px-2 py-1 ${addZoneStartMode === 'direct' ? 'bg-blue-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'}`}
+                    >시작일 입력</button>
+                    <button
+                      onClick={() => setAddZoneStartMode('reverse')}
+                      className={`px-2 py-1 ${addZoneStartMode === 'reverse' ? 'bg-blue-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'}`}
+                    >측정횟수 역산</button>
+                  </div>
+                  {addZoneStartMode === 'direct' ? (
+                    <input type="date" value={addZoneStartDate} onChange={e => setAddZoneStartDate(e.target.value)}
+                      className="text-xs border border-gray-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                  ) : (
+                    <>
+                      <label className="text-xs text-gray-500 shrink-0">현재 측정 횟수</label>
+                      <input type="number" min="1" max="999" value={addZoneCurrentCount}
+                        onChange={e => setAddZoneCurrentCount(Math.max(1, parseInt(e.target.value) || 1))}
+                        className="w-16 text-xs border border-gray-300 rounded px-1.5 py-1 text-center focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                      <span className="text-xs text-gray-400">회 →</span>
+                      {(() => {
+                        const d = reverseCalcStartDate(addZoneCategory, addZoneGrade, addZoneCurrentCount);
+                        return d
+                          ? <span className="text-xs font-semibold text-blue-700">시작일: {d}</span>
+                          : <span className="text-xs text-gray-400">측정주기 설정 필요</span>;
+                      })()}
+                    </>
+                  )}
+                  <div className="flex-1" />
+                  <button onClick={handleAddZone} disabled={!addZoneName.trim()}
+                    className="text-xs px-2.5 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40">추가</button>
+                  <button onClick={() => { setShowAddZone(false); setAddZoneName(''); setAddZoneStartDate(''); setAddZoneCurrentCount(1); setAddZoneStartMode('direct'); }}
+                    className="text-xs px-2 py-1 border border-gray-200 rounded text-gray-500 hover:bg-gray-50">취소</button>
+                </div>
               </div>
             )}
 
@@ -951,15 +1027,34 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                   {modalNamedGroups.map(g => (
                     <div
                       key={g.id}
-                      onClick={() => setFolderFilter(String(g.id))}
+                      onClick={() => { if (editingFolderId !== String(g.id)) setFolderFilter(String(g.id)); }}
                       onDragOver={e => { e.preventDefault(); setDragOverFolder(String(g.id)); }}
                       onDragLeave={() => setDragOverFolder(null)}
                       onDrop={e => handleFolderDrop(e, String(g.id))}
-                      className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs border cursor-pointer transition-colors ${folderFilter === String(g.id) ? 'bg-blue-600 text-white border-blue-600' : dragOverFolder === String(g.id) ? 'bg-blue-100 border-blue-400 text-blue-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-blue-50 hover:border-blue-200'}`}
+                      className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs border transition-colors ${folderFilter === String(g.id) ? 'bg-blue-600 text-white border-blue-600' : dragOverFolder === String(g.id) ? 'bg-blue-100 border-blue-400 text-blue-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-blue-50 hover:border-blue-200'} ${editingFolderId === String(g.id) ? 'cursor-default' : 'cursor-pointer'}`}
                     >
                       <span>📁</span>
-                      <span className="font-medium truncate flex-1">{g.name}</span>
-                      <span className={`shrink-0 text-[10px] ${folderFilter === String(g.id) ? 'text-blue-200' : 'text-gray-400'}`}>{folderZoneCount(g)}</span>
+                      {editingFolderId === String(g.id) ? (
+                        <input
+                          autoFocus
+                          className="flex-1 min-w-0 text-xs border border-blue-400 rounded px-1 py-0.5 text-gray-800 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          value={editingFolderName}
+                          onChange={e => setEditingFolderName(e.target.value)}
+                          onClick={e => e.stopPropagation()}
+                          onKeyDown={e => { if (e.key === 'Enter') { e.stopPropagation(); renameFolder(g.id, editingFolderName); } if (e.key === 'Escape') setEditingFolderId(null); }}
+                          onBlur={() => renameFolder(g.id, editingFolderName)}
+                        />
+                      ) : (
+                        <>
+                          <span className="font-medium truncate flex-1">{g.name}</span>
+                          <button
+                            onClick={e => { e.stopPropagation(); setEditingFolderId(String(g.id)); setEditingFolderName(g.name); }}
+                            className={`shrink-0 text-[10px] px-0.5 rounded hover:bg-black/10 ${folderFilter === String(g.id) ? 'text-blue-200 hover:text-white' : 'text-gray-300 hover:text-gray-600'}`}
+                            title="이름 편집"
+                          >✏</button>
+                          <span className={`shrink-0 text-[10px] ${folderFilter === String(g.id) ? 'text-blue-200' : 'text-gray-400'}`}>{folderZoneCount(g)}</span>
+                        </>
+                      )}
                     </div>
                   ))}
                   {/* 새 폴더 */}
