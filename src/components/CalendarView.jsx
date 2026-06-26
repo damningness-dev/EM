@@ -289,6 +289,26 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     } catch {}
   });
 
+  // 일정관리(순서/그룹 관리)와 동일한 정렬 기준으로 구역별 순위 계산
+  // - 구역명 그룹 단위로 묶고, 그룹은 최소 sort_order(동률이면 이름), 그룹 내는 등급 우선순위
+  const zoneOrderRank = useMemo(() => {
+    const groups = {};
+    zones.forEach(z => {
+      const key = `${z.category}|||${z.name}`;
+      (groups[key] || (groups[key] = { name: z.name, zones: [] })).zones.push(z);
+    });
+    const arr = Object.values(groups);
+    arr.forEach(g => g.zones.sort((a, b) => (GRADE_PRIORITY[b.grade] || 0) - (GRADE_PRIORITY[a.grade] || 0)));
+    arr.sort((a, b) =>
+      (Math.min(...a.zones.map(z => z.sort_order ?? 1e9)) - Math.min(...b.zones.map(z => z.sort_order ?? 1e9)))
+      || a.name.localeCompare(b.name)
+    );
+    const rank = {};
+    let i = 0;
+    arr.forEach(g => g.zones.forEach(z => { rank[z.id] = i++; }));
+    return rank;
+  }, [zones]);
+
   // Schedule events by date string (all dates, no month filter)
   const scheduleByDate = useMemo(() => {
     const map = {};
@@ -300,12 +320,12 @@ export default function CalendarView({ year: initYear, onYearChange }) {
         map[key].push({ zone, measurement: m });
       });
     });
-    // 순서/그룹관리에서 지정한 sort_order 기준 정렬
+    // 일정관리 전체 순서(zoneOrderRank) 기준 정렬 — 일정을 이동해도 순서 유지
     Object.values(map).forEach(arr => arr.sort((a, b) =>
-      (a.zone.sort_order ?? 1e9) - (b.zone.sort_order ?? 1e9) || a.zone.name.localeCompare(b.zone.name)
+      (zoneOrderRank[a.zone.id] ?? 1e9) - (zoneOrderRank[b.zone.id] ?? 1e9) || a.zone.name.localeCompare(b.zone.name)
     ));
     return map;
-  }, [zones, holidays, scheduleConfig]);
+  }, [zones, holidays, scheduleConfig, zoneOrderRank]);
 
   const tempByDate = useMemo(() => {
     const map = {};
