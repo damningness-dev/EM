@@ -202,8 +202,11 @@ export default function ZoneGantt({ year, onYearChange }) {
                       const barPx   = (bar.widthPct / 100) * trackW;
                       const leftPx  = (bar.leftPct / 100) * trackW;
                       const rightPx = trackW - leftPx - barPx;
+                      // 막대 안에 들어가면 inside, 아니면 공간이 더 넓은 쪽 선택
                       const side = barPx >= labelPx ? 'inside'
-                        : (leftPx >= labelPx || leftPx >= rightPx) ? 'left' : 'right';
+                        : leftPx >= rightPx ? 'left' : 'right';
+                      // 바깥 표시 시 최대 폭 = 해당 방향 여유 공간 - 4px 여백
+                      const outsideMaxW = (side === 'left' ? leftPx : rightPx) - 4;
                       const title = `${zone.name} (${zone.grade})  ${bar.startLabel} ~ ${bar.endLabel}`;
                       return (
                         <div key={zone.id}>
@@ -220,15 +223,15 @@ export default function ZoneGantt({ year, onYearChange }) {
                           </div>
                           {side === 'left' && (
                             <span
-                              className="absolute flex items-center justify-end text-[10px] font-medium text-gray-600 whitespace-nowrap pr-1 z-20"
-                              style={{ top: PAD_V, height: BAR_H, right: `${100 - bar.leftPct}%` }}
+                              className="absolute flex items-center justify-end text-[10px] font-medium text-gray-600 pr-1 z-20 overflow-hidden"
+                              style={{ top: PAD_V, height: BAR_H, right: `${100 - bar.leftPct}%`, maxWidth: outsideMaxW, whiteSpace: 'nowrap', textOverflow: 'ellipsis', display: 'flex' }}
                               title={title}
                             >{label}</span>
                           )}
                           {side === 'right' && (
                             <span
-                              className="absolute flex items-center text-[10px] font-medium text-gray-600 whitespace-nowrap pl-1 z-20"
-                              style={{ top: PAD_V, height: BAR_H, left: `${bar.leftPct + bar.widthPct}%` }}
+                              className="absolute flex items-center text-[10px] font-medium text-gray-600 pl-1 z-20 overflow-hidden"
+                              style={{ top: PAD_V, height: BAR_H, left: `${bar.leftPct + bar.widthPct}%`, maxWidth: outsideMaxW, whiteSpace: 'nowrap', textOverflow: 'ellipsis', display: 'flex' }}
                               title={title}
                             >{label}</span>
                           )}
