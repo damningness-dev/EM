@@ -4,6 +4,7 @@ import Calibration from './components/Calibration';
 import AnnualPlan from './components/AnnualPlan';
 import MonthlyMonitoring from './components/MonthlyMonitoring';
 import ZoneStatus from './components/ZoneStatus';
+import ZoneGantt from './components/ZoneGantt';
 import TodoToday from './components/TodoToday';
 import CalendarView from './components/CalendarView';
 import UpdateNotifier from './components/UpdateNotifier';
@@ -17,6 +18,7 @@ const MENU = [
   { id: 'calendar', label: '달력보기', icon: '📆' },
   { id: 'monthly', label: '월별 모니터링', icon: '📅' },
   { id: 'status', label: '연간 현황', icon: '📈' },
+  { id: 'gantt',  label: '간트 차트',  icon: '📊' },
   { id: 'annual', label: '연간 계획 (AHU)', icon: '🔧' },
   { id: 'calibration', label: '교정 관리', icon: '⚙️' },
 ];
@@ -97,6 +99,7 @@ export default function App() {
           {page === 'calendar' && <CalendarView year={year} onYearChange={setYear} />}
           {page === 'monthly' && <MonthlyMonitoring year={year} onYearChange={setYear} />}
           {page === 'status' && <ZoneStatus year={year} onYearChange={setYear} />}
+          {page === 'gantt'  && <ZoneGantt  year={year} onYearChange={setYear} />}
           {page === 'annual' && <AnnualPlan year={year} onYearChange={setYear} />}
           {page === 'calibration' && <Calibration />}
         </main>
