@@ -1373,7 +1373,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                               {measurement.isLast && <span className="text-xs text-red-600 font-bold">마지막</span>}
                               {isDone && <span className="text-xs bg-green-500 text-white px-1 py-0.5 rounded font-bold">✓완료</span>}
                             </div>
-                            <span className="text-xs text-gray-400">#{measurement.num}</span>
+                            <span className="text-xs text-gray-400">#{measurement.num} / {totalCount(zone)}</span>
                           </div>
                           <p className={`text-sm font-medium break-words ${isDone ? 'text-gray-400 line-through' : 'text-gray-800'}`}>
                             {zone.name}[{zone.grade}]
