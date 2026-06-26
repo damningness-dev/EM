@@ -43,28 +43,51 @@ function isOverrideValid(overrideDate, baseDate, type) {
 }
 
 // 카테고리·등급별 기본 측정주기 (사용자가 설정에서 변경 가능)
-// phase: { count: 횟수, intervalDays: 간격(일) | null, type: 'daily'|'weekly'|'biweekly'|'monthly'|'quarterly' }
+// phase: { count: 횟수, unit: 'day'|'week'|'month', interval: N }
 export const DEFAULT_SCHEDULE_SPECS = {
   '공조': {
-    'P1':     [{ count: 7,  intervalDays: 1,    type: 'daily' }],
-    'P2':     [{ count: 4,  intervalDays: 7,    type: 'weekly' },
-               { count: 6,  intervalDays: 14,   type: 'biweekly' }],
-    'P3':     [{ count: 12, intervalDays: null, type: 'monthly' }],
-    '유지관리': [{ count: 36, intervalDays: null, type: 'monthly' }],
+    'P1':     [{ count: 7,  unit: 'day',   interval: 1 }],
+    'P2':     [{ count: 4,  unit: 'week',  interval: 1 },
+               { count: 6,  unit: 'week',  interval: 2 }],
+    'P3':     [{ count: 12, unit: 'month', interval: 1 }],
+    '유지관리': [{ count: 36, unit: 'month', interval: 1 }],
   },
   '압축공기': {
-    'P1':     [{ count: 7,  intervalDays: 1,    type: 'daily' }],
-    'P2':     [{ count: 13, intervalDays: 14,   type: 'biweekly' }],
-    'P3':     [{ count: 12, intervalDays: null, type: 'monthly' }],
-    '유지관리': [{ count: 12, intervalDays: null, type: 'quarterly' }],
+    'P1':     [{ count: 7,  unit: 'day',   interval: 1 }],
+    'P2':     [{ count: 13, unit: 'week',  interval: 2 }],
+    'P3':     [{ count: 12, unit: 'month', interval: 1 }],
+    '유지관리': [{ count: 12, unit: 'month', interval: 3 }],
   },
   '질소가스': {
-    'P1':     [{ count: 7,  intervalDays: 1,    type: 'daily' }],
-    'P2':     [{ count: 13, intervalDays: 14,   type: 'biweekly' }],
-    'P3':     [{ count: 12, intervalDays: null, type: 'monthly' }],
-    '유지관리': [{ count: 12, intervalDays: null, type: 'quarterly' }],
+    'P1':     [{ count: 7,  unit: 'day',   interval: 1 }],
+    'P2':     [{ count: 13, unit: 'week',  interval: 2 }],
+    'P3':     [{ count: 12, unit: 'month', interval: 1 }],
+    '유지관리': [{ count: 12, unit: 'month', interval: 3 }],
   },
 };
+
+// 구형 phase 데이터(type+intervalDays)를 새 형식(unit+interval)으로 변환
+function normalizePhase(p) {
+  if (p.unit) return p;
+  switch (p.type) {
+    case 'daily':     return { count: p.count, unit: 'day',   interval: 1 };
+    case 'weekly':    return { count: p.count, unit: 'week',  interval: 1 };
+    case 'biweekly':  return { count: p.count, unit: 'week',  interval: 2 };
+    case 'monthly':   return { count: p.count, unit: 'month', interval: 1 };
+    case 'quarterly': return { count: p.count, unit: 'month', interval: 3 };
+    default:
+      if (p.intervalDays && p.intervalDays % 7 === 0)
+        return { count: p.count, unit: 'week',  interval: p.intervalDays / 7 };
+      return { count: p.count, unit: 'day', interval: p.intervalDays ?? 1 };
+  }
+}
+
+// unit → getDragBounds/isOverrideValid에 전달할 legacy type 문자열
+function unitToType(unit) {
+  if (unit === 'month') return 'monthly';
+  if (unit === 'week')  return 'weekly';
+  return 'daily';
+}
 
 // 모듈 레벨 설정 저장소 — 앱 시작 시 setScheduleConfig로 주입
 let SCHEDULE_CONFIG = null;
@@ -122,22 +145,24 @@ export function calcMeasurements(zone, holidayMap = {}) {
   let num = 1;
   let baseDate = new Date(zone.schedule_start + 'T00:00:00');
   let lastBaseDate = null;
-  const total = spec.reduce((s, p) => s + p.count, 0);
+  const normSpec = spec.map(normalizePhase);
+  const total = normSpec.reduce((s, p) => s + p.count, 0);
 
-  for (let phaseIdx = 0; phaseIdx < spec.length; phaseIdx++) {
-    const phase = spec[phaseIdx];
+  for (let phaseIdx = 0; phaseIdx < normSpec.length; phaseIdx++) {
+    const phase = normSpec[phaseIdx];
+    const ptype = unitToType(phase.unit);
 
     // Phase transition: advance baseDate by new phase's interval after last measurement
     if (phaseIdx > 0 && lastBaseDate !== null) {
-      baseDate = phase.type === 'monthly' ? addMonths(lastBaseDate, 1)
-               : phase.type === 'quarterly' ? addMonths(lastBaseDate, 3)
-               : addDays(lastBaseDate, phase.intervalDays);
+      if (phase.unit === 'month') baseDate = addMonths(lastBaseDate, phase.interval);
+      else if (phase.unit === 'week') baseDate = addDays(lastBaseDate, phase.interval * 7);
+      else baseDate = addDays(lastBaseDate, phase.interval);
     }
 
     for (let i = 0; i < phase.count; i++) {
       // Apply weekday rule for monthly measurements
       let effectiveBaseDate = new Date(baseDate);
-      if (phase.type === 'monthly' && weekdayRule) {
+      if (phase.unit === 'month' && weekdayRule) {
         effectiveBaseDate = getNthWeekdayOfMonth(
           baseDate.getFullYear(), baseDate.getMonth() + 1,
           weekdayRule.nth, weekdayRule.dow
@@ -146,14 +171,12 @@ export function calcMeasurements(zone, holidayMap = {}) {
 
       const key = String(num);
       const rawOverride = overrides[key] ? new Date(overrides[key] + 'T00:00:00') : null;
-      const hasValidOverride = rawOverride && isOverrideValid(rawOverride, effectiveBaseDate, phase.type);
+      const hasValidOverride = rawOverride && isOverrideValid(rawOverride, effectiveBaseDate, ptype);
       let scheduledDate;
       if (hasValidOverride) {
-        // User/optimizer explicitly placed this measurement — respect it.
         scheduledDate = rawOverride;
       } else {
-        // Auto-placed: shift off weekends/holidays to nearest working day in window.
-        const bounds = getDragBounds({ type: phase.type, baseDate: effectiveBaseDate });
+        const bounds = getDragBounds({ type: ptype, baseDate: effectiveBaseDate });
         scheduledDate = adjustToWorkingDay(effectiveBaseDate, bounds, holidayMap);
       }
 
@@ -162,23 +185,23 @@ export function calcMeasurements(zone, holidayMap = {}) {
         num,
         date: scheduledDate,
         baseDate: effectiveBaseDate,
-        type: phase.type,
+        type: ptype,
         isFirst: num === 1,
         isLast: num === total,
       });
       num++;
 
-      if (phase.type === 'monthly') {
-        baseDate = addMonths(baseDate, 1);
-      } else if (phase.type === 'quarterly') {
-        baseDate = addMonths(baseDate, 3);
-      } else if (phase.type === 'daily') {
-        // Advance to next weekday, skipping Sat/Sun
+      if (phase.unit === 'month') {
+        baseDate = addMonths(baseDate, phase.interval);
+      } else if (phase.unit === 'week') {
+        baseDate = addDays(baseDate, phase.interval * 7);
+      } else if (phase.unit === 'day' && phase.interval === 1) {
+        // 1일 간격: 주말 건너뜀
         let next = addDays(baseDate, 1);
         while (next.getDay() === 0 || next.getDay() === 6) next = addDays(next, 1);
         baseDate = next;
       } else {
-        baseDate = addDays(baseDate, phase.intervalDays);
+        baseDate = addDays(baseDate, phase.interval);
       }
     }
   }

@@ -3,14 +3,11 @@ import { upsertZone, deleteZone, upsertGroup, fetchScheduleConfig, saveScheduleC
 import { GRADE_PRIORITY, DEFAULT_SCHEDULE_SPECS, setScheduleConfig, getScheduleConfig, buildHolidayMap, computeCascadeSchedules, calcMeasurements, calcEndDate } from '../lib/schedule';
 import { GRADE_COLORS, CLEAN_GRADES, CLEAN_GRADE_COLORS } from '../data/initialData';
 
-const CYCLE_TYPES = [
-  { value: 'daily',     label: '매일(일1회)' },
-  { value: 'weekly',    label: '주1회' },
-  { value: 'biweekly',  label: '격주(2주)' },
-  { value: 'monthly',   label: '월1회' },
-  { value: 'quarterly', label: '분기1회(3개월)' },
+const CYCLE_UNITS = [
+  { value: 'day',   label: '일' },
+  { value: 'week',  label: '주' },
+  { value: 'month', label: '개월' },
 ];
-const DEFAULT_INTERVAL = { daily: 1, weekly: 7, biweekly: 14 };
 const CYCLE_GRADES = ['P1', 'P2', 'P3', '유지관리'];
 const BUILTIN_CATS = ['공조', '압축공기', '질소가스'];
 const PROGRESSION = ['P1', 'P2', 'P3', '유지관리'];
@@ -31,7 +28,6 @@ function buildOrderedGroups(zones) {
   return arr;
 }
 
-const CATEGORY_OPTIONS = ['공조', '압축공기', '질소가스'];
 
 // 셀 세로 구분선
 function cellBorder(sel) {
@@ -467,14 +463,12 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     const next = JSON.parse(JSON.stringify(cycleConfig));
     if (!next[cat]?.[grade]?.[idx]) return;
     const phase = next[cat][grade][idx];
-    if (field === 'type') {
-      phase.type = value;
-      if (value === 'monthly' || value === 'quarterly') phase.intervalDays = null;
-      else if (phase.intervalDays == null) phase.intervalDays = DEFAULT_INTERVAL[value] ?? 7;
+    if (field === 'unit') {
+      phase.unit = value;
+    } else if (field === 'interval') {
+      phase.interval = Math.max(1, parseInt(value) || 1);
     } else if (field === 'count') {
       phase.count = Math.max(1, parseInt(value) || 1);
-    } else if (field === 'intervalDays') {
-      phase.intervalDays = Math.max(1, parseInt(value) || 1);
     }
     applyCycleConfig(next);
   }
@@ -483,7 +477,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     const next = JSON.parse(JSON.stringify(cycleConfig));
     if (!next[cat]) next[cat] = {};
     if (!next[cat][grade]) next[cat][grade] = [];
-    next[cat][grade].push({ count: 1, intervalDays: 14, type: 'biweekly' });
+    next[cat][grade].push({ count: 1, unit: 'week', interval: 2 });
     applyCycleConfig(next);
   }
 
@@ -710,7 +704,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                 />
                 <select value={addZoneCategory} onChange={e => setAddZoneCategory(e.target.value)}
                   className="text-xs border border-gray-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
-                  {CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                  {categories.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
                 <select value={addZoneGrade} onChange={e => setAddZoneGrade(e.target.value)}
                   className="text-xs border border-gray-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
@@ -846,7 +840,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                                   <div key={key} className={cell} style={wStyle}>
                                     <select value={getZoneValue(zone, 'category') || group.category} onChange={e => editGroupCategory(group.key, e.target.value)} onClick={e => e.stopPropagation()}
                                       className="text-[10px] border border-gray-200 rounded px-0.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 w-full max-w-[56px]">
-                                      {CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                                      {categories.map(c => <option key={c} value={c}>{c}</option>)}
                                     </select>
                                   </div>
                                 );
@@ -1036,31 +1030,41 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                     <div className="divide-y divide-gray-50">
                       {phases.length === 0 && <p className="px-3 py-2 text-xs text-gray-400 italic">구간 없음 — + 구간으로 추가</p>}
                       {phases.map((phase, idx) => {
-                        const isMonthly = phase.type === 'monthly' || phase.type === 'quarterly';
+                        // 구형 데이터 호환 — unit 없으면 표시용으로 변환
+                        const unit = phase.unit || (
+                          phase.type === 'monthly' ? 'month' :
+                          phase.type === 'quarterly' ? 'month' :
+                          phase.type === 'weekly' ? 'week' :
+                          phase.type === 'biweekly' ? 'week' : 'day'
+                        );
+                        const interval = phase.interval ?? (
+                          phase.type === 'quarterly' ? 3 :
+                          phase.type === 'biweekly' ? 2 :
+                          phase.intervalDays ?? 1
+                        );
                         return (
                           <div key={idx} className="flex items-center gap-2 px-3 py-2 flex-wrap">
                             <span className="text-[10px] text-gray-300 w-4 shrink-0">{idx + 1}</span>
-                            <select value={phase.type} onChange={e => editCyclePhase(cycleCatTab, grade, idx, 'type', e.target.value)}
-                              className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
-                              {CYCLE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                            </select>
+                            {/* 간격 숫자 */}
+                            <div className="flex items-center gap-1">
+                              <input type="number" min="1" max="365" value={interval}
+                                onChange={e => editCyclePhase(cycleCatTab, grade, idx, 'interval', e.target.value)}
+                                className="w-12 text-xs border border-gray-200 rounded px-1 py-1 text-center focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                              {/* 단위 */}
+                              <select value={unit}
+                                onChange={e => editCyclePhase(cycleCatTab, grade, idx, 'unit', e.target.value)}
+                                className="text-xs border border-gray-200 rounded px-1 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
+                                {CYCLE_UNITS.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
+                              </select>
+                              <span className="text-xs text-gray-400">간격</span>
+                            </div>
+                            {/* 횟수 */}
                             <div className="flex items-center gap-1">
                               <input type="number" min="1" max="999" value={phase.count}
                                 onChange={e => editCyclePhase(cycleCatTab, grade, idx, 'count', e.target.value)}
                                 className="w-12 text-xs border border-gray-200 rounded px-1 py-1 text-center focus:outline-none focus:ring-1 focus:ring-blue-500" />
                               <span className="text-xs text-gray-400">회</span>
                             </div>
-                            {isMonthly ? (
-                              <span className="text-xs text-gray-400">{phase.type === 'monthly' ? '1개월 간격' : '3개월 간격'}</span>
-                            ) : (
-                              <div className="flex items-center gap-1">
-                                <span className="text-xs text-gray-400">간격</span>
-                                <input type="number" min="1" max="365" value={phase.intervalDays ?? ''}
-                                  onChange={e => editCyclePhase(cycleCatTab, grade, idx, 'intervalDays', e.target.value)}
-                                  className="w-12 text-xs border border-gray-200 rounded px-1 py-1 text-center focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                                <span className="text-xs text-gray-400">일</span>
-                              </div>
-                            )}
                             <button onClick={() => removeCyclePhase(cycleCatTab, grade, idx)} className="ml-auto text-xs text-gray-300 hover:text-red-500 shrink-0" title="삭제">✕</button>
                           </div>
                         );
