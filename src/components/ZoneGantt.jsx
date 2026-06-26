@@ -193,51 +193,63 @@ export default function ZoneGantt({ year, onYearChange }) {
                       />
                     )}
                     {/* 등급별 바 (단일 레인) */}
-                    {visible.map((zone) => {
-                      const bar = getBarInfo(zone);
-                      if (!bar) return null;
-                      const dateRange = `${bar.startLabel}~${bar.endLabel}`;
-                      const label = `${zone.grade}(${dateRange})`;
-                      const labelPx = label.length * CHAR_PX + LABEL_PAD;
-                      const barPx   = (bar.widthPct / 100) * trackW;
-                      const leftPx  = (bar.leftPct / 100) * trackW;
-                      const rightPx = trackW - leftPx - barPx;
-                      // 막대 안에 들어가면 inside, 아니면 공간이 더 넓은 쪽 선택
-                      const side = barPx >= labelPx ? 'inside'
-                        : leftPx >= rightPx ? 'left' : 'right';
-                      // 바깥 표시 시 최대 폭 = 해당 방향 여유 공간 - 4px 여백
-                      const outsideMaxW = (side === 'left' ? leftPx : rightPx) - 4;
-                      const title = `${zone.name} (${zone.grade})  ${bar.startLabel} ~ ${bar.endLabel}`;
-                      return (
-                        <div key={zone.id}>
-                          <div
-                            className={`absolute ${GANTT_COLORS[zone.grade] || 'bg-gray-400'} rounded flex items-center justify-center overflow-hidden`}
-                            style={{ top: PAD_V, height: BAR_H, left: `${bar.leftPct}%`, width: `${bar.widthPct}%`, minWidth: 2 }}
-                            title={title}
-                          >
-                            {side === 'inside' && (
-                              <span className="text-white text-[10px] font-medium whitespace-nowrap px-1 truncate">
-                                {label}
-                              </span>
+                    {(() => {
+                      // 막대를 시작 위치순으로 정렬해 좌우 이웃 막대와의 간격(gap) 계산
+                      const bars = visible
+                        .map(zone => ({ zone, bar: getBarInfo(zone) }))
+                        .filter(b => b.bar)
+                        .sort((a, b) => a.bar.leftPct - b.bar.leftPct);
+                      return bars.map(({ zone, bar }, i) => {
+                        const startPx = (bar.leftPct / 100) * trackW;
+                        const endPx   = ((bar.leftPct + bar.widthPct) / 100) * trackW;
+                        const barPx   = endPx - startPx;
+                        const prevEnd   = i > 0 ? ((bars[i-1].bar.leftPct + bars[i-1].bar.widthPct) / 100) * trackW : 0;
+                        const nextStart = i < bars.length - 1 ? (bars[i+1].bar.leftPct / 100) * trackW : trackW;
+                        const leftGap  = startPx - prevEnd;     // 왼쪽 빈 공간(이전 막대까지)
+                        const rightGap = nextStart - endPx;     // 오른쪽 빈 공간(다음 막대까지)
+                        const dateRange = `${bar.startLabel}~${bar.endLabel}`;
+                        const label = `${zone.grade}(${dateRange})`;
+                        const labelPx = label.length * CHAR_PX + LABEL_PAD;
+                        // 우선순위: 안쪽 → 이웃 침범 없는 빈 공간 → (불가 시) 막대에 걸쳐 화면 안으로 정렬
+                        let mode;
+                        if (barPx >= labelPx) mode = 'inside';
+                        else if (rightGap >= labelPx) mode = 'gap-right';
+                        else if (leftGap >= labelPx) mode = 'gap-left';
+                        else mode = startPx >= (trackW - endPx) ? 'cross-right' : 'cross-left';
+                        const title = `${zone.name} (${zone.grade})  ${bar.startLabel} ~ ${bar.endLabel}`;
+                        return (
+                          <div key={zone.id}>
+                            <div
+                              className={`absolute ${GANTT_COLORS[zone.grade] || 'bg-gray-400'} rounded flex items-center justify-center overflow-hidden`}
+                              style={{ top: PAD_V, height: BAR_H, left: `${bar.leftPct}%`, width: `${bar.widthPct}%`, minWidth: 2 }}
+                              title={title}
+                            >
+                              {mode === 'inside' && (
+                                <span className="text-white text-[10px] font-medium whitespace-nowrap px-1 truncate">
+                                  {label}
+                                </span>
+                              )}
+                            </div>
+                            {/* 왼쪽 끝 기준 오른쪽으로 흐름: 빈 오른쪽 공간 또는 왼쪽 정렬(걸침) */}
+                            {(mode === 'gap-right' || mode === 'cross-left') && (
+                              <span
+                                className="absolute flex items-center text-[10px] font-medium text-gray-600 whitespace-nowrap pl-1 z-20 pointer-events-none"
+                                style={{ top: PAD_V, height: BAR_H, left: mode === 'gap-right' ? `${bar.leftPct + bar.widthPct}%` : `${bar.leftPct}%` }}
+                                title={title}
+                              >{label}</span>
+                            )}
+                            {/* 오른쪽 끝 기준 왼쪽으로 흐름: 빈 왼쪽 공간 또는 오른쪽 정렬(걸침) */}
+                            {(mode === 'gap-left' || mode === 'cross-right') && (
+                              <span
+                                className="absolute flex items-center justify-end text-[10px] font-medium text-gray-600 whitespace-nowrap pr-1 z-20 pointer-events-none"
+                                style={{ top: PAD_V, height: BAR_H, right: mode === 'gap-left' ? `${100 - bar.leftPct}%` : `${100 - (bar.leftPct + bar.widthPct)}%` }}
+                                title={title}
+                              >{label}</span>
                             )}
                           </div>
-                          {side === 'left' && (
-                            <span
-                              className="absolute flex items-center justify-end text-[10px] font-medium text-gray-600 pr-1 z-20 overflow-hidden"
-                              style={{ top: PAD_V, height: BAR_H, right: `${100 - bar.leftPct}%`, maxWidth: outsideMaxW, whiteSpace: 'nowrap', textOverflow: 'ellipsis', display: 'flex' }}
-                              title={title}
-                            >{label}</span>
-                          )}
-                          {side === 'right' && (
-                            <span
-                              className="absolute flex items-center text-[10px] font-medium text-gray-600 pl-1 z-20 overflow-hidden"
-                              style={{ top: PAD_V, height: BAR_H, left: `${bar.leftPct + bar.widthPct}%`, maxWidth: outsideMaxW, whiteSpace: 'nowrap', textOverflow: 'ellipsis', display: 'flex' }}
-                              title={title}
-                            >{label}</span>
-                          )}
-                        </div>
-                      );
-                    })}
+                        );
+                      });
+                    })()}
                   </div>
                 </div>
               );
