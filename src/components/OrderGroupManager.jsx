@@ -73,10 +73,10 @@ function ddayLabel(n) {
 function ddayColor(n, sel) {
   if (sel) return 'text-blue-100';
   if (n == null) return 'text-gray-300';
-  if (n > 30) return 'text-emerald-600';
-  if (n > 7)  return 'text-amber-500';
-  if (n >= 0) return 'text-yellow-500';
-  return 'text-red-500';
+  if (n > 30) return 'text-gray-400';   // 31일 이상 — 회색
+  if (n > 7)  return 'text-emerald-600'; // 8~30일 — 초록
+  if (n >= 0) return 'text-yellow-500';  // 0~7일 — 노랑
+  return 'text-red-500';                 // D+1 이후 — 빨강
 }
 
 /**

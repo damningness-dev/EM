@@ -258,15 +258,30 @@ function registerHandlers() {
   ipcMain.handle('update:install', applyUpdateAndRestart);
 
   // ── 순서/그룹 관리 별도 창 (항상 위) ──
+  const boundsFile = () => path.join(app.getPath('userData'), 'order-manager-bounds.json');
+  function loadOrderBounds() {
+    try {
+      const b = JSON.parse(fs.readFileSync(boundsFile(), 'utf-8'));
+      if (b && typeof b.width === 'number' && typeof b.height === 'number') return b;
+    } catch { /* ignore */ }
+    return null;
+  }
+  function saveOrderBounds() {
+    if (!orderManagerWin || orderManagerWin.isDestroyed()) return;
+    try { fs.writeFileSync(boundsFile(), JSON.stringify(orderManagerWin.getBounds())); } catch { /* ignore */ }
+  }
+
   ipcMain.handle('orderManager:open', () => {
     if (orderManagerWin && !orderManagerWin.isDestroyed()) {
       orderManagerWin.show();
       orderManagerWin.focus();
       return;
     }
+    const saved = loadOrderBounds();
     orderManagerWin = new BrowserWindow({
-      width: 1000,
-      height: 660,
+      width: saved?.width ?? 1000,
+      height: saved?.height ?? 660,
+      ...(saved && typeof saved.x === 'number' ? { x: saved.x, y: saved.y } : {}),
       minWidth: 760,
       minHeight: 460,
       alwaysOnTop: true,
@@ -285,6 +300,9 @@ function registerHandlers() {
     } else {
       orderManagerWin.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'order-manager' });
     }
+    orderManagerWin.on('resize', saveOrderBounds);
+    orderManagerWin.on('move', saveOrderBounds);
+    orderManagerWin.on('close', saveOrderBounds);
     orderManagerWin.on('closed', () => { orderManagerWin = null; });
   });
 
