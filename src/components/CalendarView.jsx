@@ -301,6 +301,10 @@ export default function CalendarView({ year: initYear, onYearChange }) {
         map[key].push({ zone, measurement: m });
       });
     });
+    // 해당일 내에서 측정주기 # 순서대로 정렬 (동일 # 이면 구역명 순)
+    Object.values(map).forEach(arr => arr.sort((a, b) =>
+      (a.measurement.num - b.measurement.num) || a.zone.name.localeCompare(b.zone.name)
+    ));
     return map;
   }, [zones, holidays, scheduleConfig]);
 
