@@ -1,4 +1,5 @@
 import { addDays, addMonths, addYears, startOfWeek, endOfWeek, startOfMonth, endOfMonth, format } from 'date-fns';
+import { lunarToSolar } from './lunar';
 
 // Grade progression order: P1 → P2 → P3 → 유지관리
 export const NEXT_GRADE = { P1: 'P2', P2: 'P3', P3: '유지관리' };
@@ -511,6 +512,21 @@ export function buildHolidayMap(holidayDefs, fromYear, toYear) {
   holidayDefs.forEach(h => {
     const sub = !!h.substitute;
     const push = dateStr => occurrences.push({ date: dateStr, name: h.name, substitute: sub });
+    if (h.lunar) {
+      // 음력 공휴일: 저장된 date는 'L'+음력ISO. 양력으로 변환해 등록.
+      const [ly, lmm, ldd] = h.date.replace(/^L/, '').split('-').map(Number);
+      const conv = (yr) => {
+        const sol = lunarToSolar(yr, lmm, ldd, !!h.leapMonth);
+        if (sol) push(format(sol, 'yyyy-MM-dd'));
+      };
+      if (!h.repeat || h.repeat.type === 'none') {
+        conv(ly); // 1회성: 입력한 음력 연도 그대로
+      } else {
+        // 매년 반복(음력은 yearly만 의미 있음)
+        for (let yr = fromYear; yr <= toYear; yr++) conv(yr);
+      }
+      return;
+    }
     if (!h.repeat || h.repeat.type === 'none') {
       push(h.date);
     } else if (h.repeat.type === 'yearly') {

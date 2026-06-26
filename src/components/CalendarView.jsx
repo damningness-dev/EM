@@ -3,6 +3,7 @@ import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, ups
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
+import { lunarToSolar } from '../lib/lunar';
 import OrderGroupManager from './OrderGroupManager';
 
 const DOW_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
@@ -115,6 +116,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   const [newHolidayName, setNewHolidayName] = useState('');
   const [newHolidayRepeat, setNewHolidayRepeat] = useState(false);
   const [newHolidaySubstitute, setNewHolidaySubstitute] = useState(false);
+  const [newHolidayLunar, setNewHolidayLunar] = useState(false);
   const [newHolidayRepeatType, setNewHolidayRepeatType] = useState('yearly');
   const [newHolidayNth, setNewHolidayNth] = useState(1);
   const [newHolidayDow, setNewHolidayDow] = useState(1);
@@ -823,26 +825,34 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                   <button
                     onClick={async () => {
                       if (!newHolidayDate || !newHolidayName.trim()) return;
-                      const repeat = newHolidayRepeat
-                        ? (newHolidayRepeatType === 'nth-weekday'
-                            ? { type: 'nth-weekday', nth: newHolidayNth, dow: newHolidayDow }
-                            : { type: newHolidayRepeatType })
-                        : null;
-                      const h = { date: newHolidayDate, name: newHolidayName.trim(), repeat, substitute: newHolidaySubstitute };
+                      // 음력은 매년 반복만 의미가 있으므로 yearly로 고정
+                      const repeat = newHolidayLunar
+                        ? (newHolidayRepeat ? { type: 'yearly' } : null)
+                        : (newHolidayRepeat
+                            ? (newHolidayRepeatType === 'nth-weekday'
+                                ? { type: 'nth-weekday', nth: newHolidayNth, dow: newHolidayDow }
+                                : { type: newHolidayRepeatType })
+                            : null);
+                      const h = { date: newHolidayLunar ? 'L' + newHolidayDate : newHolidayDate, name: newHolidayName.trim(), repeat, substitute: newHolidaySubstitute, lunar: newHolidayLunar };
                       const saved = await upsertHoliday(h);
                       setHolidayDefs(prev => {
                         const idx = prev.findIndex(x => x.date === saved.date);
                         return idx >= 0 ? prev.map((x,i) => i === idx ? saved : x) : [...prev, saved];
                       });
-                      setNewHolidayDate(''); setNewHolidayName(''); setNewHolidayRepeat(false); setNewHolidaySubstitute(false);
+                      setNewHolidayDate(''); setNewHolidayName(''); setNewHolidayRepeat(false); setNewHolidaySubstitute(false); setNewHolidayLunar(false);
                     }}
                     className="px-2.5 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 shrink-0"
                   >추가</button>
                 </div>
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-4 flex-wrap">
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
                     <input type="checkbox" checked={newHolidayRepeat} onChange={e => setNewHolidayRepeat(e.target.checked)} className="rounded" />
                     반복
+                  </label>
+                  <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
+                    <input type="checkbox" checked={newHolidayLunar} onChange={e => setNewHolidayLunar(e.target.checked)} className="rounded" />
+                    음력
+                    <span className="text-[10px] text-gray-400">(설날·추석 등)</span>
                   </label>
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
                     <input type="checkbox" checked={newHolidaySubstitute} onChange={e => setNewHolidaySubstitute(e.target.checked)} className="rounded" />
@@ -850,7 +860,17 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                     <span className="text-[10px] text-gray-400">(주말이면 다음 평일 휴무)</span>
                   </label>
                 </div>
-                {newHolidayRepeat && (
+                {newHolidayLunar && newHolidayDate && (() => {
+                  const [, lmm, ldd] = newHolidayDate.split('-').map(Number);
+                  const sol = lunarToSolar(year, lmm, ldd);
+                  return (
+                    <div className="text-[10px] text-amber-600 bg-amber-50 border border-amber-100 rounded px-2 py-1">
+                      음력 {lmm}월 {ldd}일 → {year}년 양력 {sol ? `${sol.getMonth() + 1}월 ${sol.getDate()}일` : '변환 불가'}
+                      {newHolidayRepeat ? ' (매년 음력 반복)' : ''}
+                    </div>
+                  );
+                })()}
+                {newHolidayRepeat && !newHolidayLunar && (
                   <div className="flex items-center gap-2 flex-wrap">
                     <select value={newHolidayRepeatType} onChange={e => setNewHolidayRepeatType(e.target.value)}
                       className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500">
@@ -889,15 +909,25 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                   <p className="px-4 py-4 text-sm text-gray-400">등록된 공휴일이 없습니다.</p>
                 )}
                 {[...holidayDefs].sort((a,b) => a.date.localeCompare(b.date)).map(h => {
+                  const lraw = h.lunar ? h.date.replace(/^L/, '') : h.date;
+                  const lm = h.lunar ? Number(lraw.slice(5,7)) : 0;
+                  const ld = h.lunar ? Number(lraw.slice(8)) : 0;
                   const repeatLabel = !h.repeat || h.repeat.type === 'none' ? null
+                    : h.lunar ? `매년 음력 ${lm}월 ${ld}일`
                     : h.repeat.type === 'yearly' ? `매년 ${h.date.slice(5)}`
                     : h.repeat.type === 'monthly' ? `매월 ${Number(h.date.slice(8))}일`
                     : `매월 ${['','1번째','2번째','3번째','4번째','마지막'][h.repeat.nth]}${ ['일','월','화','수','목','금','토'][h.repeat.dow]}요일`;
+                  const lunarSol = h.lunar ? lunarToSolar(year, lm, ld, !!h.leapMonth) : null;
+                  const dateLabel = h.lunar ? `음력 ${lm}.${ld}` : h.date;
                   return (
                     <div key={h.date} className="flex items-center gap-2 px-3 py-2">
-                      <span className="text-xs text-gray-500 w-24 shrink-0">{h.date}</span>
+                      <span className="text-xs text-gray-500 w-24 shrink-0">
+                        {dateLabel}
+                        {lunarSol && <span className="block text-[10px] text-amber-600">→{year} {lunarSol.getMonth() + 1}.{lunarSol.getDate()}</span>}
+                      </span>
                       <div className="flex-1 min-w-0">
                         <span className="text-sm text-red-600 font-medium">{h.name}</span>
+                        {h.lunar && <span className="ml-1.5 text-[10px] text-amber-600 bg-amber-50 px-1 py-0.5 rounded">음력</span>}
                         {repeatLabel && <span className="ml-1.5 text-[10px] text-blue-500 bg-blue-50 px-1 py-0.5 rounded">{repeatLabel}</span>}
                         {h.substitute && <span className="ml-1.5 text-[10px] text-emerald-600 bg-emerald-50 px-1 py-0.5 rounded">대체공휴일</span>}
                       </div>
