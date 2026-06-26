@@ -47,8 +47,8 @@ export default function ZoneGantt({ year, onYearChange }) {
     return {
       leftPct:  (clippedStart / yearDays) * 100,
       widthPct: ((clippedEnd - clippedStart + 1) / yearDays) * 100,
-      startLabel: format(startDate, 'MM.dd'),
-      endLabel:   format(endDate,   'MM.dd'),
+      startLabel: format(startDate, 'yyyy.MM.dd'),
+      endLabel:   format(endDate,   'yyyy.MM.dd'),
     };
   }
 
@@ -192,17 +192,37 @@ export default function ZoneGantt({ year, onYearChange }) {
                       const bar = getBarInfo(zone);
                       if (!bar) return null;
                       const topPx = PAD_V + i * (LANE_H + LANE_GAP);
+                      const label = `${bar.startLabel}~${bar.endLabel}`;
+                      // 막대가 라벨을 담을 만큼 넓으면 안쪽, 좁으면 바깥쪽(왼쪽 우선)
+                      const fitsInside = bar.widthPct >= 26;
+                      const side = fitsInside ? 'inside' : (bar.leftPct >= 18 ? 'left' : 'right');
+                      const title = `${zone.name} (${zone.grade})  ${bar.startLabel} ~ ${bar.endLabel}`;
                       return (
-                        <div
-                          key={zone.id}
-                          className={`absolute ${GANTT_COLORS[zone.grade] || 'bg-gray-400'} rounded flex items-center overflow-hidden`}
-                          style={{ top: topPx, height: LANE_H, left: `${bar.leftPct}%`, width: `${bar.widthPct}%`, minWidth: 2 }}
-                          title={`${zone.name} (${zone.grade})  ${bar.startLabel} ~ ${bar.endLabel}`}
-                        >
-                          {bar.widthPct > 10 && (
-                            <span className="text-white text-[10px] font-medium whitespace-nowrap px-1 truncate">
-                              {bar.startLabel}~{bar.endLabel}
-                            </span>
+                        <div key={zone.id}>
+                          <div
+                            className={`absolute ${GANTT_COLORS[zone.grade] || 'bg-gray-400'} rounded flex items-center overflow-hidden`}
+                            style={{ top: topPx, height: LANE_H, left: `${bar.leftPct}%`, width: `${bar.widthPct}%`, minWidth: 2 }}
+                            title={title}
+                          >
+                            {side === 'inside' && (
+                              <span className="text-white text-[10px] font-medium whitespace-nowrap px-1 truncate">
+                                {label}
+                              </span>
+                            )}
+                          </div>
+                          {side === 'left' && (
+                            <span
+                              className="absolute flex items-center justify-end text-[10px] font-medium text-gray-600 whitespace-nowrap pr-1 z-20"
+                              style={{ top: topPx, height: LANE_H, right: `${100 - bar.leftPct}%` }}
+                              title={title}
+                            >{label}</span>
+                          )}
+                          {side === 'right' && (
+                            <span
+                              className="absolute flex items-center text-[10px] font-medium text-gray-600 whitespace-nowrap pl-1 z-20"
+                              style={{ top: topPx, height: LANE_H, left: `${bar.leftPct + bar.widthPct}%` }}
+                              title={title}
+                            >{label}</span>
                           )}
                         </div>
                       );
