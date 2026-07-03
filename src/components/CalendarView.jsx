@@ -322,12 +322,28 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   // Schedule events by date string (all dates, no month filter)
   const scheduleByDate = useMemo(() => {
     const map = {};
+    // 같은 구역명(분류+이름)의 서로 다른 등급(P1/P2/P3/유지관리)이 같은 날에
+    // 겹치지 않도록, 구역명 그룹 단위로 공유 usedDates Set을 사용한다.
+    // 시간순(시작일 → 등급 우선순위 P1먼저)으로 처리해 앞선 일정이 자리를 먼저 잡고
+    // 뒤 일정이 밀려나도록 한다.
+    const byName = {};
     zones.forEach(zone => {
       if (!zone.schedule_start) return;
-      calcMeasurements(zone, scheduleAvoid).forEach(m => {
-        const key = format(m.date, 'yyyy-MM-dd');
-        if (!map[key]) map[key] = [];
-        map[key].push({ zone, measurement: m });
+      const key = `${zone.category}|||${zone.name}`;
+      (byName[key] || (byName[key] = [])).push(zone);
+    });
+    Object.values(byName).forEach(groupZones => {
+      groupZones.sort((a, b) =>
+        (a.schedule_start || '').localeCompare(b.schedule_start || '')
+        || (GRADE_PRIORITY[b.grade] || 0) - (GRADE_PRIORITY[a.grade] || 0)
+      );
+      const used = new Set();
+      groupZones.forEach(zone => {
+        calcMeasurements(zone, scheduleAvoid, used).forEach(m => {
+          const key = format(m.date, 'yyyy-MM-dd');
+          if (!map[key]) map[key] = [];
+          map[key].push({ zone, measurement: m });
+        });
       });
     });
     // 일정관리 전체 순서(zoneOrderRank) 기준 정렬 — 일정을 이동해도 순서 유지

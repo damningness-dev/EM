@@ -156,7 +156,11 @@ function adjustToWorkingDay(date, bounds, holidayMap) {
   return date;
 }
 
-export function calcMeasurements(zone, holidayMap = {}) {
+// holidayMap: 근무일 판정용 (공휴일 + 일정비우기)
+// usedDates: 같은 날 중복을 막기 위해 이미 사용한 날짜('yyyy-MM-dd') Set.
+//   null이면 이 구역만의 새 Set을 쓴다. 여러 구역(같은 구역명의 P1/P2/P3…)의
+//   중복까지 막으려면 호출측에서 공유 Set을 넘긴다.
+export function calcMeasurements(zone, holidayMap = {}, usedDates = null) {
   if (!zone.schedule_start) return [];
   const spec = getScheduleSpec(zone.category, zone.grade);
   if (!spec) return [];
@@ -164,27 +168,38 @@ export function calcMeasurements(zone, holidayMap = {}) {
   const overrides = zone.schedule_overrides || {};
   const weekdayRule = zone.monthly_weekday_rule || null;
   const measurements = [];
-  // 같은 구역의 측정이 같은 날에 겹치지 않도록 이미 사용한 날짜를 추적한다.
-  // (공휴일·일정비우기로 여러 회차가 같은 날로 밀려 몰리는 것을 방지)
-  const usedDates = new Set();
-  let num = 1;
-  let baseDate = new Date(zone.schedule_start + 'T00:00:00');
-  let lastBaseDate = null;
+  // 같은 구역(또는 같은 구역명)의 측정이 같은 날에 겹치지 않도록 사용한 날짜를 추적.
+  const used = usedDates || new Set();
   const normSpec = spec.map(normalizePhase);
   const total = normSpec.reduce((s, p) => s + p.count, 0);
 
-  for (let phaseIdx = 0; phaseIdx < normSpec.length; phaseIdx++) {
+  // 시작 회차: 입력한 시작일을 몇 번째 측정으로 볼지 (기본 1).
+  // 예) 총 12회 중 start_num=5 → 시작일이 5번째 측정, 이후 5~12회차만 배치.
+  const startNum = Math.max(1, Math.min(total, parseInt(zone.start_num) || 1));
+  // startNum이 속한 구간(phase)과 구간 내 위치를 찾는다.
+  let acc = 0, startPhaseIdx = 0, startIWithin = 0;
+  for (let p = 0; p < normSpec.length; p++) {
+    if (startNum <= acc + normSpec[p].count) { startPhaseIdx = p; startIWithin = startNum - acc - 1; break; }
+    acc += normSpec[p].count;
+  }
+
+  let num = startNum;
+  let baseDate = new Date(zone.schedule_start + 'T00:00:00');
+  let lastBaseDate = null;
+
+  for (let phaseIdx = startPhaseIdx; phaseIdx < normSpec.length; phaseIdx++) {
     const phase = normSpec[phaseIdx];
     const ptype = unitToType(phase.unit);
 
-    // Phase transition: advance baseDate by new phase's interval after last measurement
-    if (phaseIdx > 0 && lastBaseDate !== null) {
+    // Phase transition: advance baseDate by new phase's interval after last measurement.
+    // (처음 처리하는 구간은 시작일이 곧 baseDate이므로 이동하지 않는다)
+    if (phaseIdx > startPhaseIdx && lastBaseDate !== null) {
       if (phase.unit === 'month') baseDate = addMonths(lastBaseDate, phase.interval);
       else if (phase.unit === 'week') baseDate = addDays(lastBaseDate, phase.interval * 7);
       else baseDate = addDays(lastBaseDate, phase.interval);
     }
 
-    for (let i = 0; i < phase.count; i++) {
+    for (let i = phaseIdx === startPhaseIdx ? startIWithin : 0; i < phase.count; i++) {
       // Apply weekday rule for monthly measurements
       let effectiveBaseDate = new Date(baseDate);
       if (phase.unit === 'month' && weekdayRule) {
@@ -203,15 +218,15 @@ export function calcMeasurements(zone, holidayMap = {}) {
       } else {
         const bounds = getDragBounds({ type: ptype, baseDate: effectiveBaseDate });
         scheduledDate = adjustToWorkingDay(effectiveBaseDate, bounds, holidayMap);
-        // 같은 구역의 앞선 회차가 이미 이 날을 차지했다면, 겹치지 않도록
-        // 다음 근무일(주말·공휴일·일정비우기 제외)로 순차적으로 밀어낸다.
+        // 같은 구역(또는 같은 구역명)의 앞선 일정이 이미 이 날을 차지했다면,
+        // 겹치지 않도록 다음 근무일(주말·공휴일·일정비우기 제외)로 순차적으로 밀어낸다.
         // → 첫 회차부터 자연스럽게 하루씩 뒤로 배치된다.
-        while (usedDates.has(format(scheduledDate, 'yyyy-MM-dd'))) {
+        while (used.has(format(scheduledDate, 'yyyy-MM-dd'))) {
           scheduledDate = addDays(scheduledDate, 1);
           while (!isWorkingDay(scheduledDate, holidayMap)) scheduledDate = addDays(scheduledDate, 1);
         }
       }
-      usedDates.add(format(scheduledDate, 'yyyy-MM-dd'));
+      used.add(format(scheduledDate, 'yyyy-MM-dd'));
 
       lastBaseDate = new Date(baseDate);
       measurements.push({
@@ -219,7 +234,7 @@ export function calcMeasurements(zone, holidayMap = {}) {
         date: scheduledDate,
         baseDate: effectiveBaseDate,
         type: ptype,
-        isFirst: num === 1,
+        isFirst: num === startNum,
         isLast: num === total,
       });
       num++;

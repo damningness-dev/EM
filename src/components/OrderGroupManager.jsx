@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { upsertZone, deleteZone, upsertGroup, fetchScheduleConfig, saveScheduleConfig } from '../lib/api';
-import { GRADE_PRIORITY, DEFAULT_SCHEDULE_SPECS, setScheduleConfig, getScheduleConfig, buildHolidayMap, computeCascadeSchedules, calcMeasurements, calcEndDate, computePhaseCount, UNIT_DAYS } from '../lib/schedule';
+import { GRADE_PRIORITY, DEFAULT_SCHEDULE_SPECS, setScheduleConfig, getScheduleConfig, buildHolidayMap, computeCascadeSchedules, calcMeasurements, calcEndDate, computePhaseCount, totalCount, UNIT_DAYS } from '../lib/schedule';
 import { GRADE_COLORS, CLEAN_GRADES, CLEAN_GRADE_COLORS } from '../data/initialData';
 
 const CYCLE_UNITS = [
@@ -134,6 +134,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
   const [addZoneStartMode, setAddZoneStartMode] = useState('direct'); // 'direct' | 'reverse'
   const [addZoneStartDate, setAddZoneStartDate] = useState('');
   const [addZoneCurrentCount, setAddZoneCurrentCount] = useState(1);
+  const [addZoneStartNum, setAddZoneStartNum] = useState(1); // 시작 회차 (입력 시작일 = N번째 측정)
   // 우클릭 컨텍스트 메뉴
   const [contextMenu, setContextMenu] = useState(null); // { x, y, groupIdx }
   const contextMenuRef = useRef(null);
@@ -391,6 +392,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
       } else {
         schedule_start = reverseCalcStartDate(addZoneCategory, addZoneGrade, addZoneCurrentCount) || undefined;
       }
+      const startNum = Math.max(1, parseInt(addZoneStartNum) || 1);
       const newZone = {
         name,
         category: addZoneCategory,
@@ -398,6 +400,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
         clean_grade: addZoneCleanGrade,
         sort_order: modalGroups.length * 1000,
         ...(schedule_start ? { schedule_start } : {}),
+        ...(startNum > 1 ? { start_num: startNum } : {}),
       };
       const saved = await upsertZone(newZone);
       const key = `${saved.category}|||${saved.name}`;
@@ -417,6 +420,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
       setAddZoneCleanGrade('A');
       setAddZoneStartDate('');
       setAddZoneCurrentCount(1);
+      setAddZoneStartNum(1);
       setAddZoneStartMode('direct');
       setShowAddZone(false);
     } catch (e) {
@@ -788,8 +792,22 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                     >측정횟수 역산</button>
                   </div>
                   {addZoneStartMode === 'direct' ? (
-                    <input type="date" value={addZoneStartDate} onChange={e => setAddZoneStartDate(e.target.value)}
-                      className="text-xs border border-gray-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    <>
+                      <input type="date" value={addZoneStartDate} onChange={e => setAddZoneStartDate(e.target.value)}
+                        className="text-xs border border-gray-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                      {(() => {
+                        const tot = totalCount({ category: addZoneCategory, grade: addZoneGrade });
+                        return (
+                          <>
+                            <label className="text-xs text-gray-500 shrink-0 ml-1">시작 회차</label>
+                            <input type="number" min="1" max={tot || 999} value={addZoneStartNum}
+                              onChange={e => setAddZoneStartNum(Math.max(1, Math.min(tot || 999, parseInt(e.target.value) || 1)))}
+                              className="w-14 text-xs border border-gray-300 rounded px-1.5 py-1 text-center focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                            <span className="text-xs text-gray-400">번째{tot ? ` / 총 ${tot}회` : ''}</span>
+                          </>
+                        );
+                      })()}
+                    </>
                   ) : (
                     <>
                       <label className="text-xs text-gray-500 shrink-0">현재 측정 횟수</label>
@@ -808,7 +826,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                   <div className="flex-1" />
                   <button onClick={handleAddZone} disabled={!addZoneName.trim()}
                     className="text-xs px-2.5 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40">추가</button>
-                  <button onClick={() => { setShowAddZone(false); setAddZoneName(''); setAddZoneStartDate(''); setAddZoneCurrentCount(1); setAddZoneStartMode('direct'); }}
+                  <button onClick={() => { setShowAddZone(false); setAddZoneName(''); setAddZoneStartDate(''); setAddZoneCurrentCount(1); setAddZoneStartNum(1); setAddZoneStartMode('direct'); }}
                     className="text-xs px-2 py-1 border border-gray-200 rounded text-gray-500 hover:bg-gray-50">취소</button>
                 </div>
               </div>
