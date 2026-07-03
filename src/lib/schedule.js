@@ -164,6 +164,9 @@ export function calcMeasurements(zone, holidayMap = {}) {
   const overrides = zone.schedule_overrides || {};
   const weekdayRule = zone.monthly_weekday_rule || null;
   const measurements = [];
+  // 같은 구역의 측정이 같은 날에 겹치지 않도록 이미 사용한 날짜를 추적한다.
+  // (공휴일·일정비우기로 여러 회차가 같은 날로 밀려 몰리는 것을 방지)
+  const usedDates = new Set();
   let num = 1;
   let baseDate = new Date(zone.schedule_start + 'T00:00:00');
   let lastBaseDate = null;
@@ -200,7 +203,15 @@ export function calcMeasurements(zone, holidayMap = {}) {
       } else {
         const bounds = getDragBounds({ type: ptype, baseDate: effectiveBaseDate });
         scheduledDate = adjustToWorkingDay(effectiveBaseDate, bounds, holidayMap);
+        // 같은 구역의 앞선 회차가 이미 이 날을 차지했다면, 겹치지 않도록
+        // 다음 근무일(주말·공휴일·일정비우기 제외)로 순차적으로 밀어낸다.
+        // → 첫 회차부터 자연스럽게 하루씩 뒤로 배치된다.
+        while (usedDates.has(format(scheduledDate, 'yyyy-MM-dd'))) {
+          scheduledDate = addDays(scheduledDate, 1);
+          while (!isWorkingDay(scheduledDate, holidayMap)) scheduledDate = addDays(scheduledDate, 1);
+        }
       }
+      usedDates.add(format(scheduledDate, 'yyyy-MM-dd'));
 
       lastBaseDate = new Date(baseDate);
       measurements.push({
