@@ -4,9 +4,12 @@ import { GRADE_PRIORITY, DEFAULT_SCHEDULE_SPECS, setScheduleConfig, getScheduleC
 import { GRADE_COLORS, CLEAN_GRADES, CLEAN_GRADE_COLORS } from '../data/initialData';
 
 const CYCLE_UNITS = [
-  { value: 'day',   label: '일' },
-  { value: 'week',  label: '주' },
-  { value: 'month', label: '개월' },
+  { value: 'day',     label: '일' },
+  { value: 'week',    label: '주' },
+  { value: 'month',   label: '개월' },
+  { value: 'quarter', label: '분기' },
+  { value: 'half',    label: '반기' },
+  { value: 'year',    label: '년' },
 ];
 const DURATION_UNITS = [
   { value: 'day',   label: '일' },
@@ -47,6 +50,7 @@ const COL_DEFS = {
   category:    { label: '분류',      width: 60 },
   clean_grade: { label: '청정등급',  width: 70 },
   start:       { label: '시작일',    width: 92 },
+  startnum:    { label: '시작회차',  width: 62 },
   end:         { label: '종료예정일', width: 92 },
   dday:        { label: 'D-day',     width: 64 },
   float:       { label: '부유균',    width: 48 },
@@ -327,6 +331,14 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     setLocalEdits(prev => ({
       ...prev,
       [zoneId]: { ...(prev[zoneId] || {}), [field]: value }
+    }));
+  }
+
+  // 시작 회차 변경 — 저장 시 이 회차부터 다시 배치되도록 기존 수동 이동(override)은 초기화한다.
+  function editStartNum(zoneId, num) {
+    setLocalEdits(prev => ({
+      ...prev,
+      [zoneId]: { ...(prev[zoneId] || {}), start_num: num, schedule_overrides: {} }
     }));
   }
 
@@ -906,6 +918,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                               </div>
                             );
                             if (key === 'start') return <div key={key} className={`${base} ${dim}`} style={{ ...wStyle, fontSize: 10 }}>{activeZone?.schedule_start || '—'}</div>;
+                            if (key === 'startnum') return <div key={key} className={`${base} font-mono ${dim}`} style={{ ...wStyle, fontSize: 10 }}>{activeZone ? `${getZoneValue(activeZone, 'start_num') || 1}회차~` : '—'}</div>;
                             if (key === 'end') return <div key={key} className={`${base} ${dim}`} style={{ ...wStyle, fontSize: 10 }}>{fmtDate(stats.endDate)}</div>;
                             if (key === 'dday') return <div key={key} className={`${base} font-mono ${ddayColor(stats.dday, sel)}`} style={{ ...wStyle, fontSize: 10 }}>{ddayLabel(stats.dday)}</div>;
                             if (POINT_FIELD[key]) return <div key={key} className={`${base} ${dim}`} style={{ ...wStyle, fontSize: 10 }}>{getZoneValue(activeZone || {}, POINT_FIELD[key]) ?? '—'}</div>;
@@ -970,6 +983,19 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                                       className="text-[10px] border border-gray-200 rounded px-0.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 w-full" />
                                   </div>
                                 );
+                                if (key === 'startnum') {
+                                  const tot = totalCount(zone) || 999;
+                                  const snVal = getZoneValue(zone, 'start_num') || 1;
+                                  return (
+                                    <div key={key} className={cell} style={wStyle}>
+                                      <input type="number" min="1" max={tot} value={snVal}
+                                        onChange={e => editStartNum(zone.id, Math.max(1, Math.min(tot, parseInt(e.target.value) || 1)))}
+                                        onClick={e => e.stopPropagation()}
+                                        title="이 회차부터 다시 배치됩니다 (저장 시 이후 일정 재계산)"
+                                        className="text-[10px] border border-gray-200 rounded px-0.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 w-full max-w-[46px] text-center" />
+                                    </div>
+                                  );
+                                }
                                 if (key === 'end') return <div key={key} className={`${cell} text-[10px] text-gray-400`} style={wStyle}>{fmtDate(startVal ? subStats.endDate : null)}</div>;
                                 if (key === 'dday') return <div key={key} className={`${cell} text-[10px] font-mono ${ddayColor(startVal ? subStats.dday : null, false)}`} style={wStyle}>{startVal ? ddayLabel(subStats.dday) : '—'}</div>;
                                 if (POINT_FIELD[key]) {

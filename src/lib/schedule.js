@@ -67,8 +67,11 @@ export const DEFAULT_SCHEDULE_SPECS = {
   },
 };
 
-// 측정주기 단위 → 일수 환산(횟수 자동 계산용; 월/년은 평균값)
-export const UNIT_DAYS = { day: 1, week: 7, month: 365.25 / 12, year: 365.25 };
+// 측정주기 단위 → 일수 환산(횟수 자동 계산용; 월/분기/반기/년은 평균값)
+export const UNIT_DAYS = { day: 1, week: 7, month: 365.25 / 12, quarter: 365.25 / 4, half: 365.25 / 2, year: 365.25 };
+
+// 월 기반 간격 단위 → 개월 수 (분기=3, 반기=6, 년=12)
+export const MONTHS_PER_UNIT = { month: 1, quarter: 3, half: 6, year: 12 };
 
 // 기간/간격으로부터 측정 횟수 자동 계산
 export function computePhaseCount(durationValue, durationUnit, interval, unit) {
@@ -106,7 +109,7 @@ function normalizePhase(p) {
 
 // unit → getDragBounds/isOverrideValid에 전달할 legacy type 문자열
 function unitToType(unit) {
-  if (unit === 'month') return 'monthly';
+  if (MONTHS_PER_UNIT[unit]) return 'monthly'; // month/quarter/half/year → 월 단위 취급
   if (unit === 'week')  return 'weekly';
   return 'daily';
 }
@@ -194,15 +197,15 @@ export function calcMeasurements(zone, holidayMap = {}, usedDates = null) {
     // Phase transition: advance baseDate by new phase's interval after last measurement.
     // (처음 처리하는 구간은 시작일이 곧 baseDate이므로 이동하지 않는다)
     if (phaseIdx > startPhaseIdx && lastBaseDate !== null) {
-      if (phase.unit === 'month') baseDate = addMonths(lastBaseDate, phase.interval);
+      if (MONTHS_PER_UNIT[phase.unit]) baseDate = addMonths(lastBaseDate, phase.interval * MONTHS_PER_UNIT[phase.unit]);
       else if (phase.unit === 'week') baseDate = addDays(lastBaseDate, phase.interval * 7);
       else baseDate = addDays(lastBaseDate, phase.interval);
     }
 
     for (let i = phaseIdx === startPhaseIdx ? startIWithin : 0; i < phase.count; i++) {
-      // Apply weekday rule for monthly measurements
+      // Apply weekday rule for month-based measurements
       let effectiveBaseDate = new Date(baseDate);
-      if (phase.unit === 'month' && weekdayRule) {
+      if (MONTHS_PER_UNIT[phase.unit] && weekdayRule) {
         effectiveBaseDate = getNthWeekdayOfMonth(
           baseDate.getFullYear(), baseDate.getMonth() + 1,
           weekdayRule.nth, weekdayRule.dow
@@ -239,8 +242,8 @@ export function calcMeasurements(zone, holidayMap = {}, usedDates = null) {
       });
       num++;
 
-      if (phase.unit === 'month') {
-        baseDate = addMonths(baseDate, phase.interval);
+      if (MONTHS_PER_UNIT[phase.unit]) {
+        baseDate = addMonths(baseDate, phase.interval * MONTHS_PER_UNIT[phase.unit]);
       } else if (phase.unit === 'week') {
         baseDate = addDays(baseDate, phase.interval * 7);
       } else if (phase.unit === 'day' && phase.interval === 1) {
