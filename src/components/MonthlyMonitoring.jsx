@@ -17,6 +17,9 @@ const CYCLE_TYPES = [
 const DEFAULT_INTERVAL = { daily: 1, weekly: 7, biweekly: 14 };
 const CYCLE_GRADES = ['P1', 'P2', 'P3', '유지관리'];
 const CATEGORY_BG = { '질소가스': '#faf5ff', '압축공기': '#fffbeb' };
+// 질소가스·압축공기는 부유균/낙하균/표면균/부유입자를 구분하지 않고 통합 측정값 하나로 관리한다.
+// 통합값은 airborne(→points_float) 한 곳에만 저장한다.
+const COMBINED_CATS = ['질소가스', '압축공기'];
 
 export default function MonthlyMonitoring({ year, onYearChange }) {
   const [month, setMonth] = useState(new Date().getMonth() + 1);
@@ -575,10 +578,13 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
   async function saveEntry() {
     setSaving(true);
     const countVal = parseInt(entryForm.count) || 0;
+    const combined = COMBINED_CATS.includes(editEntry.category);
     const payload = {
       zone_id: editEntry.id, year, month,
-      airborne: entryForm.airborne || null, settle: entryForm.settle || null,
-      surface: entryForm.surface || null, particle: entryForm.particle || null,
+      airborne: entryForm.airborne || null,
+      settle:   combined ? null : (entryForm.settle || null),
+      surface:  combined ? null : (entryForm.surface || null),
+      particle: combined ? null : (entryForm.particle || null),
       count: countVal, note: entryForm.note || null,
       start_date: entryForm.start_date || null, done: entryForm.done || false,
       ...(entryForm.id ? { id: entryForm.id } : {}),
@@ -591,9 +597,9 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
       const num = v => parseInt(v) || 0;
       const ptUpdate = {
         points_float: num(entryForm.airborne),
-        points_fall: num(entryForm.settle),
-        points_surface: num(entryForm.surface),
-        points_particle: num(entryForm.particle),
+        points_fall: combined ? 0 : num(entryForm.settle),
+        points_surface: combined ? 0 : num(entryForm.surface),
+        points_particle: combined ? 0 : num(entryForm.particle),
       };
       const curZone = zones.find(z => z.id === editEntry.id) || editEntry;
       const changed = ['points_float','points_fall','points_surface','points_particle']
@@ -824,10 +830,20 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                             </div>
                           ) : <span className="text-gray-300 text-xs">-</span>}
                         </td>
-                        <td className="px-3 py-3 text-center text-xs text-gray-500">{activeZone?.points_float || entry?.airborne || '-'}</td>
-                        <td className="px-3 py-3 text-center text-xs text-gray-500">{activeZone?.points_fall || entry?.settle || '-'}</td>
-                        <td className="px-3 py-3 text-center text-xs text-gray-500">{activeZone?.points_surface || entry?.surface || '-'}</td>
-                        <td className="px-3 py-3 text-center text-xs text-gray-500">{activeZone?.points_particle || entry?.particle || '-'}</td>
+                        {COMBINED_CATS.includes(group.category) ? (
+                          <td colSpan={4} className="px-3 py-3 text-center text-xs text-gray-500">
+                            {(activeZone?.points_float || entry?.airborne)
+                              ? <><span className="text-[10px] text-gray-400 mr-1">통합</span>{activeZone?.points_float || entry?.airborne}</>
+                              : <span className="text-[10px] text-gray-300">통합 -</span>}
+                          </td>
+                        ) : (
+                          <>
+                            <td className="px-3 py-3 text-center text-xs text-gray-500">{activeZone?.points_float || entry?.airborne || '-'}</td>
+                            <td className="px-3 py-3 text-center text-xs text-gray-500">{activeZone?.points_fall || entry?.settle || '-'}</td>
+                            <td className="px-3 py-3 text-center text-xs text-gray-500">{activeZone?.points_surface || entry?.surface || '-'}</td>
+                            <td className="px-3 py-3 text-center text-xs text-gray-500">{activeZone?.points_particle || entry?.particle || '-'}</td>
+                          </>
+                        )}
                         <td className="px-3 py-3 text-center">
                           <span className={`text-xs px-2 py-1 rounded-full font-medium ${
                             isComplete ? 'bg-green-100 text-green-700' :
@@ -976,14 +992,22 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
             </div>
             <div>
               <label className="text-xs text-gray-500">측정포인트 수 <span className="ml-1 text-blue-500">· 달력 연동</span></label>
-              <div className="grid grid-cols-4 gap-2 mt-0.5">
-                {[['airborne','부유균'],['settle','낙하균'],['surface','표면균'],['particle','부유입자']].map(([key, label]) => (
-                  <div key={key}>
-                    <label className="text-[11px] text-gray-400 block text-center">{label}</label>
-                    <input type="number" min="0" className="w-full border rounded px-2 py-1.5 text-sm text-center" placeholder="0" value={entryForm[key] || ''} onChange={e => setEntryForm(f => ({ ...f, [key]: e.target.value }))} />
-                  </div>
-                ))}
-              </div>
+              {COMBINED_CATS.includes(editEntry.category) ? (
+                <div className="mt-0.5">
+                  <label className="text-[11px] text-gray-400 block text-center">통합 (부유균·낙하균·표면균·부유입자)</label>
+                  <input type="number" min="0" className="w-full border rounded px-2 py-1.5 text-sm text-center" placeholder="0"
+                    value={entryForm.airborne || ''} onChange={e => setEntryForm(f => ({ ...f, airborne: e.target.value }))} />
+                </div>
+              ) : (
+                <div className="grid grid-cols-4 gap-2 mt-0.5">
+                  {[['airborne','부유균'],['settle','낙하균'],['surface','표면균'],['particle','부유입자']].map(([key, label]) => (
+                    <div key={key}>
+                      <label className="text-[11px] text-gray-400 block text-center">{label}</label>
+                      <input type="number" min="0" className="w-full border rounded px-2 py-1.5 text-sm text-center" placeholder="0" value={entryForm[key] || ''} onChange={e => setEntryForm(f => ({ ...f, [key]: e.target.value }))} />
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <div>
               <label className="text-xs text-gray-500">비고</label>
