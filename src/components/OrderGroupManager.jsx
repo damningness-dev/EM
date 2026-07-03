@@ -18,6 +18,8 @@ const DURATION_UNITS = [
   { value: 'year',  label: '년' },
 ];
 const CYCLE_GRADES = ['P1', 'P2', 'P3', '유지관리'];
+// 질소가스·압축공기는 부유균/낙하균/표면균/부유입자를 통합 측정값 하나로 관리한다(부유균 칸에 저장).
+const COMBINED_CATS = ['질소가스', '압축공기'];
 const BUILTIN_CATS = ['공조', '압축공기', '질소가스'];
 const PROGRESSION = ['P1', 'P2', 'P3', '유지관리'];
 const GRADES = ['P1', 'P2', 'P3', '유지관리', 'OQ', 'PQ'];
@@ -331,6 +333,15 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     setLocalEdits(prev => ({
       ...prev,
       [zoneId]: { ...(prev[zoneId] || {}), [field]: value }
+    }));
+  }
+
+  // 통합 측정포인트(질소가스·압축공기) 편집 — 부유균에 저장하고 나머지 3종은 0으로 정리.
+  function editCombinedPoint(zoneId, value) {
+    const v = value === '' ? null : Number(value);
+    setLocalEdits(prev => ({
+      ...prev,
+      [zoneId]: { ...(prev[zoneId] || {}), points_float: v, points_fall: 0, points_surface: 0, points_particle: 0 }
     }));
   }
 
@@ -925,7 +936,15 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                             if (key === 'startnum') return <div key={key} className={`${base} font-mono ${dim}`} style={{ ...wStyle, fontSize: 10 }}>{activeZone ? `${getZoneValue(activeZone, 'start_num') || 1}회차~` : '—'}</div>;
                             if (key === 'end') return <div key={key} className={`${base} ${dim}`} style={{ ...wStyle, fontSize: 10 }}>{fmtDate(stats.endDate)}</div>;
                             if (key === 'dday') return <div key={key} className={`${base} font-mono ${ddayColor(stats.dday, sel)}`} style={{ ...wStyle, fontSize: 10 }}>{ddayLabel(stats.dday)}</div>;
-                            if (POINT_FIELD[key]) return <div key={key} className={`${base} ${dim}`} style={{ ...wStyle, fontSize: 10 }}>{getZoneValue(activeZone || {}, POINT_FIELD[key]) ?? '—'}</div>;
+                            if (POINT_FIELD[key]) {
+                              if (COMBINED_CATS.includes(group.category)) {
+                                // 통합: 부유균 칸에만 통합값 표시, 나머지 3칸은 비움
+                                return key === 'float'
+                                  ? <div key={key} className={`${base} ${dim}`} style={{ ...wStyle, fontSize: 10 }} title="통합 측정포인트">{getZoneValue(activeZone || {}, 'points_float') ?? '—'}</div>
+                                  : <div key={key} className={`${base} ${sel ? 'text-blue-300' : 'text-gray-200'}`} style={{ ...wStyle, fontSize: 10 }}>·</div>;
+                              }
+                              return <div key={key} className={`${base} ${dim}`} style={{ ...wStyle, fontSize: 10 }}>{getZoneValue(activeZone || {}, POINT_FIELD[key]) ?? '—'}</div>;
+                            }
                             if (key === 'count') return <div key={key} className={`${base} font-mono ${dim}`} style={{ ...wStyle, fontSize: 10 }}>{stats.total ? `${stats.done}/${stats.total}` : '—'}</div>;
                             if (key === 'progress') return (
                               <div key={key} className={base} style={wStyle}>
@@ -1003,6 +1022,18 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                                 if (key === 'end') return <div key={key} className={`${cell} text-[10px] text-gray-400`} style={wStyle}>{fmtDate(startVal ? subStats.endDate : null)}</div>;
                                 if (key === 'dday') return <div key={key} className={`${cell} text-[10px] font-mono ${ddayColor(startVal ? subStats.dday : null, false)}`} style={wStyle}>{startVal ? ddayLabel(subStats.dday) : '—'}</div>;
                                 if (POINT_FIELD[key]) {
+                                  if (COMBINED_CATS.includes(zone.category)) {
+                                    // 통합: 부유균 칸에만 통합 입력, 나머지 3칸은 비움
+                                    if (key !== 'float') return <div key={key} className={`${cell} text-[9px] text-gray-300`} style={wStyle}>·</div>;
+                                    const cval = getZoneValue(zone, 'points_float') ?? '';
+                                    return (
+                                      <div key={key} className={cell} style={wStyle}>
+                                        <input type="number" min="0" max="999" value={cval} title="통합 측정포인트 (부유균·낙하균·표면균·부유입자)"
+                                          onChange={e => editCombinedPoint(zone.id, e.target.value)} onClick={e => e.stopPropagation()}
+                                          className="text-[10px] border border-gray-200 rounded px-0.5 py-0.5 bg-blue-50 focus:outline-none focus:ring-1 focus:ring-blue-500 w-full max-w-[40px] text-center" />
+                                      </div>
+                                    );
+                                  }
                                   const val = getZoneValue(zone, POINT_FIELD[key]) ?? '';
                                   return (
                                     <div key={key} className={cell} style={wStyle}>
