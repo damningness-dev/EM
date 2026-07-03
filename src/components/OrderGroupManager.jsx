@@ -655,8 +655,12 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     if (!z.schedule_start) return { status: null, done: 0, total: 0, endDate: null, dday: null };
     let ms = [];
     try { ms = calcMeasurements(z, statHolidayMap); } catch { /* ignore */ }
-    const total = ms.length;
-    const done = ms.filter(m => m.date <= todayMid).length;
+    // 시작회차 반영: 총 횟수는 전체 스펙 기준, 완료 수는 (시작회차-1)개를
+    // 이미 완료한 것으로 보고 이후 배치분 중 오늘까지 지난 것을 더한다.
+    // 예) 시작회차 5, 총 10회 → 시작 시점 5/10로 기록.
+    const startNum = Math.max(1, parseInt(z.start_num) || 1);
+    const total = totalCount(z) || (ms.length + startNum - 1);
+    const done = (startNum - 1) + ms.filter(m => m.date <= todayMid).length;
     let endDate = null;
     try { endDate = calcEndDate(z); } catch { /* ignore */ }
     const startDate = new Date(z.schedule_start + 'T00:00:00');
