@@ -353,7 +353,12 @@ export function optimizeMonthSchedule({ zones, tempSchedules = [], completions =
   const events = [];
   zones.forEach(zone => {
     if (!zone.schedule_start) return;
-    const pts = {
+    // 질소가스·압축공기는 통합 측정값(points_float) 하나만 사용한다.
+    // (구형 데이터에 남아있는 낙하/표면/부유입자 값을 합산하지 않도록)
+    const combined = COMBINED_CATS.includes(zone.category);
+    const pts = combined ? {
+      surface: 0, float: zone.points_float || 0, fall: 0, particle: 0,
+    } : {
       surface: zone.points_surface || 0,
       float:   zone.points_float   || 0,
       fall:    zone.points_fall    || 0,

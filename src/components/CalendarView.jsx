@@ -1606,11 +1606,11 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                             <div className="flex gap-1 mt-1 flex-wrap">
                               {zone.category === '질소가스' ? (
                                 <span className="text-[10px] bg-purple-100 text-purple-700 px-1 py-0.5 rounded font-medium">
-                                  질소 {(zone.points_surface||0)+(zone.points_float||0)+(zone.points_fall||0)+(zone.points_particle||0)}pt
+                                  질소 {zone.points_float || 0}pt
                                 </span>
                               ) : zone.category === '압축공기' ? (
                                 <span className="text-[10px] bg-yellow-100 text-yellow-700 px-1 py-0.5 rounded font-medium">
-                                  압축공기 {(zone.points_surface||0)+(zone.points_float||0)+(zone.points_fall||0)+(zone.points_particle||0)}pt
+                                  압축공기 {zone.points_float || 0}pt
                                 </span>
                               ) : (
                                 <>
