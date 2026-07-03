@@ -1315,8 +1315,9 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                 schedEvts.forEach(({ zone }) => {
                   const s=zone.points_surface||0, f=zone.points_float||0, l=zone.points_fall||0, p=zone.points_particle||0;
                   if (zone.category === '공조') { catPts['공조'].s+=s; catPts['공조'].f+=f; catPts['공조'].l+=l; catPts['공조'].p+=p; }
-                  else if (zone.category === '질소가스') catPts['질소가스'] += s+f+l+p;
-                  else if (zone.category === '압축공기') catPts['압축공기'] += s+f+l+p;
+                  // 질소가스·압축공기는 통합값(points_float=f) 하나만 집계 (일정관리와 일치)
+                  else if (zone.category === '질소가스') catPts['질소가스'] += f;
+                  else if (zone.category === '압축공기') catPts['압축공기'] += f;
                 });
                 const tempPtsTotal = tempEvts.reduce((t,e)=>t+(e.points_surface||0)+(e.points_float||0)+(e.points_fall||0)+(e.points_particle||0), 0);
                 const hasPts = catPts['공조'].s+catPts['공조'].f+catPts['공조'].l+catPts['공조'].p+catPts['질소가스']+catPts['압축공기']+tempPtsTotal > 0;
