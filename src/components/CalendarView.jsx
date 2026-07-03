@@ -122,6 +122,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   const [newHolidayDow, setNewHolidayDow] = useState(1);
   const [completions, setCompletions] = useState(new Set());
   const [completionPrompt, setCompletionPrompt] = useState(null); // {zoneId,zoneName,grade,num,dateStr,isCompleted}
+  const [groupMovePrompt, setGroupMovePrompt] = useState(null); // { dateStr, dragData, groupName, members:[{zoneId,num,min,max,label}] }
   const [tempSchedules, setTempSchedules] = useState([]);
   const [blockedDates, setBlockedDates] = useState(new Set()); // 일정비우기 날짜('yyyy-MM-dd')
   const [addSchedPopup, setAddSchedPopup] = useState(null); // { date }
@@ -575,15 +576,74 @@ export default function CalendarView({ year: initYear, onYearChange }) {
       return;
     }
 
-    const updated = {
-      ...zone,
-      schedule_overrides: {
-        ...(zone.schedule_overrides || {}),
-        [String(dragData.num)]: dateStr,
-      },
-    };
-    await upsertZone(updated);
-    setZones(prev => prev.map(z => z.id === dragData.zoneId ? updated : z));
+    // 이동 대상이 그룹(폴더)에 속하고, 같은 날 같은 그룹의 다른 일정이 함께 있으면
+    // 그룹 전체를 옮길지 물어본다.
+    const grp = groups.find(g => (g.zoneIds || []).some(id => String(id) === String(zone.id)));
+    if (grp && dragData.fromDateStr && dragData.fromDateStr !== dateStr) {
+      const siblings = (scheduleByDate[dragData.fromDateStr] || []).filter(ev =>
+        String(ev.zone.id) !== String(zone.id)
+        && (grp.zoneIds || []).some(id => String(id) === String(ev.zone.id))
+        && !completions.has(`${ev.zone.id}_${ev.measurement.num}`)
+      );
+      if (siblings.length > 0) {
+        setGroupMovePrompt({
+          dateStr,
+          dragData,
+          groupName: grp.name,
+          members: siblings.map(ev => {
+            const b = getDragBounds(ev.measurement);
+            return {
+              zoneId: ev.zone.id, num: ev.measurement.num,
+              min: format(b.min, 'yyyy-MM-dd'), max: format(b.max, 'yyyy-MM-dd'),
+              label: `${ev.zone.name}[${ev.zone.grade}]-${ev.measurement.num}`,
+            };
+          }),
+        });
+        return;
+      }
+    }
+
+    await applyMoves([{ zoneId: dragData.zoneId, num: dragData.num, date: dateStr }]);
+  }
+
+  // 여러 측정을 새 날짜로 이동 — 구역별로 override를 합쳐 한 번에 저장.
+  // moves: [{ zoneId, num, date }]
+  async function applyMoves(moves) {
+    const byZone = {};
+    moves.forEach(mv => { (byZone[mv.zoneId] || (byZone[mv.zoneId] = [])).push(mv); });
+    const updates = [];
+    Object.entries(byZone).forEach(([zid, mvs]) => {
+      const zone = zones.find(z => String(z.id) === String(zid));
+      if (!zone) return;
+      const ov = { ...(zone.schedule_overrides || {}) };
+      mvs.forEach(mv => { ov[String(mv.num)] = mv.date; });
+      updates.push({ ...zone, schedule_overrides: ov });
+    });
+    if (!updates.length) return;
+    await Promise.all(updates.map(u => upsertZone(u)));
+    setZones(prev => prev.map(z => updates.find(u => u.id === z.id) || z));
+  }
+
+  // 그룹 이동 프롬프트 확정 — includeMembers=true면 그룹 구성원까지 함께 이동.
+  async function confirmGroupMove(includeMembers) {
+    const p = groupMovePrompt;
+    if (!p) return;
+    const moves = [{ zoneId: p.dragData.zoneId, num: p.dragData.num, date: p.dateStr }];
+    let skipped = 0;
+    if (includeMembers) {
+      p.members.forEach(m => {
+        if (p.dateStr < m.min || p.dateStr > m.max) { skipped++; return; } // 이동 범위 밖 → 제외
+        moves.push({ zoneId: m.zoneId, num: m.num, date: p.dateStr });
+      });
+    }
+    setGroupMovePrompt(null);
+    await applyMoves(moves);
+    if (includeMembers) {
+      const moved = moves.length;
+      showSuccess(skipped > 0
+        ? `${moved}건 이동 (이동 범위를 벗어난 ${skipped}건은 제외)`
+        : `그룹 일정 ${moved}건을 함께 이동했습니다.`);
+    }
   }
 
   // 일정비우기 토글: 체크 시 해당일 일정을 모두 다른 날로 옮기고 그 날짜를 차단
@@ -708,6 +768,34 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                 }}
                 className={`px-4 py-2 text-sm text-white rounded-lg ${completionPrompt.isCompleted ? 'bg-red-500 hover:bg-red-600' : 'bg-green-600 hover:bg-green-700'}`}
               >{completionPrompt.isCompleted ? '완료 취소' : '완료 처리'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 그룹 일정 함께 이동 확인 */}
+      {groupMovePrompt && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/40" onClick={() => setGroupMovePrompt(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-96 p-6" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-gray-900 mb-1">그룹 일정 함께 이동</h3>
+            <p className="text-sm text-gray-500 mb-3">
+              이 일정은 <span className="font-semibold text-blue-600">{groupMovePrompt.groupName}</span> 그룹에 속합니다.<br/>
+              같은 날의 그룹 일정 <span className="font-semibold text-gray-800">{groupMovePrompt.members.length}건</span>을 <span className="font-semibold text-gray-800">{groupMovePrompt.dateStr}</span>(으)로 함께 옮길까요?
+            </p>
+            <div className="max-h-32 overflow-y-auto mb-4 rounded-lg bg-gray-50 border border-gray-100 divide-y divide-gray-100">
+              {groupMovePrompt.members.map(m => (
+                <div key={`${m.zoneId}_${m.num}`} className="px-3 py-1.5 text-xs text-gray-600 flex items-center justify-between">
+                  <span className="truncate">{m.label}</span>
+                  {(groupMovePrompt.dateStr < m.min || groupMovePrompt.dateStr > m.max)
+                    && <span className="shrink-0 ml-2 text-[10px] text-amber-500">범위 밖·제외</span>}
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => confirmGroupMove(false)}
+                className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">이 일정만 이동</button>
+              <button onClick={() => confirmGroupMove(true)}
+                className="px-4 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700">그룹 전체 이동</button>
             </div>
           </div>
         </div>
@@ -1335,6 +1423,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                                 type: measurement.type,
                                 minDateStr: format(bounds.min, 'yyyy-MM-dd'),
                                 maxDateStr: format(bounds.max, 'yyyy-MM-dd'),
+                                fromDateStr: format(measurement.date, 'yyyy-MM-dd'),
                               }));
                             }}
                             onDragEnd={isDone ? undefined : () => setDragOverDay(null)}
