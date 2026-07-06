@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, Notification, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -6,6 +6,10 @@ const https = require('https');
 const http = require('http');
 
 const isDev = !app.isPackaged;
+
+// Windows 토스트 알림을 위해 AppUserModelID를 최대한 일찍(앱 준비 전) 지정한다.
+// 설치본의 바로가기 AUMID(= build.appId)와 일치해야 알림이 표시된다.
+try { app.setAppUserModelId('com.em.monitoring'); } catch { /* ignore */ }
 
 // ─── ASAR 업데이터 ─────────────────────────────────────────────────────────────
 
@@ -383,6 +387,47 @@ function todoOccursOn(todo, dateStr) {
   return false;
 }
 
+// 데스크톱 알람 팝업 창 — 항상 위에 뜨는 별도 창(윈도우 알림 설정과 무관하게 확실히 표시)
+let alarmWindows = [];
+function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function showAlarmWindow(todo) {
+  try {
+    const wa = screen.getPrimaryDisplay().workAreaSize;
+    const W = 360, H = 150;
+    const offset = alarmWindows.length * (H + 10);
+    const win = new BrowserWindow({
+      width: W, height: H,
+      x: wa.width - W - 16,
+      y: Math.max(16, wa.height - H - 16 - offset),
+      frame: false, resizable: false, movable: true, minimizable: false, maximizable: false,
+      alwaysOnTop: true, skipTaskbar: true, show: false,
+      backgroundColor: '#ffffff',
+      webPreferences: { contextIsolation: true },
+    });
+    win.setAlwaysOnTop(true, 'screen-saver');
+    const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+      html,body{margin:0;height:100%}
+      body{font-family:'Malgun Gothic','Segoe UI',sans-serif;background:#fff;border:2px solid #fb923c;border-radius:12px;box-sizing:border-box;display:flex;flex-direction:column;padding:14px;overflow:hidden}
+      .h{display:flex;align-items:center;gap:6px;color:#ea580c;font-size:12px;font-weight:700;margin-bottom:6px}
+      .t{font-size:15px;font-weight:700;color:#111827;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .n{font-size:12px;color:#6b7280;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      button{margin-top:auto;padding:8px;background:#f97316;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer}
+      button:hover{background:#ea580c}
+    </style></head><body>
+      <div class="h">⏰ 할일 알람 ${todo.time ? '· ' + esc(todo.time) : ''}</div>
+      <div class="t">${esc(todo.title)}</div>
+      ${todo.note ? `<div class="n">${esc(todo.note)}</div>` : ''}
+      <button onclick="window.close()">확인</button>
+    </body></html>`;
+    win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    win.once('ready-to-show', () => { win.show(); });
+    win.on('closed', () => { alarmWindows = alarmWindows.filter(x => x !== win); });
+    alarmWindows.push(win);
+    // 2분 후 자동 닫힘
+    setTimeout(() => { if (win && !win.isDestroyed()) win.close(); }, 120000);
+  } catch { /* ignore */ }
+}
+
 const firedAlarms = new Set(); // `${id}_${yyyy-MM-dd}` — 하루 1회 발사 보장
 let alarmTimer = null;
 function checkAlarms() {
@@ -401,15 +446,11 @@ function checkAlarms() {
     const key = `${t.id}_${todayStr}`;
     if (firedAlarms.has(key)) return;
     firedAlarms.add(key);
-    // 1) 작업표시줄 깜빡임 (토스트가 막혀도 알아챌 수 있게)
+    // 1) 데스크톱 팝업 창 (항상 위) — 윈도우 알림 설정과 무관하게 확실히 표시
+    showAlarmWindow(t);
+    // 2) 작업표시줄 깜빡임
     try { if (mainWin && !mainWin.isDestroyed()) mainWin.flashFrame(true); } catch { /* ignore */ }
-    // 2) 인앱 팝업 (윈도우 알림이 차단돼도 확실히 표시)
-    try {
-      BrowserWindow.getAllWindows().forEach(w => {
-        if (!w.isDestroyed()) w.webContents.send('todo:alarm', { id: t.id, title: t.title || '할일', note: t.note || '', time: t.time });
-      });
-    } catch { /* ignore */ }
-    // 3) 윈도우 네이티브 알림
+    // 3) 윈도우 네이티브 토스트 알림 (환경에 따라 표시)
     try {
       if (Notification.isSupported()) {
         const n = new Notification({ title: '⏰ 할일 알림', body: (t.title || '할일') + (t.note ? `\n${t.note}` : ''), silent: false });
@@ -494,8 +535,6 @@ if (applyUpdateArg) {
 } else {
   // Normal startup
   app.whenReady().then(() => {
-    // Windows 알림에 앱 아이덴티티 지정 (없으면 알림이 안 뜰 수 있음)
-    try { app.setAppUserModelId('com.em.monitoring'); } catch { /* ignore */ }
     registerHandlers();
     createWindow();
     startAlarmScheduler();
