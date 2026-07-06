@@ -11,7 +11,7 @@ import UpdateNotifier from './components/UpdateNotifier';
 import SyncControl from './components/SyncControl';
 import Login from './components/Login';
 import UserManager from './components/UserManager';
-import { seedInitialData, fetchScheduleConfig } from './lib/api';
+import { seedInitialData, fetchScheduleConfig, getAutoStart, setAutoStart } from './lib/api';
 import { setScheduleConfig } from './lib/schedule';
 import { INITIAL_CALIBRATION, MONITORING_ZONES } from './data/initialData';
 
@@ -38,6 +38,16 @@ export default function App() {
     return null;
   });
   const [showUserMgr, setShowUserMgr] = useState(false);
+  const [autoStart, setAutoStartState] = useState(false);
+
+  useEffect(() => {
+    if (window.electronAPI) getAutoStart().then(setAutoStartState).catch(() => {});
+  }, []);
+
+  async function toggleAutoStart(enabled) {
+    setAutoStartState(enabled);
+    try { await setAutoStart(enabled); } catch { /* ignore */ }
+  }
 
   useEffect(() => {
     seedInitialData(INITIAL_CALIBRATION, MONITORING_ZONES)
@@ -118,6 +128,13 @@ export default function App() {
           <button onClick={() => setShowUserMgr(true)} className="mx-4 mb-2 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-xs text-gray-300">
             👤 사용자 관리
           </button>
+        )}
+
+        {window.electronAPI && (
+          <label className="mx-4 mb-2 flex items-center gap-2 text-xs text-gray-400 cursor-pointer select-none">
+            <input type="checkbox" checked={autoStart} onChange={e => toggleAutoStart(e.target.checked)} />
+            부팅 시 자동 시작 (백그라운드 알람)
+          </label>
         )}
 
         <SyncControl />

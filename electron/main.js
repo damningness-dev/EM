@@ -213,6 +213,29 @@ function newId() {
   return crypto.randomUUID();
 }
 
+// ─── 앱 환경설정 / 부팅 시 자동 시작 ──────────────────────────────────────────
+
+function prefsPath() { return path.join(app.getPath('userData'), 'app-prefs.json'); }
+function loadPrefs() { try { return JSON.parse(fs.readFileSync(prefsPath(), 'utf-8')) || {}; } catch { return {}; } }
+function savePrefs(p) { try { fs.writeFileSync(prefsPath(), JSON.stringify(p, null, 2)); } catch { /* ignore */ } }
+
+// 부팅 시 자동 시작 등록/해제. 로그인 시엔 '--hidden'으로 실행 → 창 없이 트레이 상주.
+function applyAutoStart(enabled) {
+  try {
+    if (isDev) return; // 개발 모드에선 등록하지 않음
+    app.setLoginItemSettings({ openAtLogin: !!enabled, args: ['--hidden'] });
+  } catch { /* ignore */ }
+}
+// 최초 실행 시 기본으로 자동 시작을 켠다(이후 사용자가 끄면 그 설정을 존중).
+function initAutoStart() {
+  const p = loadPrefs();
+  if (!p.autoStartInitialized) {
+    applyAutoStart(true);
+    p.autoStartInitialized = true;
+    savePrefs(p);
+  }
+}
+
 // ─── 공유 동기화 (GitHub Gist) ────────────────────────────────────────────────
 // 일정 데이터(em-data.json)를 Gist에 업로드해 공유하고, 다른 PC는 주기적으로
 // 내려받아 최신화한다. 업로드는 토큰이 있는 관리자만, 읽기는 토큰 없이 가능.
@@ -502,11 +525,14 @@ function startAlarmScheduler() {
 // ─── 윈도우 생성 ────────────────────────────────────────────────────────────────
 
 function createWindow() {
+  // 부팅 시 자동 실행(로그인 항목)은 '--hidden'으로 실행 → 창 없이 트레이 상주.
+  const startHidden = process.argv.includes('--hidden');
   mainWin = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 900,
     minHeight: 600,
+    show: !startHidden,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -581,6 +607,7 @@ if (applyUpdateArg) {
     registerHandlers();
     createWindow();
     createTray();
+    initAutoStart();
     startAlarmScheduler();
   });
 
@@ -625,6 +652,16 @@ function registerHandlers() {
   });
   ipcMain.handle('sync:upload', () => syncUpload());
   ipcMain.handle('sync:pull', () => syncPull(true));
+
+  // ── 부팅 시 자동 시작 ──
+  ipcMain.handle('app:getAutoStart', () => {
+    try { return app.getLoginItemSettings().openAtLogin; } catch { return false; }
+  });
+  ipcMain.handle('app:setAutoStart', (_e, enabled) => {
+    applyAutoStart(enabled);
+    const p = loadPrefs(); p.autoStartInitialized = true; savePrefs(p);
+    return { ok: true, enabled: !!enabled };
+  });
 
   // ── 사용자 명부(권한) ──
   ipcMain.handle('users:getAll', () => loadData().users || []);

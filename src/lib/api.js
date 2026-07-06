@@ -166,6 +166,15 @@ export async function toggleTodoDone(id, dateStr) {
   return api.invoke('todos:toggleDone', id, dateStr);
 }
 
+// ─── 부팅 시 자동 시작 ────────────────────────────────────────────────────────
+
+export async function getAutoStart() {
+  return api.invoke('app:getAutoStart');
+}
+export async function setAutoStart(enabled) {
+  return api.invoke('app:setAutoStart', enabled);
+}
+
 // ─── 사용자 명부(권한) ────────────────────────────────────────────────────────
 
 export async function fetchUsers() {
