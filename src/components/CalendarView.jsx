@@ -567,6 +567,18 @@ export default function CalendarView({ year: initYear, onYearChange }) {
       return;
     }
 
+    // 각 단계의 '첫 측정'을 옮기면 시작일 자체를 재설정 → 이후 일정 전부가
+    // 새 시작일 기준 주기로 재배치된다. (기존 수동 이동은 초기화)
+    // 일정관리의 시작일·종료예정일도 자동으로 갱신됨.
+    if (dragData.isFirst) {
+      const updated = { ...zone, schedule_start: dateStr, schedule_overrides: {} };
+      await upsertZone(updated);
+      setZones(prev => prev.map(z => z.id === zone.id ? updated : z));
+      window.electronAPI?.notifyDataChanged?.();
+      showSuccess('시작일을 옮기고 이후 일정을 재배치했습니다.');
+      return;
+    }
+
     if (dateStr < dragData.minDateStr || dateStr > dragData.maxDateStr) {
       const typeMsg = dragData.type === 'weekly' ? '해당 주간 내'
         : dragData.type === 'biweekly' ? '해당 주간 내'
@@ -1426,6 +1438,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                                 maxDateStr: format(bounds.max, 'yyyy-MM-dd'),
                                 fromDateStr: format(measurement.date, 'yyyy-MM-dd'),
                                 spanMonths: measurement.spanMonths || 1,
+                                isFirst: !!measurement.isFirst,
                               }));
                             }}
                             onDragEnd={isDone ? undefined : () => setDragOverDay(null)}
