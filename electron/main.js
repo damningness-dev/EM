@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Notification, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, Notification, screen, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -18,6 +18,38 @@ const ASAR_URL = 'https://github.com/damningness-dev/EM/releases/latest/download
 
 let mainWin = null;
 let orderManagerWin = null;
+let tray = null;
+app.isQuitting = false;
+
+// 단일 인스턴스 보장 — 두 번 실행 시 기존 창을 띄운다 (트레이 상주와 함께 필요).
+// 단, 업데이트 적용 재실행(--apply-update) 중에는 락 경쟁을 피하기 위해 건너뛴다.
+const _applyingUpdate = !isDev && process.argv.some(a => a.startsWith('--apply-update='));
+if (!_applyingUpdate) {
+  if (!app.requestSingleInstanceLock()) {
+    app.quit();
+  } else {
+    app.on('second-instance', () => {
+      if (mainWin) { if (mainWin.isMinimized()) mainWin.restore(); mainWin.show(); mainWin.focus(); }
+    });
+  }
+}
+
+function createTray() {
+  if (tray) return;
+  try {
+    const icon = nativeImage.createFromPath(path.join(__dirname, 'tray-icon.png'));
+    tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon);
+    tray.setToolTip('환경 모니터링 관리 시스템');
+    const menu = Menu.buildFromTemplate([
+      { label: '열기', click: () => { if (mainWin) { mainWin.show(); mainWin.focus(); } } },
+      { type: 'separator' },
+      { label: '종료', click: () => { app.isQuitting = true; app.quit(); } },
+    ]);
+    tray.setContextMenu(menu);
+    tray.on('click', () => { if (mainWin) { mainWin.isVisible() ? mainWin.focus() : mainWin.show(); } });
+    tray.on('double-click', () => { if (mainWin) { mainWin.show(); mainWin.focus(); } });
+  } catch { /* ignore */ }
+}
 
 function sendStatus(status) {
   if (mainWin && !mainWin.isDestroyed()) {
@@ -405,6 +437,7 @@ function showAlarmWindow(todo) {
       webPreferences: { contextIsolation: true },
     });
     win.setAlwaysOnTop(true, 'screen-saver');
+    try { win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch { /* ignore */ }
     const html = `<!doctype html><html><head><meta charset="utf-8"><style>
       html,body{margin:0;height:100%}
       body{font-family:'Malgun Gothic','Segoe UI',sans-serif;background:#fff;border:2px solid #fb923c;border-radius:12px;box-sizing:border-box;display:flex;flex-direction:column;padding:14px;overflow:hidden}
@@ -420,7 +453,7 @@ function showAlarmWindow(todo) {
       <button onclick="window.close()">확인</button>
     </body></html>`;
     win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
-    win.once('ready-to-show', () => { win.show(); });
+    win.once('ready-to-show', () => { win.show(); win.moveTop(); });
     win.on('closed', () => { alarmWindows = alarmWindows.filter(x => x !== win); });
     alarmWindows.push(win);
     // 2분 후 자동 닫힘
@@ -497,6 +530,16 @@ function createWindow() {
     if (!isDev) { syncPull(false); restartSyncTimer(); }
   });
 
+  // 창 닫기 = 트레이로 숨김(백그라운드 유지) → 알람 스케줄러가 계속 동작.
+  // 완전 종료는 트레이 메뉴의 '종료'로.
+  mainWin.on('close', (e) => {
+    if (!app.isQuitting) {
+      e.preventDefault();
+      mainWin.hide();
+      if (orderManagerWin && !orderManagerWin.isDestroyed()) orderManagerWin.hide();
+    }
+  });
+
   mainWin.on('closed', () => {
     if (orderManagerWin && !orderManagerWin.isDestroyed()) orderManagerWin.close();
     mainWin = null;
@@ -537,14 +580,19 @@ if (applyUpdateArg) {
   app.whenReady().then(() => {
     registerHandlers();
     createWindow();
+    createTray();
     startAlarmScheduler();
   });
 
-  app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit();
-  });
+  app.on('before-quit', () => { app.isQuitting = true; });
+
+  // 트레이 상주: 창을 닫아도 종료하지 않는다 (알람이 계속 동작).
+  // 완전 종료는 트레이 메뉴 '종료'로만.
+  app.on('window-all-closed', () => { /* keep running in tray */ });
+
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (mainWin) mainWin.show();
+    else if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 }
 
