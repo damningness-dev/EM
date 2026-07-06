@@ -186,11 +186,12 @@ function syncConfigPath() {
   return path.join(app.getPath('userData'), 'sync-config.json');
 }
 function loadSyncConfig() {
+  const def = { gistId: '', token: '', autoSync: true, intervalMin: 5, lastSyncedAt: '', role: 'member', requesterName: '' };
   try {
     const c = JSON.parse(fs.readFileSync(syncConfigPath(), 'utf-8'));
-    return { gistId: '', token: '', autoSync: true, intervalMin: 5, lastSyncedAt: '', ...c };
+    return { ...def, ...c };
   } catch {
-    return { gistId: '', token: '', autoSync: true, intervalMin: 5, lastSyncedAt: '' };
+    return def;
   }
 }
 function saveSyncConfig(cfg) {
@@ -309,6 +310,48 @@ function restartSyncTimer() {
     const ms = Math.max(1, cfg.intervalMin || 5) * 60 * 1000;
     syncTimer = setInterval(() => { syncPull(false); }, ms);
   }
+}
+
+// ─── 편집 요청 (Gist 댓글 기반) ───────────────────────────────────────────────
+// 멤버(관리자 아님)가 일정 이동을 '요청'하면 공유 Gist에 댓글로 남긴다.
+// 관리자는 댓글을 읽어 달력에 표시하고, 적용/삭제할 수 있다.
+const REQ_MARKER = 'EM-EDIT-REQ:';
+
+async function submitEditRequest(req) {
+  const cfg = loadSyncConfig();
+  if (!cfg.gistId) return { ok: false, error: 'Gist가 설정되지 않았습니다' };
+  if (!cfg.token) return { ok: false, error: '편집 요청하려면 GitHub 토큰이 필요합니다' };
+  const payload = { ...req, requester: cfg.requesterName || '익명', ts: new Date().toISOString() };
+  try {
+    const c = await ghRequest('POST', `https://api.github.com/gists/${cfg.gistId}/comments`, {
+      token: cfg.token, body: { body: REQ_MARKER + JSON.stringify(payload) },
+    });
+    return { ok: true, id: c.id };
+  } catch (err) { return { ok: false, error: err.message }; }
+}
+
+async function getEditRequests() {
+  const cfg = loadSyncConfig();
+  if (!cfg.gistId) return [];
+  try {
+    const comments = await ghRequest('GET', `https://api.github.com/gists/${cfg.gistId}/comments?per_page=100`, { token: cfg.token || undefined });
+    const out = [];
+    (comments || []).forEach(c => {
+      const b = (c.body || '').trim();
+      if (!b.startsWith(REQ_MARKER)) return;
+      try { out.push({ commentId: c.id, ...JSON.parse(b.slice(REQ_MARKER.length)) }); } catch { /* ignore */ }
+    });
+    return out;
+  } catch { return []; }
+}
+
+async function resolveEditRequest(commentId) {
+  const cfg = loadSyncConfig();
+  if (!cfg.gistId || !cfg.token) return { ok: false, error: '권한이 없습니다 (토큰 필요)' };
+  try {
+    await ghRequest('DELETE', `https://api.github.com/gists/${cfg.gistId}/comments/${commentId}`, { token: cfg.token });
+    return { ok: true };
+  } catch (err) { return { ok: false, error: err.message }; }
 }
 
 // ─── 할일(반복 일정) 알람 ──────────────────────────────────────────────────────
@@ -468,7 +511,7 @@ function registerHandlers() {
   // ── 공유 동기화 (Gist) ──
   ipcMain.handle('sync:getConfig', () => {
     const c = loadSyncConfig();
-    return { gistId: c.gistId || '', hasToken: !!c.token, autoSync: c.autoSync !== false, intervalMin: c.intervalMin || 5, lastSyncedAt: c.lastSyncedAt || '' };
+    return { gistId: c.gistId || '', hasToken: !!c.token, autoSync: c.autoSync !== false, intervalMin: c.intervalMin || 5, lastSyncedAt: c.lastSyncedAt || '', role: c.role || 'member', requesterName: c.requesterName || '' };
   });
   ipcMain.handle('sync:setConfig', (_e, patch = {}) => {
     const c = loadSyncConfig();
@@ -477,12 +520,19 @@ function registerHandlers() {
     else if (patch.token) c.token = String(patch.token).trim(); // 빈 값이면 기존 토큰 유지
     if (patch.autoSync !== undefined) c.autoSync = !!patch.autoSync;
     if (patch.intervalMin !== undefined) c.intervalMin = Math.max(1, parseInt(patch.intervalMin) || 5);
+    if (patch.role !== undefined) c.role = patch.role === 'admin' ? 'admin' : 'member';
+    if (patch.requesterName !== undefined) c.requesterName = String(patch.requesterName).trim();
     saveSyncConfig(c);
     restartSyncTimer();
     return { ok: true };
   });
   ipcMain.handle('sync:upload', () => syncUpload());
   ipcMain.handle('sync:pull', () => syncPull(true));
+
+  // ── 편집 요청 ──
+  ipcMain.handle('sync:submitEditRequest', (_e, req) => submitEditRequest(req));
+  ipcMain.handle('sync:getEditRequests', () => getEditRequests());
+  ipcMain.handle('sync:resolveEditRequest', (_e, commentId) => resolveEditRequest(commentId));
 
   // ── 할일(반복 일정) ──
   ipcMain.handle('todos:getAll', () => loadData().todos || []);

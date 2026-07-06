@@ -76,13 +76,15 @@ function SettingsModal({ cfg, onClose, onStatus }) {
   const [token, setToken] = useState('');
   const [autoSync, setAutoSync] = useState(cfg?.autoSync !== false);
   const [intervalMin, setIntervalMin] = useState(cfg?.intervalMin || 5);
+  const [role, setRole] = useState(cfg?.role || 'member');
+  const [requesterName, setRequesterName] = useState(cfg?.requesterName || '');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
 
   async function save() {
     setBusy(true);
     try {
-      await syncSetConfig({ gistId, token: token || undefined, autoSync, intervalMin });
+      await syncSetConfig({ gistId, token: token || undefined, autoSync, intervalMin, role, requesterName });
       setMsg({ ok: true, text: '저장되었습니다.' });
     } catch (e) { setMsg({ ok: false, text: '저장 실패: ' + e.message }); }
     finally { setBusy(false); }
@@ -93,7 +95,7 @@ function SettingsModal({ cfg, onClose, onStatus }) {
     setMsg(null);
     try {
       // 업로드 전 최신 설정(토큰/gist) 저장
-      await syncSetConfig({ gistId, token: token || undefined, autoSync, intervalMin });
+      await syncSetConfig({ gistId, token: token || undefined, autoSync, intervalMin, role, requesterName });
       const r = await syncUpload();
       if (r?.ok) {
         setGistId(r.gistId);
@@ -130,6 +132,16 @@ function SettingsModal({ cfg, onClose, onStatus }) {
           placeholder={cfg?.hasToken ? '변경 시에만 입력' : 'ghp_... (업로드하려면 필요)'}
           className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mb-1 focus:outline-none focus:ring-1 focus:ring-blue-500" />
         {cfg?.hasToken && <button onClick={clearToken} className="text-[11px] text-red-500 hover:underline mb-3">토큰 삭제</button>}
+
+        <label className="block text-xs font-medium text-gray-600 mb-1 mt-2">역할</label>
+        <div className="flex rounded border border-gray-300 overflow-hidden text-sm mb-3">
+          <button onClick={() => setRole('member')} className={`flex-1 py-1.5 ${role === 'member' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600'}`}>멤버 (편집 요청)</button>
+          <button onClick={() => setRole('admin')} className={`flex-1 py-1.5 ${role === 'admin' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600'}`}>관리자 (직접 편집)</button>
+        </div>
+
+        <label className="block text-xs font-medium text-gray-600 mb-1">내 이름 (편집 요청 표시용)</label>
+        <input value={requesterName} onChange={e => setRequesterName(e.target.value)} placeholder="예: 홍길동"
+          className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mb-3 focus:outline-none focus:ring-1 focus:ring-blue-500" />
 
         <div className="flex items-center gap-3 mt-2 mb-4">
           <label className="flex items-center gap-1.5 text-sm">

@@ -180,6 +180,15 @@ export async function syncUpload() {
 export async function syncPull() {
   return api.invoke('sync:pull');
 }
+export async function submitEditRequest(req) {
+  return api.invoke('sync:submitEditRequest', req);
+}
+export async function fetchEditRequests() {
+  return api.invoke('sync:getEditRequests');
+}
+export async function resolveEditRequest(commentId) {
+  return api.invoke('sync:resolveEditRequest', commentId);
+}
 
 // ─── 임시 일정 ────────────────────────────────────────────────────────────────
 

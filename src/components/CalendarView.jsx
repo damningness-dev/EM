@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
-import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate } from '../lib/api';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, syncGetConfig, submitEditRequest, fetchEditRequests, resolveEditRequest } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
@@ -123,6 +123,8 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   const [completions, setCompletions] = useState(new Set());
   const [completionPrompt, setCompletionPrompt] = useState(null); // {zoneId,zoneName,grade,num,dateStr,isCompleted}
   const [groupMovePrompt, setGroupMovePrompt] = useState(null); // { dateStr, dragData, groupName, members:[{zoneId,num,min,max,label}] }
+  const [syncCfg, setSyncCfg] = useState({ gistId: '', role: 'member' }); // 공유 역할
+  const [editRequests, setEditRequests] = useState([]); // 관리자: 대기중 편집 요청
   const [tempSchedules, setTempSchedules] = useState([]);
   const [blockedDates, setBlockedDates] = useState(new Set()); // 일정비우기 날짜('yyyy-MM-dd')
   const [addSchedPopup, setAddSchedPopup] = useState(null); // { date }
@@ -270,6 +272,49 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     if (!window.electronAPI?.onDataChanged) return;
     return window.electronAPI.onDataChanged(() => { reloadZonesGroups(); });
   }, []);
+
+  // 공유 역할 로드 + (관리자면) 편집 요청 주기적 확인
+  const reloadEditRequests = useCallback(() => {
+    fetchEditRequests().then(setEditRequests).catch(() => {});
+  }, []);
+  useEffect(() => {
+    let timer = null;
+    syncGetConfig().then(cfg => {
+      if (!cfg) return;
+      setSyncCfg({ gistId: cfg.gistId || '', role: cfg.role || 'member' });
+      if (cfg.gistId && cfg.role === 'admin') {
+        reloadEditRequests();
+        timer = setInterval(reloadEditRequests, 60 * 1000);
+      }
+    }).catch(() => {});
+    return () => { if (timer) clearInterval(timer); };
+  }, [reloadEditRequests]);
+
+  const isMember = !!syncCfg.gistId && syncCfg.role === 'member';
+  const isAdminShared = !!syncCfg.gistId && syncCfg.role === 'admin';
+
+  // 편집 요청 날짜별 집계 (관리자 달력 표시용)
+  const reqByDate = useMemo(() => {
+    const m = {};
+    editRequests.forEach(r => { if (r.toDate) (m[r.toDate] || (m[r.toDate] = [])).push(r); });
+    return m;
+  }, [editRequests]);
+
+  async function applyEditRequest(req) {
+    try {
+      await applyMoves([{ zoneId: req.zoneId, num: req.num, date: req.toDate }]);
+      await resolveEditRequest(req.commentId);
+      setEditRequests(prev => prev.filter(r => r.commentId !== req.commentId));
+      window.electronAPI?.notifyDataChanged?.();
+      showSuccess('편집 요청을 적용했습니다.');
+    } catch (e) { showError('적용 실패: ' + e.message); }
+  }
+  async function dismissEditRequest(req) {
+    try {
+      await resolveEditRequest(req.commentId);
+      setEditRequests(prev => prev.filter(r => r.commentId !== req.commentId));
+    } catch (e) { showError('삭제 실패: ' + e.message); }
+  }
 
   useEffect(() => {
     if (!colorPicker) return;
@@ -561,6 +606,18 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   async function handleDropOnDay(dateStr, dragData) {
     const zone = zones.find(z => z.id === dragData.zoneId);
     if (!zone) return;
+
+    // 멤버(관리자 아님): 직접 이동 대신 관리자에게 '편집 요청'을 남긴다.
+    if (isMember) {
+      if (dragData.fromDateStr === dateStr) return;
+      const r = await submitEditRequest({
+        zoneId: zone.id, zoneName: zone.name, grade: zone.grade, num: dragData.num,
+        fromDate: dragData.fromDateStr, toDate: dateStr,
+      });
+      if (r?.ok) showSuccess(`편집 요청을 보냈습니다: ${zone.name}[${zone.grade}]-${dragData.num} → ${dateStr}`);
+      else showError('편집 요청 실패: ' + (r?.error || ''));
+      return;
+    }
 
     if (blockedDates.has(dateStr)) {
       showError('일정비우기가 체크되어있습니다');
@@ -1391,12 +1448,16 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                       const blockedBadge = isBlocked
                         ? <span className="text-[9px] leading-none text-purple-600 bg-purple-100 px-1 py-0.5 rounded shrink-0">비움</span>
                         : null;
+                      const reqCount = isAdminShared && !isOther ? (reqByDate[dateStr]?.length || 0) : 0;
+                      const reqBadge = reqCount > 0
+                        ? <span className="text-[9px] leading-none text-white bg-rose-500 px-1 py-0.5 rounded shrink-0" title="편집 요청">✎{reqCount}</span>
+                        : null;
                       return isHol ? (
                         <div className="mb-0.5">
                           <div className="flex items-center gap-0.5">
                             <div className={dateNumClass}>{day}</div>
                             <span className="text-[9px] leading-none text-red-500 truncate">{holidays[dateStr]}</span>
-                            {blockedBadge}
+                            {blockedBadge}{reqBadge}
                           </div>
                           {ptsChips && <div className="mt-0.5">{ptsChips}</div>}
                         </div>
@@ -1404,7 +1465,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                         <div className="flex items-center justify-between gap-0.5 mb-0.5">
                           <div className="flex items-center gap-0.5">
                             <div className={dateNumClass}>{day}</div>
-                            {blockedBadge}
+                            {blockedBadge}{reqBadge}
                           </div>
                           {ptsChips}
                         </div>
@@ -1566,6 +1627,32 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                     ))}
                   </div>
                 </>
+              )}
+
+              {/* 관리자: 이 날로 들어온 편집 요청 */}
+              {isAdminShared && selectedDay && (reqByDate[selectedDay]?.length > 0) && (
+                <div className="border-b border-rose-100">
+                  <div className="px-4 py-1.5 bg-rose-50 flex items-center gap-2">
+                    <span className="text-xs font-semibold text-rose-600">✎ 편집 요청 ({reqByDate[selectedDay].length}건)</span>
+                  </div>
+                  {reqByDate[selectedDay].map(req => (
+                    <div key={req.commentId} className="px-4 py-2 border-b border-rose-50 last:border-0">
+                      <p className="text-xs text-gray-700">
+                        <span className="font-semibold text-rose-600">{req.requester || '익명'}</span>님이{' '}
+                        <span className="font-medium">{req.zoneName}[{req.grade}]-{req.num}</span> 일정을
+                      </p>
+                      <p className="text-xs text-gray-500 mb-1.5">
+                        {req.fromDate || '?'} → <span className="font-semibold text-gray-700">{req.toDate}</span> 로 이동 요청
+                      </p>
+                      <div className="flex gap-1.5">
+                        <button onClick={() => applyEditRequest(req)}
+                          className="text-xs px-2.5 py-1 bg-rose-600 text-white rounded hover:bg-rose-700">적용</button>
+                        <button onClick={() => dismissEditRequest(req)}
+                          className="text-xs px-2.5 py-1 border border-gray-300 text-gray-500 rounded hover:bg-gray-50">삭제</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
 
               {selectedDay && (selectedScheduleEvents.length > 0 || blockedDates.has(selectedDay)) && (
