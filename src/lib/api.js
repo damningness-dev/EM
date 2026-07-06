@@ -151,6 +151,21 @@ export async function setBlockedDate(date, blocked) {
   return api.invoke('blockedDates:set', date, blocked);
 }
 
+// ─── 할일(반복 일정) ──────────────────────────────────────────────────────────
+
+export async function fetchTodos() {
+  return api.invoke('todos:getAll');
+}
+export async function upsertTodo(todo) {
+  return api.invoke('todos:upsert', todo);
+}
+export async function deleteTodo(id) {
+  return api.invoke('todos:delete', id);
+}
+export async function toggleTodoDone(id, dateStr) {
+  return api.invoke('todos:toggleDone', id, dateStr);
+}
+
 // ─── 공유 동기화 (Gist) ───────────────────────────────────────────────────────
 
 export async function syncGetConfig() {

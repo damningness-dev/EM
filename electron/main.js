@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -152,7 +152,7 @@ function getDataPath() {
 function loadData() {
   const p = getDataPath();
   if (!fs.existsSync(p)) {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], todos: [] };
   }
   try {
     const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
@@ -161,9 +161,10 @@ function loadData() {
     if (!data.completions) data.completions = [];
     if (!data.tempSchedules) data.tempSchedules = [];
     if (!data.blockedDates) data.blockedDates = [];
+    if (!data.todos) data.todos = [];
     return data;
   } catch {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], todos: [] };
   }
 }
 
@@ -310,6 +311,67 @@ function restartSyncTimer() {
   }
 }
 
+// ─── 할일(반복 일정) 알람 ──────────────────────────────────────────────────────
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+// todo가 특정 날짜에 발생하는지 (반복주기 반영)
+function todoOccursOn(todo, dateStr) {
+  if (!todo.date || dateStr < todo.date) return false;
+  const repeat = todo.repeat || 'none';
+  if (repeat === 'none') return dateStr === todo.date;
+  const base = new Date(todo.date + 'T00:00:00');
+  const d = new Date(dateStr + 'T00:00:00');
+  const interval = Math.max(1, todo.interval || 1);
+  const dayDiff = Math.round((d - base) / 86400000);
+  if (repeat === 'daily') return dayDiff >= 0 && dayDiff % interval === 0;
+  if (repeat === 'weekly') return dayDiff >= 0 && dayDiff % (7 * interval) === 0;
+  if (repeat === 'monthly') {
+    if (d.getDate() !== base.getDate()) return false;
+    const m = (d.getFullYear() - base.getFullYear()) * 12 + (d.getMonth() - base.getMonth());
+    return m >= 0 && m % interval === 0;
+  }
+  if (repeat === 'yearly') {
+    if (d.getDate() !== base.getDate() || d.getMonth() !== base.getMonth()) return false;
+    const y = d.getFullYear() - base.getFullYear();
+    return y >= 0 && y % interval === 0;
+  }
+  return false;
+}
+
+const firedAlarms = new Set(); // `${id}_${yyyy-MM-dd}` — 하루 1회 발사 보장
+let alarmTimer = null;
+function checkAlarms() {
+  let data;
+  try { data = loadData(); } catch { return; }
+  const todos = data.todos || [];
+  if (!todos.length) return;
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  const nowHM = `${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
+  todos.forEach(t => {
+    if (!t.alarmEnabled || !t.time) return;
+    if (!todoOccursOn(t, todayStr)) return;
+    if ((t.completedDates || []).includes(todayStr)) return;
+    if (nowHM < t.time) return;
+    const key = `${t.id}_${todayStr}`;
+    if (firedAlarms.has(key)) return;
+    firedAlarms.add(key);
+    try {
+      if (Notification.isSupported()) {
+        const n = new Notification({ title: '⏰ 할일 알림', body: (t.title || '할일') + (t.note ? `\n${t.note}` : '') });
+        n.on('click', () => { if (mainWin && !mainWin.isDestroyed()) { mainWin.show(); mainWin.focus(); } });
+        n.show();
+      }
+    } catch { /* ignore */ }
+  });
+}
+function startAlarmScheduler() {
+  if (alarmTimer) clearInterval(alarmTimer);
+  alarmTimer = setInterval(checkAlarms, 30 * 1000);
+  checkAlarms();
+}
+
 // ─── 윈도우 생성 ────────────────────────────────────────────────────────────────
 
 function createWindow() {
@@ -379,8 +441,11 @@ if (applyUpdateArg) {
 } else {
   // Normal startup
   app.whenReady().then(() => {
+    // Windows 알림에 앱 아이덴티티 지정 (없으면 알림이 안 뜰 수 있음)
+    try { app.setAppUserModelId('com.em.monitoring'); } catch { /* ignore */ }
     registerHandlers();
     createWindow();
+    startAlarmScheduler();
   });
 
   app.on('window-all-closed', () => {
@@ -418,6 +483,40 @@ function registerHandlers() {
   });
   ipcMain.handle('sync:upload', () => syncUpload());
   ipcMain.handle('sync:pull', () => syncPull(true));
+
+  // ── 할일(반복 일정) ──
+  ipcMain.handle('todos:getAll', () => loadData().todos || []);
+  ipcMain.handle('todos:upsert', (_e, todo) => {
+    const data = loadData();
+    if (!data.todos) data.todos = [];
+    if (todo.id) {
+      const i = data.todos.findIndex(t => t.id === todo.id);
+      if (i >= 0) data.todos[i] = todo; else data.todos.push(todo);
+    } else {
+      todo.id = newId();
+      if (!todo.completedDates) todo.completedDates = [];
+      data.todos.push(todo);
+    }
+    saveData(data);
+    return todo;
+  });
+  ipcMain.handle('todos:delete', (_e, id) => {
+    const data = loadData();
+    data.todos = (data.todos || []).filter(t => t.id !== id);
+    saveData(data);
+    return true;
+  });
+  ipcMain.handle('todos:toggleDone', (_e, id, dateStr) => {
+    const data = loadData();
+    const t = (data.todos || []).find(x => x.id === id);
+    if (t) {
+      if (!t.completedDates) t.completedDates = [];
+      const i = t.completedDates.indexOf(dateStr);
+      if (i >= 0) t.completedDates.splice(i, 1); else t.completedDates.push(dateStr);
+      saveData(data);
+    }
+    return t;
+  });
 
   // ── 순서/그룹 관리 별도 창 (항상 위) ──
   const boundsFile = () => path.join(app.getPath('userData'), 'order-manager-bounds.json');
