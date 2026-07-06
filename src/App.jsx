@@ -8,6 +8,7 @@ import ZoneGantt from './components/ZoneGantt';
 import TodoToday from './components/TodoToday';
 import CalendarView from './components/CalendarView';
 import UpdateNotifier from './components/UpdateNotifier';
+import SyncControl from './components/SyncControl';
 import { seedInitialData, fetchScheduleConfig } from './lib/api';
 import { setScheduleConfig } from './lib/schedule';
 import { INITIAL_CALIBRATION, MONITORING_ZONES } from './data/initialData';
@@ -78,9 +79,7 @@ export default function App() {
 
         <UpdateNotifier />
 
-        <div className="px-5 py-4 border-t border-gray-700 text-xs text-gray-500">
-          데이터: 로컬 파일 저장
-        </div>
+        <SyncControl />
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">

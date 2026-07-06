@@ -175,6 +175,141 @@ function newId() {
   return crypto.randomUUID();
 }
 
+// ─── 공유 동기화 (GitHub Gist) ────────────────────────────────────────────────
+// 일정 데이터(em-data.json)를 Gist에 업로드해 공유하고, 다른 PC는 주기적으로
+// 내려받아 최신화한다. 업로드는 토큰이 있는 관리자만, 읽기는 토큰 없이 가능.
+
+const GIST_FILE = 'em-data.json';
+
+function syncConfigPath() {
+  return path.join(app.getPath('userData'), 'sync-config.json');
+}
+function loadSyncConfig() {
+  try {
+    const c = JSON.parse(fs.readFileSync(syncConfigPath(), 'utf-8'));
+    return { gistId: '', token: '', autoSync: true, intervalMin: 5, lastSyncedAt: '', ...c };
+  } catch {
+    return { gistId: '', token: '', autoSync: true, intervalMin: 5, lastSyncedAt: '' };
+  }
+}
+function saveSyncConfig(cfg) {
+  try { fs.writeFileSync(syncConfigPath(), JSON.stringify(cfg, null, 2), 'utf-8'); } catch { /* ignore */ }
+}
+
+function sendSyncStatus(status) {
+  BrowserWindow.getAllWindows().forEach(w => { if (!w.isDestroyed()) w.webContents.send('sync:status', status); });
+}
+function broadcastDataChanged() {
+  BrowserWindow.getAllWindows().forEach(w => { if (!w.isDestroyed()) w.webContents.send('app:dataChanged'); });
+}
+
+// HTTPS 요청 (GET/POST/PATCH + 선택적 인증 + 본문)
+function ghRequest(method, apiUrl, { token, body } = {}) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(apiUrl);
+    const data = body ? Buffer.from(JSON.stringify(body)) : null;
+    const headers = { 'User-Agent': 'em-sync/1.0', 'Accept': 'application/vnd.github+json' };
+    if (token) headers['Authorization'] = 'token ' + token;
+    if (data) { headers['Content-Type'] = 'application/json'; headers['Content-Length'] = data.length; }
+    const req = https.request({ hostname: u.hostname, path: u.pathname + u.search, method, headers }, (res) => {
+      let out = '';
+      res.on('data', c => { out += c; });
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try { resolve(JSON.parse(out || '{}')); } catch (e) { reject(e); }
+        } else {
+          reject(new Error(`HTTP ${res.statusCode}`));
+        }
+      });
+    });
+    req.on('error', reject);
+    if (data) req.write(data);
+    req.end();
+  });
+}
+
+// Gist에서 데이터 파일 내용 + updated_at 조회 (1MB 초과 truncated면 raw_url로 재조회)
+async function gistFetchData(gistId, token) {
+  const g = await ghRequest('GET', `https://api.github.com/gists/${gistId}`, { token: token || undefined });
+  const file = g.files && g.files[GIST_FILE];
+  if (!file) throw new Error(`Gist에 ${GIST_FILE} 파일이 없습니다`);
+  let content = file.content;
+  if (file.truncated && file.raw_url) {
+    const res = await httpGet(file.raw_url);
+    if (res.statusCode !== 200) { res.resume(); throw new Error(`raw HTTP ${res.statusCode}`); }
+    content = await new Promise((resolve, reject) => {
+      let b = ''; res.on('data', c => { b += c; }); res.on('end', () => resolve(b)); res.on('error', reject);
+    });
+  }
+  return { updatedAt: g.updated_at, content };
+}
+
+// 원격 → 로컬 최신화. force=false면 updated_at이 마지막 동기화와 같으면 건너뜀.
+async function syncPull(force) {
+  const cfg = loadSyncConfig();
+  if (!cfg.gistId) return { ok: false, error: 'Gist ID가 설정되지 않았습니다' };
+  sendSyncStatus({ type: 'checking' });
+  try {
+    const { updatedAt, content } = await gistFetchData(cfg.gistId, cfg.token);
+    if (!force && cfg.lastSyncedAt && updatedAt === cfg.lastSyncedAt) {
+      sendSyncStatus({ type: 'idle', lastSyncedAt: cfg.lastSyncedAt });
+      return { ok: true, updated: false };
+    }
+    let parsed;
+    try { parsed = JSON.parse(content); } catch { throw new Error('원격 데이터 형식 오류'); }
+    if (!parsed || typeof parsed !== 'object') throw new Error('원격 데이터가 비어있습니다');
+    saveData(parsed);
+    cfg.lastSyncedAt = updatedAt;
+    saveSyncConfig(cfg);
+    broadcastDataChanged();
+    sendSyncStatus({ type: 'updated', lastSyncedAt: updatedAt });
+    return { ok: true, updated: true, updatedAt };
+  } catch (err) {
+    sendSyncStatus({ type: 'error', message: err.message });
+    return { ok: false, error: err.message };
+  }
+}
+
+// 로컬 → 원격 업로드. gistId 없으면 새 secret gist 생성.
+async function syncUpload() {
+  const cfg = loadSyncConfig();
+  if (!cfg.token) return { ok: false, error: '업로드하려면 GitHub 토큰이 필요합니다' };
+  sendSyncStatus({ type: 'uploading' });
+  try {
+    const content = fs.readFileSync(getDataPath(), 'utf-8');
+    let gistId = cfg.gistId, updatedAt;
+    if (gistId) {
+      const g = await ghRequest('PATCH', `https://api.github.com/gists/${gistId}`, {
+        token: cfg.token, body: { files: { [GIST_FILE]: { content } } },
+      });
+      updatedAt = g.updated_at;
+    } else {
+      const g = await ghRequest('POST', 'https://api.github.com/gists', {
+        token: cfg.token,
+        body: { description: '환경 모니터링 공유 일정 데이터', public: false, files: { [GIST_FILE]: { content } } },
+      });
+      gistId = g.id; updatedAt = g.updated_at;
+    }
+    cfg.gistId = gistId; cfg.lastSyncedAt = updatedAt;
+    saveSyncConfig(cfg);
+    sendSyncStatus({ type: 'uploaded', lastSyncedAt: updatedAt });
+    return { ok: true, gistId, updatedAt };
+  } catch (err) {
+    sendSyncStatus({ type: 'error', message: err.message });
+    return { ok: false, error: err.message };
+  }
+}
+
+let syncTimer = null;
+function restartSyncTimer() {
+  if (syncTimer) { clearInterval(syncTimer); syncTimer = null; }
+  const cfg = loadSyncConfig();
+  if (cfg.autoSync && cfg.gistId) {
+    const ms = Math.max(1, cfg.intervalMin || 5) * 60 * 1000;
+    syncTimer = setInterval(() => { syncPull(false); }, ms);
+  }
+}
+
 // ─── 윈도우 생성 ────────────────────────────────────────────────────────────────
 
 function createWindow() {
@@ -202,6 +337,8 @@ function createWindow() {
 
   mainWin.webContents.on('did-finish-load', () => {
     setupAsarUpdater(mainWin);
+    // 실행 시 원격 최신화 1회 + 주기 동기화 시작
+    if (!isDev) { syncPull(false); restartSyncTimer(); }
   });
 
   mainWin.on('closed', () => {
@@ -262,6 +399,25 @@ function registerHandlers() {
   ipcMain.handle('update:check', checkForUpdate);
   ipcMain.handle('update:download', downloadUpdate);
   ipcMain.handle('update:install', applyUpdateAndRestart);
+
+  // ── 공유 동기화 (Gist) ──
+  ipcMain.handle('sync:getConfig', () => {
+    const c = loadSyncConfig();
+    return { gistId: c.gistId || '', hasToken: !!c.token, autoSync: c.autoSync !== false, intervalMin: c.intervalMin || 5, lastSyncedAt: c.lastSyncedAt || '' };
+  });
+  ipcMain.handle('sync:setConfig', (_e, patch = {}) => {
+    const c = loadSyncConfig();
+    if (patch.gistId !== undefined) c.gistId = String(patch.gistId).trim();
+    if (patch.clearToken) c.token = '';
+    else if (patch.token) c.token = String(patch.token).trim(); // 빈 값이면 기존 토큰 유지
+    if (patch.autoSync !== undefined) c.autoSync = !!patch.autoSync;
+    if (patch.intervalMin !== undefined) c.intervalMin = Math.max(1, parseInt(patch.intervalMin) || 5);
+    saveSyncConfig(c);
+    restartSyncTimer();
+    return { ok: true };
+  });
+  ipcMain.handle('sync:upload', () => syncUpload());
+  ipcMain.handle('sync:pull', () => syncPull(true));
 
   // ── 순서/그룹 관리 별도 창 (항상 위) ──
   const boundsFile = () => path.join(app.getPath('userData'), 'order-manager-bounds.json');

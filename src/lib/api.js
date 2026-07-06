@@ -151,6 +151,21 @@ export async function setBlockedDate(date, blocked) {
   return api.invoke('blockedDates:set', date, blocked);
 }
 
+// ─── 공유 동기화 (Gist) ───────────────────────────────────────────────────────
+
+export async function syncGetConfig() {
+  return api.invoke('sync:getConfig');
+}
+export async function syncSetConfig(patch) {
+  return api.invoke('sync:setConfig', patch);
+}
+export async function syncUpload() {
+  return api.invoke('sync:upload');
+}
+export async function syncPull() {
+  return api.invoke('sync:pull');
+}
+
 // ─── 임시 일정 ────────────────────────────────────────────────────────────────
 
 export async function fetchTempSchedules() {

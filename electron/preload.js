@@ -21,4 +21,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('app:dataChanged', handler);
     return () => ipcRenderer.removeListener('app:dataChanged', handler);
   },
+
+  // 공유 동기화 상태 이벤트 수신
+  onSyncStatus: (callback) => {
+    const handler = (_event, status) => callback(status);
+    ipcRenderer.on('sync:status', handler);
+    return () => ipcRenderer.removeListener('sync:status', handler);
+  },
 });
