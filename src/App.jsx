@@ -9,9 +9,13 @@ import TodoToday from './components/TodoToday';
 import CalendarView from './components/CalendarView';
 import UpdateNotifier from './components/UpdateNotifier';
 import SyncControl from './components/SyncControl';
+import Login from './components/Login';
+import UserManager from './components/UserManager';
 import { seedInitialData, fetchScheduleConfig } from './lib/api';
 import { setScheduleConfig } from './lib/schedule';
 import { INITIAL_CALIBRATION, MONITORING_ZONES } from './data/initialData';
+
+const SESSION_KEY = 'em-session';
 
 const MENU = [
   { id: 'dashboard', label: '대시보드', icon: '📊' },
@@ -29,6 +33,11 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [year, setYear] = useState(new Date().getFullYear());
   const [ready, setReady] = useState(false);
+  const [user, setUser] = useState(() => {
+    try { const s = JSON.parse(localStorage.getItem(SESSION_KEY)); if (s && s.empNo) return s; } catch { /* ignore */ }
+    return null;
+  });
+  const [showUserMgr, setShowUserMgr] = useState(false);
 
   useEffect(() => {
     seedInitialData(INITIAL_CALIBRATION, MONITORING_ZONES)
@@ -38,6 +47,15 @@ export default function App() {
       .catch(() => setReady(true));
   }, []);
 
+  function handleLogin(u) {
+    setUser(u);
+    try { localStorage.setItem(SESSION_KEY, JSON.stringify(u)); } catch { /* ignore */ }
+  }
+  function handleLogout() {
+    setUser(null);
+    try { localStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+  }
+
   if (!ready) {
     return (
       <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center gap-4">
@@ -45,6 +63,10 @@ export default function App() {
         <p className="text-gray-400 text-sm">데이터 초기화 중...</p>
       </div>
     );
+  }
+
+  if (!user) {
+    return <Login onLogin={handleLogin} />;
   }
 
   const currentMenu = MENU.find(m => m.id === page);
@@ -79,8 +101,29 @@ export default function App() {
 
         <UpdateNotifier />
 
+        {/* 로그인 사용자 정보 */}
+        <div className="px-4 py-3 border-t border-gray-700 flex items-center gap-2">
+          <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-sm font-bold shrink-0">
+            {(user.name || '?').slice(0, 1)}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-white truncate">{user.name}
+              <span className={`ml-1 text-[10px] px-1 py-0.5 rounded ${user.role === 'admin' ? 'bg-emerald-600' : 'bg-gray-600'}`}>{user.role === 'admin' ? '관리자' : '멤버'}</span>
+            </p>
+            <p className="text-[11px] text-gray-500 truncate">사번 {user.empNo}</p>
+          </div>
+          <button onClick={handleLogout} className="text-[11px] text-gray-400 hover:text-white shrink-0" title="로그아웃">↩</button>
+        </div>
+        {user.role === 'admin' && (
+          <button onClick={() => setShowUserMgr(true)} className="mx-4 mb-2 py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-xs text-gray-300">
+            👤 사용자 관리
+          </button>
+        )}
+
         <SyncControl />
       </aside>
+
+      {showUserMgr && <UserManager currentUser={user} onClose={() => setShowUserMgr(false)} />}
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 lg:hidden">
@@ -95,7 +138,7 @@ export default function App() {
         <main className="flex-1 overflow-y-auto">
           {page === 'dashboard' && <Dashboard year={year} />}
           {page === 'todo' && <TodoToday />}
-          {page === 'calendar' && <CalendarView year={year} onYearChange={setYear} />}
+          {page === 'calendar' && <CalendarView year={year} onYearChange={setYear} user={user} />}
           {page === 'monthly' && <MonthlyMonitoring year={year} onYearChange={setYear} />}
           {page === 'status' && <ZoneStatus year={year} onYearChange={setYear} />}
           {page === 'gantt'  && <ZoneGantt  year={year} onYearChange={setYear} />}

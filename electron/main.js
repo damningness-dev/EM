@@ -162,9 +162,10 @@ function loadData() {
     if (!data.tempSchedules) data.tempSchedules = [];
     if (!data.blockedDates) data.blockedDates = [];
     if (!data.todos) data.todos = [];
+    if (!data.users) data.users = [];
     return data;
   } catch {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], todos: [] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], todos: [], users: [] };
   }
 }
 
@@ -321,7 +322,7 @@ async function submitEditRequest(req) {
   const cfg = loadSyncConfig();
   if (!cfg.gistId) return { ok: false, error: 'Gist가 설정되지 않았습니다' };
   if (!cfg.token) return { ok: false, error: '편집 요청하려면 GitHub 토큰이 필요합니다' };
-  const payload = { ...req, requester: cfg.requesterName || '익명', ts: new Date().toISOString() };
+  const payload = { ...req, requester: req.requester || cfg.requesterName || '익명', ts: new Date().toISOString() };
   try {
     const c = await ghRequest('POST', `https://api.github.com/gists/${cfg.gistId}/comments`, {
       token: cfg.token, body: { body: REQ_MARKER + JSON.stringify(payload) },
@@ -528,6 +529,26 @@ function registerHandlers() {
   });
   ipcMain.handle('sync:upload', () => syncUpload());
   ipcMain.handle('sync:pull', () => syncPull(true));
+
+  // ── 사용자 명부(권한) ──
+  ipcMain.handle('users:getAll', () => loadData().users || []);
+  ipcMain.handle('users:upsert', (_e, user) => {
+    const data = loadData();
+    if (!data.users) data.users = [];
+    const empNo = String(user.empNo || '').trim();
+    if (!empNo) return { ok: false, error: '사번이 필요합니다' };
+    const i = data.users.findIndex(u => String(u.empNo) === empNo);
+    const rec = { empNo, name: String(user.name || '').trim(), role: user.role === 'admin' ? 'admin' : 'member' };
+    if (i >= 0) data.users[i] = rec; else data.users.push(rec);
+    saveData(data);
+    return { ok: true, user: rec };
+  });
+  ipcMain.handle('users:delete', (_e, empNo) => {
+    const data = loadData();
+    data.users = (data.users || []).filter(u => String(u.empNo) !== String(empNo));
+    saveData(data);
+    return { ok: true };
+  });
 
   // ── 편집 요청 ──
   ipcMain.handle('sync:submitEditRequest', (_e, req) => submitEditRequest(req));

@@ -166,6 +166,18 @@ export async function toggleTodoDone(id, dateStr) {
   return api.invoke('todos:toggleDone', id, dateStr);
 }
 
+// ─── 사용자 명부(권한) ────────────────────────────────────────────────────────
+
+export async function fetchUsers() {
+  return api.invoke('users:getAll');
+}
+export async function upsertUser(user) {
+  return api.invoke('users:upsert', user);
+}
+export async function deleteUser(empNo) {
+  return api.invoke('users:delete', empNo);
+}
+
 // ─── 공유 동기화 (Gist) ───────────────────────────────────────────────────────
 
 export async function syncGetConfig() {

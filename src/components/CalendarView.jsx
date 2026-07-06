@@ -91,7 +91,7 @@ function buildGrid(year, month, weekStart = 'mon') {
   return cells;
 }
 
-export default function CalendarView({ year: initYear, onYearChange }) {
+export default function CalendarView({ year: initYear, onYearChange, user }) {
   const today = new Date();
   const [year, setYear] = useState(initYear || today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
@@ -277,21 +277,23 @@ export default function CalendarView({ year: initYear, onYearChange }) {
   const reloadEditRequests = useCallback(() => {
     fetchEditRequests().then(setEditRequests).catch(() => {});
   }, []);
+  // 권한은 로그인 사용자(user.role)에서 가져오고, 공유 여부는 Gist 설정으로 판단.
+  const role = user?.role || 'member';
   useEffect(() => {
     let timer = null;
     syncGetConfig().then(cfg => {
       if (!cfg) return;
-      setSyncCfg({ gistId: cfg.gistId || '', role: cfg.role || 'member' });
-      if (cfg.gistId && cfg.role === 'admin') {
+      setSyncCfg({ gistId: cfg.gistId || '', role });
+      if (cfg.gistId && role === 'admin') {
         reloadEditRequests();
         timer = setInterval(reloadEditRequests, 60 * 1000);
       }
     }).catch(() => {});
     return () => { if (timer) clearInterval(timer); };
-  }, [reloadEditRequests]);
+  }, [reloadEditRequests, role]);
 
-  const isMember = !!syncCfg.gistId && syncCfg.role === 'member';
-  const isAdminShared = !!syncCfg.gistId && syncCfg.role === 'admin';
+  const isMember = !!syncCfg.gistId && role === 'member';
+  const isAdminShared = !!syncCfg.gistId && role === 'admin';
 
   // 편집 요청 날짜별 집계 (관리자 달력 표시용)
   const reqByDate = useMemo(() => {
@@ -613,6 +615,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
       const r = await submitEditRequest({
         zoneId: zone.id, zoneName: zone.name, grade: zone.grade, num: dragData.num,
         fromDate: dragData.fromDateStr, toDate: dateStr,
+        requester: user?.name ? `${user.name}(${user.empNo})` : undefined,
       });
       if (r?.ok) showSuccess(`편집 요청을 보냈습니다: ${zone.name}[${zone.grade}]-${dragData.num} → ${dateStr}`);
       else showError('편집 요청 실패: ' + (r?.error || ''));
