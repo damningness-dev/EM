@@ -28,4 +28,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('sync:status', handler);
     return () => ipcRenderer.removeListener('sync:status', handler);
   },
+
+  // 할일 알람 이벤트 수신 (인앱 팝업 표시용)
+  onTodoAlarm: (callback) => {
+    const handler = (_event, todo) => callback(todo);
+    ipcRenderer.on('todo:alarm', handler);
+    return () => ipcRenderer.removeListener('todo:alarm', handler);
+  },
 });

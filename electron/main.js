@@ -401,9 +401,18 @@ function checkAlarms() {
     const key = `${t.id}_${todayStr}`;
     if (firedAlarms.has(key)) return;
     firedAlarms.add(key);
+    // 1) 작업표시줄 깜빡임 (토스트가 막혀도 알아챌 수 있게)
+    try { if (mainWin && !mainWin.isDestroyed()) mainWin.flashFrame(true); } catch { /* ignore */ }
+    // 2) 인앱 팝업 (윈도우 알림이 차단돼도 확실히 표시)
+    try {
+      BrowserWindow.getAllWindows().forEach(w => {
+        if (!w.isDestroyed()) w.webContents.send('todo:alarm', { id: t.id, title: t.title || '할일', note: t.note || '', time: t.time });
+      });
+    } catch { /* ignore */ }
+    // 3) 윈도우 네이티브 알림
     try {
       if (Notification.isSupported()) {
-        const n = new Notification({ title: '⏰ 할일 알림', body: (t.title || '할일') + (t.note ? `\n${t.note}` : '') });
+        const n = new Notification({ title: '⏰ 할일 알림', body: (t.title || '할일') + (t.note ? `\n${t.note}` : ''), silent: false });
         n.on('click', () => { if (mainWin && !mainWin.isDestroyed()) { mainWin.show(); mainWin.focus(); } });
         n.show();
       }

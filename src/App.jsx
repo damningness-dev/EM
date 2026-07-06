@@ -11,6 +11,7 @@ import UpdateNotifier from './components/UpdateNotifier';
 import SyncControl from './components/SyncControl';
 import Login from './components/Login';
 import UserManager from './components/UserManager';
+import AlarmPopup from './components/AlarmPopup';
 import { seedInitialData, fetchScheduleConfig } from './lib/api';
 import { setScheduleConfig } from './lib/schedule';
 import { INITIAL_CALIBRATION, MONITORING_ZONES } from './data/initialData';
@@ -124,6 +125,8 @@ export default function App() {
       </aside>
 
       {showUserMgr && <UserManager currentUser={user} onClose={() => setShowUserMgr(false)} />}
+
+      <AlarmPopup />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 lg:hidden">
