@@ -24,20 +24,17 @@ function getNthWeekdayOfMonth(year, month, nth, dow) {
   return new Date(year, month - 1, day);
 }
 
-function isOverrideValid(overrideDate, baseDate, type) {
-  if (type === 'daily') {
-    const min = startOfWeek(baseDate, { weekStartsOn: 1 });
-    const max = endOfWeek(baseDate, { weekStartsOn: 1 });
-    return overrideDate >= min && overrideDate <= max;
-  }
-  if (type === 'weekly' || type === 'biweekly') {
+function isOverrideValid(overrideDate, baseDate, type, spanMonths = 1) {
+  if (type === 'daily' || type === 'weekly' || type === 'biweekly') {
     const min = startOfWeek(baseDate, { weekStartsOn: 1 });
     const max = endOfWeek(baseDate, { weekStartsOn: 1 });
     return overrideDate >= min && overrideDate <= max;
   }
   if (type === 'monthly' || type === 'quarterly') {
-    return overrideDate.getFullYear() === baseDate.getFullYear() &&
-           overrideDate.getMonth() === baseDate.getMonth();
+    // 월/분기/반기: 시작 월부터 span개월 창 안이면 유효 (분기·반기 내 다른 달 이동 허용)
+    const min = startOfMonth(baseDate);
+    const max = endOfMonth(addMonths(baseDate, Math.max(1, spanMonths) - 1));
+    return overrideDate >= min && overrideDate <= max;
   }
   return false;
 }
@@ -193,6 +190,9 @@ export function calcMeasurements(zone, holidayMap = {}, usedDates = null) {
   for (let phaseIdx = startPhaseIdx; phaseIdx < normSpec.length; phaseIdx++) {
     const phase = normSpec[phaseIdx];
     const ptype = unitToType(phase.unit);
+    // 월 기반 측정의 이동 가능 범위(개월). 분기=3, 반기=6, 년=12, 월×간격 등.
+    // 이 값만큼 이동 범위가 넓어져 해당 분기/반기 내 다른 달로도 옮길 수 있다.
+    const spanMonths = MONTHS_PER_UNIT[phase.unit] ? phase.interval * MONTHS_PER_UNIT[phase.unit] : 1;
 
     // Phase transition: advance baseDate by new phase's interval after last measurement.
     // (처음 처리하는 구간은 시작일이 곧 baseDate이므로 이동하지 않는다)
@@ -214,12 +214,12 @@ export function calcMeasurements(zone, holidayMap = {}, usedDates = null) {
 
       const key = String(num);
       const rawOverride = overrides[key] ? new Date(overrides[key] + 'T00:00:00') : null;
-      const hasValidOverride = rawOverride && isOverrideValid(rawOverride, effectiveBaseDate, ptype);
+      const hasValidOverride = rawOverride && isOverrideValid(rawOverride, effectiveBaseDate, ptype, spanMonths);
       let scheduledDate;
       if (hasValidOverride) {
         scheduledDate = rawOverride;
       } else {
-        const bounds = getDragBounds({ type: ptype, baseDate: effectiveBaseDate });
+        const bounds = getDragBounds({ type: ptype, baseDate: effectiveBaseDate, spanMonths });
         scheduledDate = adjustToWorkingDay(effectiveBaseDate, bounds, holidayMap);
         // 같은 구역(또는 같은 구역명)의 앞선 일정이 이미 이 날을 차지했다면,
         // 겹치지 않도록 다음 근무일(주말·공휴일·일정비우기 제외)로 순차적으로 밀어낸다.
@@ -237,6 +237,7 @@ export function calcMeasurements(zone, holidayMap = {}, usedDates = null) {
         date: scheduledDate,
         baseDate: effectiveBaseDate,
         type: ptype,
+        spanMonths,
         isFirst: num === startNum,
         isLast: num === total,
       });
@@ -276,22 +277,17 @@ export function totalCount(zone) {
 }
 
 export function getDragBounds(measurement) {
-  const { type, baseDate } = measurement;
+  const { type, baseDate, spanMonths } = measurement;
 
-  if (type === 'daily') {
-    return {
-      min: startOfWeek(baseDate, { weekStartsOn: 1 }),
-      max: endOfWeek(baseDate, { weekStartsOn: 1 }),
-    };
-  }
-  if (type === 'weekly' || type === 'biweekly') {
+  if (type === 'daily' || type === 'weekly' || type === 'biweekly') {
     return {
       min: startOfWeek(baseDate, { weekStartsOn: 1 }),
       max: endOfWeek(baseDate, { weekStartsOn: 1 }),
     };
   }
   if (type === 'monthly' || type === 'quarterly') {
-    return { min: startOfMonth(baseDate), max: endOfMonth(baseDate) };
+    // 월은 해당 월, 분기/반기(및 간격>1 월)는 span개월 만큼 이동 범위 확장
+    return { min: startOfMonth(baseDate), max: endOfMonth(addMonths(baseDate, Math.max(1, spanMonths || 1) - 1)) };
   }
   return { min: baseDate, max: baseDate };
 }

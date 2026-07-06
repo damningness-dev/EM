@@ -570,7 +570,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
     if (dateStr < dragData.minDateStr || dateStr > dragData.maxDateStr) {
       const typeMsg = dragData.type === 'weekly' ? '해당 주간 내'
         : dragData.type === 'biweekly' ? '해당 주간 내'
-        : dragData.type === 'monthly' ? '해당 월 내'
+        : dragData.type === 'monthly' ? (dragData.spanMonths > 1 ? '해당 기간 내' : '해당 월 내')
         : '동일 날짜';
       showError(`이동 불가: ${typeMsg}에서만 일정을 변경할 수 있습니다. (${dragData.minDateStr} ~ ${dragData.maxDateStr})`);
       return;
@@ -1425,6 +1425,7 @@ export default function CalendarView({ year: initYear, onYearChange }) {
                                 minDateStr: format(bounds.min, 'yyyy-MM-dd'),
                                 maxDateStr: format(bounds.max, 'yyyy-MM-dd'),
                                 fromDateStr: format(measurement.date, 'yyyy-MM-dd'),
+                                spanMonths: measurement.spanMonths || 1,
                               }));
                             }}
                             onDragEnd={isDone ? undefined : () => setDragOverDay(null)}
