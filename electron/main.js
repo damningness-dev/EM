@@ -568,11 +568,13 @@ function startAlarmScheduler() {
     }
   } catch { /* ignore */ }
 
-  // setInterval 대신 자체 재예약 setTimeout 체인 — 예외/지연에도 다음 체크가 항상 잡힘
+  // 분 경계(HH:MM:00)에 맞춰 체크 — 알람이 설정 시각에서 1초 이내에 울리게 한다.
+  // 매 틱마다 실제 시계 기준으로 다음 분까지 남은 시간을 다시 계산해 드리프트를 보정.
   if (alarmTimer) { clearTimeout(alarmTimer); alarmTimer = null; }
   const tick = () => {
     try { checkAlarms(); } catch { /* ignore */ }
-    alarmTimer = setTimeout(tick, 15 * 1000);
+    const msToNextMinute = 60000 - (Date.now() % 60000) + 200; // 다음 분 + 0.2초 여유
+    alarmTimer = setTimeout(tick, Math.min(Math.max(msToNextMinute, 1000), 60200));
   };
   tick();
 
