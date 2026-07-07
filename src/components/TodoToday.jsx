@@ -15,7 +15,29 @@ const REPEAT_OPTIONS = [
 const REPEAT_LABEL = { none: '', daily: '매일', weekly: '매주', monthly: '매월', yearly: '매년' };
 
 function pad2(n) { return String(n).padStart(2, '0'); }
-function todayStr() { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+function fmtDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+function todayStr() { return fmtDate(new Date()); }
+// 마감기한 D-day (날짜만 비교)
+function dueDday(dueStr) {
+  const due = new Date(dueStr + 'T00:00:00');
+  const t = new Date(); t.setHours(0, 0, 0, 0);
+  return Math.round((due - t) / 86400000);
+}
+// 뷰(일간/주간/월간)에 표시할 날짜 배열
+function rangeDates(view) {
+  const t = new Date(); t.setHours(0, 0, 0, 0);
+  if (view === 'week') {
+    const dow = (t.getDay() + 6) % 7; // 월=0
+    const start = new Date(t); start.setDate(t.getDate() - dow);
+    return Array.from({ length: 7 }, (_, i) => { const d = new Date(start); d.setDate(start.getDate() + i); return d; });
+  }
+  if (view === 'month') {
+    const y = t.getFullYear(), m = t.getMonth();
+    const n = new Date(y, m + 1, 0).getDate();
+    return Array.from({ length: n }, (_, i) => new Date(y, m, i + 1));
+  }
+  return [t]; // day
+}
 
 // todo가 특정 날짜에 발생하는지 (반복주기 반영) — main.js와 동일 로직
 function todoOccursOn(todo, dateStr) {
@@ -84,8 +106,9 @@ export default function TodoToday() {
   const [todos, setTodos] = useState([]);
   const [showTodoForm, setShowTodoForm] = useState(false);
   const [editingTodo, setEditingTodo] = useState(null); // 편집중 todo id
-  const blankForm = { title: '', date: todayStr(), time: '', repeat: 'none', interval: 1, alarmEnabled: false, note: '' };
+  const blankForm = { title: '', date: todayStr(), due: '', time: '', repeat: 'none', interval: 1, alarmEnabled: false, note: '' };
   const [todoForm, setTodoForm] = useState(blankForm);
+  const [todoView, setTodoView] = useState('day'); // day | week | month
 
   useEffect(() => {
     Promise.all([
@@ -111,6 +134,7 @@ export default function TodoToday() {
       ...(editingTodo ? { ...todos.find(t => t.id === editingTodo) } : {}),
       title,
       date: todoForm.date || todayStr(),
+      due: todoForm.due || '',
       time: todoForm.time || '',
       repeat: todoForm.repeat || 'none',
       interval: Math.max(1, parseInt(todoForm.interval) || 1),
@@ -128,8 +152,8 @@ export default function TodoToday() {
     setTodoForm(blankForm);
   }
 
-  async function handleToggleTodo(id) {
-    const saved = await toggleTodoDone(id, todayStr());
+  async function handleToggleTodo(id, dateStr) {
+    const saved = await toggleTodoDone(id, dateStr || todayStr());
     if (saved) setTodos(prev => prev.map(t => t.id === id ? saved : t));
     window.electronAPI?.notifyDataChanged?.();
   }
@@ -142,7 +166,7 @@ export default function TodoToday() {
 
   function startEditTodo(t) {
     setEditingTodo(t.id);
-    setTodoForm({ title: t.title, date: t.date || todayStr(), time: t.time || '', repeat: t.repeat || 'none', interval: t.interval || 1, alarmEnabled: !!t.alarmEnabled, note: t.note || '' });
+    setTodoForm({ title: t.title, date: t.date || todayStr(), due: t.due || '', time: t.time || '', repeat: t.repeat || 'none', interval: t.interval || 1, alarmEnabled: !!t.alarmEnabled, note: t.note || '' });
     setShowTodoForm(true);
   }
 
@@ -218,6 +242,11 @@ export default function TodoToday() {
                 className="border border-gray-300 rounded px-2 py-1 text-sm" />
             </label>
             <label className="flex items-center gap-1.5 text-xs text-gray-600">
+              마감기한
+              <input type="date" value={todoForm.due} onChange={e => setTodoForm(f => ({ ...f, due: e.target.value }))}
+                className="border border-gray-300 rounded px-2 py-1 text-sm" />
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-gray-600">
               반복
               <select value={todoForm.repeat} onChange={e => setTodoForm(f => ({ ...f, repeat: e.target.value }))}
                 className="border border-gray-300 rounded px-2 py-1 text-sm bg-white">
@@ -257,47 +286,80 @@ export default function TodoToday() {
         </div>
       )}
 
-      {/* 오늘의 할일 목록 (더블클릭으로 완료) */}
+      {/* 할일 목록 — 일간/주간/월간 (더블클릭으로 완료) */}
       {(() => {
-        const tStr = todayStr();
-        const todays = todos.filter(t => todoOccursOn(t, tStr))
-          .sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
-        const doneCount = todays.filter(t => (t.completedDates || []).includes(tStr)).length;
+        const dates = rangeDates(todoView);         // 이 뷰에 표시할 날짜 목록
+        const rangeSet = dates.map(d => fmtDate(d));
+        // 날짜별 발생 할일 그룹
+        const groups = dates.map(d => {
+          const ds = fmtDate(d);
+          const items = todos.filter(t => todoOccursOn(t, ds))
+            .sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
+          return { ds, d, items };
+        }).filter(g => g.items.length > 0);
+        const totalCnt = groups.reduce((s, g) => s + g.items.length, 0);
+        const doneCnt = groups.reduce((s, g) => s + g.items.filter(t => (t.completedDates || []).includes(g.ds)).length, 0);
+        const viewLabel = { day: '오늘', week: '이번 주', month: '이번 달' }[todoView];
         return (
-          <Section title="할일" icon="📝" count={todays.length ? `${doneCount}/${todays.length}` : undefined}
-            countColor={todays.length && doneCount === todays.length ? 'text-green-600' : 'text-blue-600'}>
-            {todays.length === 0 ? (
-              <div className="px-5 py-4 text-sm text-gray-400">오늘 예정된 할일이 없습니다. "+ 할일 추가"로 등록하세요.</div>
-            ) : todays.map(t => {
-              const done = (t.completedDates || []).includes(tStr);
-              return (
-                <div key={t.id}
-                  onDoubleClick={() => handleToggleTodo(t.id)}
-                  className={`flex items-center px-5 py-3 gap-3 cursor-pointer select-none ${done ? 'bg-green-50/40' : 'hover:bg-blue-50/40'}`}
-                  title="더블클릭으로 완료/취소">
-                  <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 text-xs ${done ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
-                    {done ? '✓' : '○'}
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-100 bg-gray-50">
+              <span className="text-base">📝</span>
+              <span className="font-semibold text-gray-800 text-sm">할일 · {viewLabel}</span>
+              <div className="flex rounded-lg border border-gray-200 overflow-hidden ml-2 text-xs">
+                {[['day', '일간'], ['week', '주간'], ['month', '월간']].map(([v, label]) => (
+                  <button key={v} onClick={() => setTodoView(v)}
+                    className={`px-2.5 py-1 ${todoView === v ? 'bg-blue-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'}`}>{label}</button>
+                ))}
+              </div>
+              {totalCnt > 0 && <span className={`ml-auto text-sm font-bold ${doneCnt === totalCnt ? 'text-green-600' : 'text-blue-600'}`}>{doneCnt}/{totalCnt}</span>}
+            </div>
+            {groups.length === 0 ? (
+              <div className="px-5 py-4 text-sm text-gray-400">{viewLabel} 예정된 할일이 없습니다. "+ 할일 추가"로 등록하세요.</div>
+            ) : groups.map(g => (
+              <div key={g.ds}>
+                {todoView !== 'day' && (
+                  <div className="px-5 py-1.5 bg-gray-50/70 text-xs font-semibold text-gray-500 border-b border-gray-100">
+                    {g.d.getMonth() + 1}/{g.d.getDate()} ({DOW[g.d.getDay()]}) {g.ds === todayStr() && <span className="text-blue-500">· 오늘</span>}
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-sm font-medium truncate ${done ? 'text-gray-400 line-through' : 'text-gray-800'}`}>{t.title}</p>
-                    {t.note && <p className="text-xs text-gray-400 truncate">{t.note}</p>}
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {t.repeat && t.repeat !== 'none' && (
-                      <span className="text-[10px] px-1.5 py-0.5 bg-purple-100 text-purple-600 rounded">
-                        {(t.interval > 1 ? t.interval : '') + REPEAT_LABEL[t.repeat]}
-                      </span>
-                    )}
-                    {t.alarmEnabled && t.time && (
-                      <span className="text-[10px] px-1.5 py-0.5 bg-orange-100 text-orange-600 rounded">⏰ {t.time}</span>
-                    )}
-                    <button onClick={e => { e.stopPropagation(); startEditTodo(t); }} className="text-gray-300 hover:text-blue-500 text-xs px-1">✎</button>
-                    <button onClick={e => { e.stopPropagation(); handleDeleteTodo(t.id); }} className="text-gray-300 hover:text-red-500 text-xs px-1">✕</button>
-                  </div>
-                </div>
-              );
-            })}
-          </Section>
+                )}
+                {g.items.map(t => {
+                  const done = (t.completedDates || []).includes(g.ds);
+                  const dd = t.due ? dueDday(t.due) : null;
+                  return (
+                    <div key={`${t.id}_${g.ds}`}
+                      onDoubleClick={() => handleToggleTodo(t.id, g.ds)}
+                      className={`flex items-center px-5 py-2.5 gap-3 cursor-pointer select-none border-b border-gray-50 ${done ? 'bg-green-50/40' : 'hover:bg-blue-50/40'}`}
+                      title="더블클릭으로 완료/취소">
+                      <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 text-xs ${done ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
+                        {done ? '✓' : '○'}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm font-medium truncate ${done ? 'text-gray-400 line-through' : 'text-gray-800'}`}>{t.title}</p>
+                        {t.note && <p className="text-xs text-gray-400 truncate">{t.note}</p>}
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {t.due && !done && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${dd < 0 ? 'bg-red-100 text-red-600' : dd === 0 ? 'bg-red-100 text-red-600' : dd <= 3 ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-500'}`}>
+                            {dd < 0 ? `기한초과 ${-dd}일` : dd === 0 ? '오늘마감' : `D-${dd}`}
+                          </span>
+                        )}
+                        {t.repeat && t.repeat !== 'none' && (
+                          <span className="text-[10px] px-1.5 py-0.5 bg-purple-100 text-purple-600 rounded">
+                            {(t.interval > 1 ? t.interval : '') + REPEAT_LABEL[t.repeat]}
+                          </span>
+                        )}
+                        {t.alarmEnabled && t.time && (
+                          <span className="text-[10px] px-1.5 py-0.5 bg-orange-100 text-orange-600 rounded">⏰ {t.time}</span>
+                        )}
+                        <button onClick={e => { e.stopPropagation(); startEditTodo(t); }} className="text-gray-300 hover:text-blue-500 text-xs px-1">✎</button>
+                        <button onClick={e => { e.stopPropagation(); handleDeleteTodo(t.id); }} className="text-gray-300 hover:text-red-500 text-xs px-1">✕</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
         );
       })()}
 
