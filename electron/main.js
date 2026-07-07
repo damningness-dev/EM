@@ -127,14 +127,32 @@ async function downloadAsar(url, dest) {
   });
 }
 
+// 주기적 확인 상태 — 다운로드 완료/진행 중 상태를 이후 확인이 덮어쓰지 않게 한다
+let downloadingUpdate = false;
+let downloadedVersion = null;
+let balloonVersion = null;
+
 async function checkForUpdate() {
+  if (downloadingUpdate) return; // 다운로드 중엔 상태를 건드리지 않음
   sendStatus({ type: 'checking' });
   try {
     const meta = await fetchJSON(META_URL);
     if (meta.version === app.getVersion()) {
       sendStatus({ type: 'latest' });
+    } else if (downloadedVersion === meta.version) {
+      // 이미 받아둔 버전 — '지금 재시작' 안내 유지
+      sendStatus({ type: 'downloaded', version: meta.version });
     } else {
       sendStatus({ type: 'available', version: meta.version });
+      // 트레이 풍선 알림 (버전당 1회) — 창이 숨겨져 있어도 새 버전을 알 수 있게
+      if (balloonVersion !== meta.version) {
+        balloonVersion = meta.version;
+        try {
+          if (tray && process.platform === 'win32') {
+            tray.displayBalloon({ title: '환경 모니터링 업데이트', content: `새 버전 v${meta.version}이 있습니다. 앱을 열어 다운로드하세요.` });
+          }
+        } catch { /* ignore */ }
+      }
     }
   } catch (err) {
     // 404 = 아직 게시된 릴리즈에 app-meta.json이 없음 (정상, 조용히 무시)
@@ -145,6 +163,7 @@ async function checkForUpdate() {
 
 async function downloadUpdate() {
   const dest = getUpdatePath();
+  downloadingUpdate = true;
   try {
     const meta = await fetchJSON(META_URL);
     const sha256 = await downloadAsar(ASAR_URL, dest);
@@ -154,10 +173,13 @@ async function downloadUpdate() {
       throw new Error('파일 검증 실패 (체크섬 불일치)');
     }
 
+    downloadedVersion = meta.version;
     sendStatus({ type: 'downloaded', version: meta.version });
   } catch (err) {
     try { fs.unlinkSync(dest); } catch {}
     sendStatus({ type: 'error', message: err.message });
+  } finally {
+    downloadingUpdate = false;
   }
 }
 
@@ -173,10 +195,18 @@ function applyUpdateAndRestart() {
   app.exit(0);
 }
 
+let updateCheckTimer = null;
 function setupAsarUpdater(win) {
   if (isDev) return;
   mainWin = win;
   setTimeout(checkForUpdate, 5000);
+  // 주기적 자동 확인 — 새 패치가 업로드되면 실행 중에도 자동으로 감지 (10분 간격)
+  if (!updateCheckTimer) {
+    updateCheckTimer = setInterval(checkForUpdate, 10 * 60 * 1000);
+  }
+  // 트레이에서 창을 다시 열 때도 즉시 확인
+  win.removeAllListeners('show');
+  win.on('show', () => { setTimeout(checkForUpdate, 1000); });
 }
 
 // ─── 로컬 데이터 저장 ──────────────────────────────────────────────────────────
