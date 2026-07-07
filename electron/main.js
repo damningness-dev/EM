@@ -727,9 +727,15 @@ function registerHandlers() {
   ipcMain.handle('calibFile:save', (_e, { name, dataBase64 } = {}) => {
     try {
       const safe = String(name || 'file').replace(/[^\w.\-가-힣 ()]/g, '_');
-      const full = path.join(calibFilesDir(), `${crypto.randomUUID().slice(0, 8)}-${safe}`);
+      // 입력한 이름 그대로 저장(랜덤 접두사 없음). 이름이 겹치면 (2),(3)… 을 붙여 덮어쓰기 방지.
+      const dir = calibFilesDir();
+      const dot = safe.lastIndexOf('.');
+      const stem = dot > 0 ? safe.slice(0, dot) : safe;
+      const ext = dot > 0 ? safe.slice(dot) : '';
+      let full = path.join(dir, safe), n = 2;
+      while (fs.existsSync(full)) { full = path.join(dir, `${stem} (${n})${ext}`); n++; }
       fs.writeFileSync(full, Buffer.from(dataBase64, 'base64'));
-      return { ok: true, path: full, name: safe };
+      return { ok: true, path: full, name: path.basename(full) };
     } catch (e) { return { ok: false, error: e.message }; }
   });
   ipcMain.handle('calibFile:open', async (_e, filePath) => {
