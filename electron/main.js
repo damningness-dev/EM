@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Notification, screen, Tray, Menu, nativeImage, powerSaveBlocker, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, Notification, screen, Tray, Menu, nativeImage, powerSaveBlocker, powerMonitor, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -717,6 +717,35 @@ function registerHandlers() {
   });
   ipcMain.handle('sync:upload', () => syncUpload());
   ipcMain.handle('sync:pull', () => syncPull(true));
+
+  // ── 교정 첨부파일 ──
+  const calibFilesDir = () => {
+    const d = path.join(app.getPath('userData'), 'calib-files');
+    try { fs.mkdirSync(d, { recursive: true }); } catch { /* ignore */ }
+    return d;
+  };
+  ipcMain.handle('calibFile:save', (_e, { name, dataBase64 } = {}) => {
+    try {
+      const safe = String(name || 'file').replace(/[^\w.\-가-힣 ()]/g, '_');
+      const full = path.join(calibFilesDir(), `${crypto.randomUUID().slice(0, 8)}-${safe}`);
+      fs.writeFileSync(full, Buffer.from(dataBase64, 'base64'));
+      return { ok: true, path: full, name: safe };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('calibFile:open', async (_e, filePath) => {
+    try {
+      if (!filePath || !fs.existsSync(filePath)) return { ok: false, error: '파일을 찾을 수 없습니다' };
+      const r = await shell.openPath(filePath);
+      return { ok: !r, error: r || undefined };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('calibFile:reveal', (_e, filePath) => {
+    try {
+      if (!filePath || !fs.existsSync(filePath)) return { ok: false, error: '파일을 찾을 수 없습니다' };
+      shell.showItemInFolder(filePath);
+      return { ok: true };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
 
   // ── 부팅 시 자동 시작 ──
   ipcMain.handle('app:getAutoStart', () => getAutoStartEnabled());

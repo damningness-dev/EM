@@ -14,6 +14,17 @@ export async function deleteCalibration(id) {
   return api.invoke('calibration:delete', id);
 }
 
+// 교정 첨부파일 (로컬 저장)
+export async function saveCalibFile(name, dataBase64) {
+  return api.invoke('calibFile:save', { name, dataBase64 });
+}
+export async function openCalibFile(path) {
+  return api.invoke('calibFile:open', path);
+}
+export async function revealCalibFile(path) {
+  return api.invoke('calibFile:reveal', path);
+}
+
 // ─── 구역 ─────────────────────────────────────────────────────────────────────
 
 export async function fetchZones() {
