@@ -6,6 +6,39 @@ const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
 let hid = 0;
 function newHistoryId() { return `h${Date.now()}_${hid++}`; }
 
+function pad2(n) { return String(n).padStart(2, '0'); }
+// 차기교정일 = 교정일 +1년 -1일 (예: 2026-05-10 → 2027-05-09)
+function nextCalibDate(calibStr) {
+  if (!calibStr) return '';
+  const d = new Date(calibStr + 'T00:00:00');
+  d.setFullYear(d.getFullYear() + 1);
+  d.setDate(d.getDate() - 1);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+function dotDate(s) { return s ? s.replaceAll('-', '.') : ''; }
+// 가장 최근 교정내역(교정일 기준) — 일정관리처럼 최근 내역을 대표로 보여주기 위함
+function latestHistory(item) {
+  const h = item.history || [];
+  if (!h.length) return null;
+  return [...h].sort((a, b) => (b.calib_date || '').localeCompare(a.calib_date || '') || (b.year || 0) - (a.year || 0))[0];
+}
+// 대표 표시값: 최근 교정내역이 있으면 그 값, 없으면 항목 자체 값
+function effectiveCalib(item) {
+  const lh = latestHistory(item);
+  if (!lh) return { cert_no: item.cert_no, calib_date: item.calib_date, next_calib_date: item.next_calib_date };
+  return {
+    cert_no: lh.cert_no || item.cert_no,
+    calib_date: lh.calib_date || item.calib_date,
+    next_calib_date: lh.calib_date ? nextCalibDate(lh.calib_date) : (lh.next_calib_date || item.next_calib_date),
+  };
+}
+// 성적서 파일명: "관리번호 교정일(S/N)" + 확장자
+function certFileName(no, calibDate, sn, originalName) {
+  const ext = originalName && originalName.includes('.') ? originalName.slice(originalName.lastIndexOf('.')) : '';
+  const base = `${no || ''} ${dotDate(calibDate)}(${sn || ''})`.trim();
+  return base + ext;
+}
+
 export default function Calibration() {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -25,10 +58,14 @@ export default function Calibration() {
     fetchCalibration().then(d => { setData(d); setLoading(false); });
   }, []);
 
-  const enriched = useMemo(() => data.map(item => ({
-    ...item,
-    dday: item.next_calib_date && item.next_calib_date !== '미사용' ? calcDDay(item.next_calib_date) : null,
-  })), [data]);
+  const enriched = useMemo(() => data.map(item => {
+    const eff = effectiveCalib(item);
+    return {
+      ...item,
+      eff,
+      dday: eff.next_calib_date && eff.next_calib_date !== '미사용' ? calcDDay(eff.next_calib_date) : null,
+    };
+  }), [data]);
 
   const filtered = useMemo(() => {
     let list = enriched;
@@ -48,12 +85,14 @@ export default function Calibration() {
     const list = [...filtered];
     if (!sortKey) return list.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
     const dir = sortDir === 'desc' ? -1 : 1;
+    const effKeys = ['cert_no', 'calib_date', 'next_calib_date'];
+    const getV = x => (effKeys.includes(sortKey) ? (x.eff || x)[sortKey] : x[sortKey]) || '';
     return list.sort((a, b) => {
       if (sortKey === 'dday') {
         const av = a.dday ?? Infinity, bv = b.dday ?? Infinity;
         return (av - bv) * dir;
       }
-      return String(a[sortKey] || '').localeCompare(String(b[sortKey] || ''), 'ko', { numeric: true }) * dir;
+      return String(getV(a)).localeCompare(String(getV(b)), 'ko', { numeric: true }) * dir;
     });
   }, [filtered, sortKey, sortDir]);
 
@@ -91,7 +130,8 @@ export default function Calibration() {
     const orig = data.find(d => d.id === editingId) || {};
     const payload = { ...orig, id: editingId,
       no: form.no, sn: form.sn, cert_no: form.cert_no,
-      calib_date: form.calib_date || null, next_calib_date: form.next_calib_date || null,
+      calib_date: form.calib_date || null,
+      next_calib_date: form.calib_date ? nextCalibDate(form.calib_date) : (form.next_calib_date || null),
       name: form.name, note: form.note };
     try {
       const saved = await upsertCalibration(payload);
@@ -113,7 +153,8 @@ export default function Calibration() {
     setSaving(true);
     const payload = {
       no: form.no || '', sn: form.sn || '', cert_no: form.cert_no || '',
-      calib_date: form.calib_date || null, next_calib_date: form.next_calib_date || null,
+      calib_date: form.calib_date || null,
+      next_calib_date: form.calib_date ? nextCalibDate(form.calib_date) : (form.next_calib_date || null),
       name: form.name || '', note: form.note || '', history: [], sort_order: data.length,
     };
     try {
@@ -125,37 +166,11 @@ export default function Calibration() {
     setSaving(false);
   }
 
-  // ─── 연도별 교정내역(history) ───
+  // ─── 연도별 교정내역(history) 저장 ───
   async function persistHistory(item, history) {
     const saved = await upsertCalibration(stripDday({ ...item, history }));
     setData(prev => prev.map(d => d.id === item.id ? saved : d));
     window.electronAPI?.notifyDataChanged?.();
-  }
-  function addHistory(item) {
-    const y = new Date().getFullYear();
-    const entry = { id: newHistoryId(), year: y, cert_no: '', calib_date: '', next_calib_date: '', note: '' };
-    persistHistory(item, [...(item.history || []), entry]);
-  }
-  function updateHistory(item, hidx, patch) {
-    const history = (item.history || []).map((h, i) => i === hidx ? { ...h, ...patch } : h);
-    persistHistory(item, history);
-  }
-  function removeHistory(item, hidx) {
-    persistHistory(item, (item.history || []).filter((_, i) => i !== hidx));
-  }
-
-  async function uploadFileForHistory(item, hidx, file) {
-    if (!file) return;
-    if (!isElectron) { alert('파일 첨부는 데스크톱 앱에서만 지원됩니다.'); return; }
-    const b64 = await new Promise((res, rej) => {
-      const r = new FileReader();
-      r.onload = () => res(String(r.result).split(',')[1]);
-      r.onerror = rej;
-      r.readAsDataURL(file);
-    });
-    const r = await saveCalibFile(file.name, b64);
-    if (r?.ok) updateHistory(item, hidx, { fileName: r.name, filePath: r.path });
-    else alert('파일 저장 실패: ' + (r?.error || ''));
   }
 
   const expiredCount = enriched.filter(i => i.dday !== null && i.dday < 0).length;
@@ -241,7 +256,7 @@ export default function Calibration() {
                           <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm" value={form.cert_no || ''} onChange={e => setForm(f => ({ ...f, cert_no: e.target.value }))} /></td>
                           <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm" value={form.name || ''} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></td>
                           <td className="px-4 py-2"><input type="date" className="w-full border rounded px-2 py-1 text-sm" value={form.calib_date || ''} onChange={e => setForm(f => ({ ...f, calib_date: e.target.value }))} /></td>
-                          <td className="px-4 py-2"><input type="date" className="w-full border rounded px-2 py-1 text-sm" value={form.next_calib_date && form.next_calib_date !== '미사용' ? form.next_calib_date : ''} onChange={e => setForm(f => ({ ...f, next_calib_date: e.target.value }))} /></td>
+                          <td className="px-4 py-2"><input type="date" readOnly title="교정일 +1년 -1일 자동" className="w-full border rounded px-2 py-1 text-sm bg-gray-50 text-gray-500" value={nextCalibDate(form.calib_date) || ''} /></td>
                           <td className="px-4 py-2 text-center text-gray-300">—</td>
                           <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm" placeholder="비고" value={form.note || ''} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} /></td>
                           <td className="px-4 py-2 text-center whitespace-nowrap">
@@ -254,10 +269,10 @@ export default function Calibration() {
                           <td className="px-4 py-3 text-gray-400">{idx + 1}</td>
                           <td className="px-4 py-3 font-medium text-gray-800">{item.no}</td>
                           <td className="px-4 py-3 text-gray-600">{item.sn}</td>
-                          <td className="px-4 py-3 text-gray-500 text-xs">{item.cert_no}</td>
+                          <td className="px-4 py-3 text-gray-500 text-xs">{(item.eff || item).cert_no}</td>
                           <td className="px-4 py-3 text-gray-600">{item.name}</td>
-                          <td className="px-4 py-3 text-gray-500 text-xs">{formatDate(item.calib_date)}</td>
-                          <td className="px-4 py-3 text-gray-500 text-xs">{item.next_calib_date === '미사용' ? '미사용' : formatDate(item.next_calib_date)}</td>
+                          <td className="px-4 py-3 text-gray-500 text-xs">{formatDate((item.eff || item).calib_date)}</td>
+                          <td className="px-4 py-3 text-gray-500 text-xs">{(item.eff || item).next_calib_date === '미사용' ? '미사용' : formatDate((item.eff || item).next_calib_date)}</td>
                           <td className={`px-4 py-3 text-center font-semibold text-sm ${getDDayColor(item.dday)}`}>{getDDayLabel(item.dday)}</td>
                           <td className="px-4 py-3 text-center text-xs text-gray-400">{item.note}</td>
                           <td className="px-4 py-3 text-center whitespace-nowrap">
@@ -270,12 +285,7 @@ export default function Calibration() {
                     {isExp && (
                       <tr>
                         <td colSpan={11} className="p-0 bg-gray-50/60">
-                          <HistoryPanel item={item}
-                            onAdd={() => addHistory(item)}
-                            onUpdate={(hidx, patch) => updateHistory(item, hidx, patch)}
-                            onRemove={hidx => removeHistory(item, hidx)}
-                            onUpload={(hidx, file) => uploadFileForHistory(item, hidx, file)}
-                          />
+                          <HistoryPanel item={item} onSave={history => persistHistory(item, history)} />
                         </td>
                       </tr>
                     )}
@@ -303,8 +313,8 @@ export default function Calibration() {
                 <input type="date" className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.calib_date || ''} onChange={e => setForm(f => ({ ...f, calib_date: e.target.value }))} />
               </div>
               <div>
-                <label className="text-xs text-gray-500">차기교정일</label>
-                <input type="date" className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.next_calib_date || ''} onChange={e => setForm(f => ({ ...f, next_calib_date: e.target.value }))} />
+                <label className="text-xs text-gray-500">차기교정일 <span className="text-gray-300">(자동: +1년 -1일)</span></label>
+                <input type="date" readOnly className="w-full border rounded px-2 py-1.5 text-sm mt-0.5 bg-gray-50 text-gray-500" value={nextCalibDate(form.calib_date) || ''} />
               </div>
             </div>
             <div>
@@ -324,51 +334,89 @@ export default function Calibration() {
 
 function FragmentRow({ children }) { return <>{children}</>; }
 
-function HistoryPanel({ item, onAdd, onUpdate, onRemove, onUpload }) {
-  const history = [...(item.history || [])].sort((a, b) => (b.year || 0) - (a.year || 0));
+function HistoryPanel({ item, onSave }) {
+  const [rows, setRows] = useState(() => (item.history || []).map(h => ({ ...h })));
+  const [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
+
+  function edit(idx, patch) { setRows(rs => rs.map((r, i) => i === idx ? { ...r, ...patch } : r)); setDirty(true); }
+  function add() { setRows(rs => [...rs, { id: newHistoryId(), year: new Date().getFullYear(), cert_no: '', calib_date: '', note: '', fileName: '', filePath: '' }]); setDirty(true); }
+  function remove(idx) { setRows(rs => rs.filter((_, i) => i !== idx)); setDirty(true); }
+
+  async function upload(idx, file) {
+    if (!file) return;
+    if (!isElectron) { alert('파일 첨부는 데스크톱 앱에서만 지원됩니다.'); return; }
+    const row = rows[idx];
+    if (!row.calib_date) { alert('먼저 교정일을 입력하세요. (파일명이 관리번호·교정일 기준으로 저장됩니다)'); return; }
+    const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(file); });
+    const desired = certFileName(item.no, row.calib_date, item.sn, file.name);
+    const r = await saveCalibFile(desired, b64);
+    if (r?.ok) edit(idx, { fileName: r.name, filePath: r.path });
+    else alert('파일 저장 실패: ' + (r?.error || ''));
+  }
+
+  async function save() {
+    setBusy(true);
+    const toSave = rows.map(r => ({ ...r, next_calib_date: r.calib_date ? nextCalibDate(r.calib_date) : '' }));
+    try { await onSave(toSave); setDirty(false); } catch (e) { alert('저장 실패: ' + e.message); } finally { setBusy(false); }
+  }
+
   async function open(path) { const r = await openCalibFile(path); if (r && !r.ok) alert('열기 실패: ' + (r.error || '')); }
+
+  const view = rows.map((r, i) => ({ r, i })).sort((a, b) => (b.r.year || 0) - (a.r.year || 0));
+
   return (
     <div className="px-8 py-3">
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs font-semibold text-gray-600">📁 연도별 교정내역</span>
-        <button onClick={onAdd} className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium">+ 내역 추가</button>
+        <div className="flex items-center gap-2">
+          <button onClick={add} className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium">+ 내역 추가</button>
+          <button onClick={save} disabled={busy || !dirty}
+            className={`text-xs px-3 py-1 rounded font-semibold ${dirty ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-100 text-gray-400'} disabled:opacity-60`}>
+            {busy ? '저장 중…' : dirty ? '저장' : '저장됨'}
+          </button>
+        </div>
       </div>
-      {history.length === 0 ? (
-        <p className="text-xs text-gray-400 py-2">등록된 교정내역이 없습니다.</p>
+      {rows.length === 0 ? (
+        <p className="text-xs text-gray-400 py-2">등록된 교정내역이 없습니다. "+ 내역 추가"로 등록하세요.</p>
       ) : (
         <div className="space-y-1.5">
-          {history.map((h) => {
-            const realIdx = (item.history || []).findIndex(x => x.id === h.id);
-            return (
-              <div key={h.id} className="flex flex-wrap items-center gap-2 bg-white border border-gray-100 rounded-lg px-3 py-2">
-                <input type="number" value={h.year || ''} onChange={e => onUpdate(realIdx, { year: parseInt(e.target.value) || '' })}
-                  className="w-16 border border-gray-200 rounded px-1.5 py-1 text-xs text-center" placeholder="연도" />
-                <input value={h.cert_no || ''} onChange={e => onUpdate(realIdx, { cert_no: e.target.value })}
-                  className="w-32 border border-gray-200 rounded px-1.5 py-1 text-xs" placeholder="성적서번호" />
-                <label className="text-[10px] text-gray-400">교정일<input type="date" value={h.calib_date || ''} onChange={e => onUpdate(realIdx, { calib_date: e.target.value })} className="ml-1 border border-gray-200 rounded px-1 py-1 text-xs" /></label>
-                <label className="text-[10px] text-gray-400">차기<input type="date" value={h.next_calib_date || ''} onChange={e => onUpdate(realIdx, { next_calib_date: e.target.value })} className="ml-1 border border-gray-200 rounded px-1 py-1 text-xs" /></label>
-                <input value={h.note || ''} onChange={e => onUpdate(realIdx, { note: e.target.value })}
-                  className="flex-1 min-w-24 border border-gray-200 rounded px-1.5 py-1 text-xs" placeholder="비고" />
-                {h.filePath ? (
-                  <span className="flex items-center gap-1">
-                    <button onClick={() => open(h.filePath)} className="text-xs px-2 py-1 bg-emerald-50 text-emerald-600 rounded hover:bg-emerald-100" title={h.fileName}>📄 열기</button>
-                    <button onClick={() => revealCalibFile(h.filePath)} className="text-xs px-1.5 py-1 text-gray-400 hover:text-gray-700" title="폴더에서 보기">📂</button>
-                    <button onClick={() => onUpdate(realIdx, { fileName: '', filePath: '' })} className="text-xs text-gray-300 hover:text-red-500" title="첨부 제거">✕</button>
-                  </span>
-                ) : (
-                  <label className="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded hover:bg-gray-200 cursor-pointer">
-                    📎 파일첨부
-                    <input type="file" className="hidden" onChange={e => { onUpload(realIdx, e.target.files?.[0]); e.target.value = ''; }} />
-                  </label>
-                )}
-                <button onClick={() => onRemove(realIdx)} className="text-xs text-gray-300 hover:text-red-500 px-1" title="내역 삭제">🗑</button>
-              </div>
-            );
-          })}
+          {view.map(({ r: h, i: idx }) => (
+            <div key={h.id} className="flex flex-wrap items-center gap-2 bg-white border border-gray-100 rounded-lg px-3 py-2">
+              <input type="number" value={h.year || ''} onChange={e => edit(idx, { year: parseInt(e.target.value) || '' })}
+                className="w-16 border border-gray-200 rounded px-1.5 py-1 text-xs text-center" placeholder="연도" />
+              <input value={h.cert_no || ''} onChange={e => edit(idx, { cert_no: e.target.value })}
+                className="w-32 border border-gray-200 rounded px-1.5 py-1 text-xs" placeholder="성적서번호" />
+              <label className="text-[10px] text-gray-400">교정일<input type="date" value={h.calib_date || ''} onChange={e => edit(idx, { calib_date: e.target.value })} className="ml-1 border border-gray-200 rounded px-1 py-1 text-xs" /></label>
+              <label className="text-[10px] text-gray-400">차기<input type="date" readOnly title="교정일 +1년 -1일 자동" value={nextCalibDate(h.calib_date) || ''} className="ml-1 border border-gray-200 rounded px-1 py-1 text-xs bg-gray-50 text-gray-500" /></label>
+              <input value={h.note || ''} onChange={e => edit(idx, { note: e.target.value })}
+                className="flex-1 min-w-24 border border-gray-200 rounded px-1.5 py-1 text-xs" placeholder="비고" />
+              {h.filePath ? (
+                <span className="flex items-center gap-1">
+                  <button onClick={() => open(h.filePath)} className="text-xs px-2 py-1 bg-emerald-50 text-emerald-600 rounded hover:bg-emerald-100" title={h.fileName}>📄 열기</button>
+                  <button onClick={() => revealCalibFile(h.filePath)} className="text-xs px-1.5 py-1 text-gray-400 hover:text-gray-700" title="폴더에서 보기">📂</button>
+                  <button onClick={() => edit(idx, { fileName: '', filePath: '' })} className="text-xs text-gray-300 hover:text-red-500" title="첨부 제거">✕</button>
+                </span>
+              ) : (
+                <label className="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded hover:bg-gray-200 cursor-pointer">
+                  📎 파일첨부
+                  <input type="file" className="hidden" onChange={e => { upload(idx, e.target.files?.[0]); e.target.value = ''; }} />
+                </label>
+              )}
+              <button onClick={() => remove(idx)} className="text-xs text-gray-300 hover:text-red-500 px-1" title="내역 삭제">🗑</button>
+            </div>
+          ))}
         </div>
       )}
+      {h_fileName_hint(rows)}
     </div>
   );
+}
+
+// 파일명 규칙 안내
+function h_fileName_hint(rows) {
+  if (!rows.some(r => r.filePath)) return null;
+  return <p className="text-[10px] text-gray-400 mt-2">첨부파일은 "관리번호 교정일(S/N)" 형식으로 저장됩니다.</p>;
 }
 
 function LoadingSpinner() {

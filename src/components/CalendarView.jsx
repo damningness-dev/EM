@@ -64,6 +64,7 @@ const DEFAULT_CHIP_COLORS = {
   'cat_공조':       { bg: '#ffffff', border: '#d1d5db' },
   'cat_질소가스':   { bg: '#f3e8ff', border: '#e9d5ff' },
   'cat_압축공기':   { bg: '#fef9c3', border: '#fde68a' },
+  'cat_용수':       { bg: '#ccfbf1', border: '#99f6e4' },
   'grade_P1':       { text: '#b91c1c' },
   'grade_P2':       { text: '#15803d' },
   'grade_P3':       { text: '#1d4ed8' },
@@ -498,7 +499,9 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
   }
 
   function getChipStyle(category, grade) {
-    const cat = chipColors[`cat_${category}`] ?? DEFAULT_CHIP_COLORS[`cat_${category}`] ?? { bg: '#f3f4f6', border: '#e5e7eb' };
+    // 소분류는 소속 대분류의 색상을 따른다
+    const major = getMajorCat(category, scheduleConfig);
+    const cat = chipColors[`cat_${major}`] ?? DEFAULT_CHIP_COLORS[`cat_${major}`] ?? { bg: '#f3f4f6', border: '#e5e7eb' };
     const grd = chipColors[`grade_${grade}`] ?? DEFAULT_CHIP_COLORS[`grade_${grade}`] ?? { text: '#4b5563' };
     return { backgroundColor: cat.bg, borderColor: cat.border, borderWidth: '1px', borderStyle: 'solid', color: grd.text };
   }
@@ -1553,8 +1556,8 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
               <span className="w-3 h-3 rounded bg-yellow-50 border border-yellow-200 inline-block" />이번달 교정
             </div>
-            {/* Category chips — click to edit colors (모든 분류: 기본 + 소분류) */}
-            {Object.keys(scheduleConfig).filter(k => !k.startsWith('__')).map(cat => {
+            {/* 범례는 대분류만 — 소분류는 대분류 색상을 따름 */}
+            {MAJOR_CATS.map(cat => {
               const c = chipColors[`cat_${cat}`] ?? DEFAULT_CHIP_COLORS[`cat_${cat}`] ?? { bg: '#f3f4f6', border: '#e5e7eb' };
               return (
                 <button
