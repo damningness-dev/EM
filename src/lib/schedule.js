@@ -62,7 +62,23 @@ export const DEFAULT_SCHEDULE_SPECS = {
     'P3':     [{ durationValue: 12, durationUnit: 'month', unit: 'month', interval: 1, count: 12 }],
     '유지관리': [{ durationValue: 36, durationUnit: 'month', unit: 'month', interval: 3, count: 12 }],
   },
+  '용수': {
+    'P1':     [{ durationValue: 7,  durationUnit: 'day',   unit: 'day',   interval: 1, count: 7 }],
+    'P2':     [{ durationValue: 26, durationUnit: 'week',  unit: 'week',  interval: 2, count: 13 }],
+    'P3':     [{ durationValue: 12, durationUnit: 'month', unit: 'month', interval: 1, count: 12 }],
+    '유지관리': [{ durationValue: 36, durationUnit: 'month', unit: 'month', interval: 3, count: 12 }],
+  },
 };
+
+// 대분류(고정 4종). 사용자가 추가하는 소분류는 __major로 소속 대분류를 가리킨다.
+export const MAJOR_CATS = ['공조', '압축공기', '질소가스', '용수'];
+
+// 분류의 대분류를 반환 (대분류면 자신, 소분류면 __major, 없으면 자신)
+export function getMajorCat(cat, cfg) {
+  if (MAJOR_CATS.includes(cat)) return cat;
+  const c = (cfg || getScheduleConfig())[cat];
+  return (c && c.__major) || cat;
+}
 
 // 측정주기 단위 → 일수 환산(횟수 자동 계산용; 월/분기/반기/년은 평균값)
 export const UNIT_DAYS = { day: 1, week: 7, month: 365.25 / 12, quarter: 365.25 / 4, half: 365.25 / 2, year: 365.25 };
@@ -335,7 +351,12 @@ function sumPoints(item) {
        + (item.points_fall || 0) + (item.points_particle || 0);
 }
 
-const COMBINED_CATS = ['질소가스', '압축공기'];
+const COMBINED_MAJORS = ['질소가스', '압축공기'];
+// 통합 측정(부유/낙하/표면/부유입자 → 하나) 대상인지 — 대분류가 질소가스/압축공기면 참
+export function isCombinedCat(cat, cfg) {
+  return COMBINED_MAJORS.includes(getMajorCat(cat, cfg));
+}
+const COMBINED_CATS = { includes: (c) => isCombinedCat(c) };
 
 // Re-balance a single month's measurements per-type per-category.
 // capacities = { surface, float, fall, particle, combined }

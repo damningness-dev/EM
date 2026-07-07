@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
 import { fetchZones, upsertZone, deleteZone, fetchMonitoringData, upsertMonitoringEntry, fetchCompletions, setCompletion, deleteCompletion, fetchHolidays, fetchGroups, upsertGroup, fetchScheduleConfig, saveScheduleConfig } from '../lib/api';
 import { GRADE_TARGETS, GRADE_COLORS, CLEAN_GRADES, CLEAN_GRADE_COLORS } from '../data/initialData';
-import { calcMeasurements, calcEndDate, GRADE_PRIORITY, buildHolidayMap, computeCascadeSchedules, DEFAULT_SCHEDULE_SPECS, setScheduleConfig, getScheduleConfig } from '../lib/schedule';
+import { calcMeasurements, calcEndDate, GRADE_PRIORITY, buildHolidayMap, computeCascadeSchedules, DEFAULT_SCHEDULE_SPECS, setScheduleConfig, getScheduleConfig, isCombinedCat, getMajorCat } from '../lib/schedule';
 import { format } from 'date-fns';
 
 const MONTHS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
@@ -16,10 +16,11 @@ const CYCLE_TYPES = [
 ];
 const DEFAULT_INTERVAL = { daily: 1, weekly: 7, biweekly: 14 };
 const CYCLE_GRADES = ['P1', 'P2', 'P3', '유지관리'];
-const CATEGORY_BG = { '질소가스': '#faf5ff', '압축공기': '#fffbeb' };
-// 질소가스·압축공기는 부유균/낙하균/표면균/부유입자를 구분하지 않고 통합 측정값 하나로 관리한다.
-// 통합값은 airborne(→points_float) 한 곳에만 저장한다.
-const COMBINED_CATS = ['질소가스', '압축공기'];
+// 대분류별 배경색 (소분류는 소속 대분류 색 사용)
+const MAJOR_BG = { '질소가스': '#faf5ff', '압축공기': '#fffbeb', '용수': '#f0fdfa' };
+function catBg(cat) { return MAJOR_BG[getMajorCat(cat)]; }
+// 질소가스·압축공기 대분류는 부유균/낙하균/표면균/부유입자를 통합 측정값 하나로 관리(airborne→points_float).
+const COMBINED_CATS = { includes: (c) => isCombinedCat(c) };
 
 export default function MonthlyMonitoring({ year, onYearChange }) {
   const [month, setMonth] = useState(new Date().getMonth() + 1);
@@ -763,7 +764,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                       {/* Group summary row */}
                       <tr
                         className={`border-b border-gray-100 cursor-pointer select-none transition-colors ${isExpanded ? 'border-blue-100' : ''}`}
-                        style={{ backgroundColor: isExpanded ? 'rgba(219,234,254,0.35)' : isGroupActive ? 'rgba(219,234,254,0.15)' : CATEGORY_BG[group.category] }}
+                        style={{ backgroundColor: isExpanded ? 'rgba(219,234,254,0.35)' : isGroupActive ? 'rgba(219,234,254,0.15)' : catBg(group.category) }}
                         onClick={() => toggleGroup(group.key)}
                       >
                         <td className="px-2 py-3 text-center" onClick={e => e.stopPropagation()}>

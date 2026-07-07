@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { upsertZone, deleteZone, upsertGroup, fetchScheduleConfig, saveScheduleConfig } from '../lib/api';
-import { GRADE_PRIORITY, DEFAULT_SCHEDULE_SPECS, setScheduleConfig, getScheduleConfig, buildHolidayMap, computeCascadeSchedules, calcMeasurements, calcEndDate, computePhaseCount, totalCount, UNIT_DAYS } from '../lib/schedule';
+import { GRADE_PRIORITY, DEFAULT_SCHEDULE_SPECS, setScheduleConfig, getScheduleConfig, buildHolidayMap, computeCascadeSchedules, calcMeasurements, calcEndDate, computePhaseCount, totalCount, UNIT_DAYS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
 import { GRADE_COLORS, CLEAN_GRADES, CLEAN_GRADE_COLORS } from '../data/initialData';
 
 const CYCLE_UNITS = [
@@ -18,9 +18,9 @@ const DURATION_UNITS = [
   { value: 'year',  label: '년' },
 ];
 const CYCLE_GRADES = ['P1', 'P2', 'P3', '유지관리'];
-// 질소가스·압축공기는 부유균/낙하균/표면균/부유입자를 통합 측정값 하나로 관리한다(부유균 칸에 저장).
-const COMBINED_CATS = ['질소가스', '압축공기'];
-const BUILTIN_CATS = ['공조', '압축공기', '질소가스'];
+// 질소가스·압축공기 대분류는 부유균/낙하균/표면균/부유입자를 통합 측정값 하나로 관리(부유균 칸에 저장).
+const COMBINED_CATS = { includes: (c) => isCombinedCat(c) };
+const BUILTIN_CATS = MAJOR_CATS; // 공조·압축공기·질소가스·용수 (삭제 불가 대분류)
 const PROGRESSION = ['P1', 'P2', 'P3', '유지관리'];
 const GRADES = ['P1', 'P2', 'P3', '유지관리', 'OQ', 'PQ'];
 
@@ -144,9 +144,10 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
   // 우클릭 컨텍스트 메뉴
   const [contextMenu, setContextMenu] = useState(null); // { x, y, groupIdx }
   const contextMenuRef = useRef(null);
-  // 측정주기 설정
+  // 측정주기 설정 (대분류 → 소분류 2단계)
   const [cycleConfig, setCycleConfig] = useState(() => getScheduleConfig());
-  const [cycleCatTab, setCycleCatTab] = useState(() => Object.keys(getScheduleConfig())[0] || '공조');
+  const [cycleMajorTab, setCycleMajorTab] = useState('공조'); // 선택된 대분류
+  const [cycleCatTab, setCycleCatTab] = useState('공조');     // 선택된 분류(대분류 자신 또는 소분류)
   const [newCatName, setNewCatName] = useState('');
   // 컬럼 순서 / 너비 (localStorage 영속)
   const [colOrder, setColOrder] = useState(() => {
@@ -178,7 +179,8 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
       if (cfg) {
         setScheduleConfig(cfg);
         setCycleConfig(cfg);
-        setCycleCatTab(Object.keys(cfg)[0] || '공조');
+        setCycleMajorTab('공조');
+        setCycleCatTab('공조');
       }
     }).catch(() => {});
   }, []);
@@ -575,30 +577,42 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
 
   function resetCycleCategory(cat) {
     const next = JSON.parse(JSON.stringify(cycleConfig));
+    const major = next[cat]?.__major;
     if (DEFAULT_SCHEDULE_SPECS[cat]) {
       next[cat] = JSON.parse(JSON.stringify(DEFAULT_SCHEDULE_SPECS[cat]));
     } else {
       next[cat] = {}; CYCLE_GRADES.forEach(g => { next[cat][g] = []; });
     }
+    if (major) next[cat].__major = major;
     applyCycleConfig(next);
   }
 
-  function addCycleCategory() {
+  // 선택된 대분류 아래에 소분류(자체 측정주기를 갖는 분류)를 추가
+  function addSubCategory(major) {
     const name = newCatName.trim();
     if (!name || cycleConfig[name]) return;
     const next = JSON.parse(JSON.stringify(cycleConfig));
-    next[name] = {}; CYCLE_GRADES.forEach(g => { next[name][g] = []; });
+    next[name] = { __major: major };
+    CYCLE_GRADES.forEach(g => { next[name][g] = []; });
     applyCycleConfig(next);
     setCycleCatTab(name);
     setNewCatName('');
   }
 
   function removeCycleCategory(cat) {
-    if (BUILTIN_CATS.includes(cat)) return;
+    if (MAJOR_CATS.includes(cat)) return; // 대분류(4종)는 삭제 불가
     const next = JSON.parse(JSON.stringify(cycleConfig));
+    const major = next[cat]?.__major || cycleMajorTab;
     delete next[cat];
     applyCycleConfig(next);
-    setCycleCatTab(Object.keys(next)[0] || '공조');
+    setCycleCatTab(major);
+  }
+
+  // 특정 대분류에 속한 소분류 목록 (레거시: __major 없는 커스텀 분류는 공조로 취급)
+  function subCatsOf(major) {
+    return Object.keys(cycleConfig).filter(c =>
+      !MAJOR_CATS.includes(c) && ((cycleConfig[c]?.__major || '공조') === major)
+    );
   }
 
   // 폴더당 구역 개수
@@ -1177,23 +1191,37 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
         ) : (
           /* ─── 측정주기 설정 탭 ─── */
           <div className="flex flex-col flex-1 min-h-0">
-            <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-gray-100 shrink-0 flex-wrap">
-              {categories.map(cat => (
+            {/* 대분류 탭 (고정 4종) */}
+            <div className="flex items-center gap-1.5 px-4 pt-2.5 pb-1.5 border-b border-gray-50 shrink-0 flex-wrap">
+              <span className="text-[11px] text-gray-400 mr-1">대분류</span>
+              {MAJOR_CATS.map(m => (
+                <button key={m} onClick={() => { setCycleMajorTab(m); setCycleCatTab(m); }}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${cycleMajorTab === m ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                >{m}</button>
+              ))}
+            </div>
+            {/* 소분류 pills (선택된 대분류 아래) */}
+            <div className="flex items-center gap-1.5 px-4 py-2 border-b border-gray-100 shrink-0 flex-wrap">
+              <span className="text-[11px] text-gray-400 mr-1">소분류</span>
+              <button onClick={() => setCycleCatTab(cycleMajorTab)}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${cycleCatTab === cycleMajorTab ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+              >{cycleMajorTab} (기본)</button>
+              {subCatsOf(cycleMajorTab).map(cat => (
                 <button key={cat} onClick={() => setCycleCatTab(cat)}
-                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${cycleCatTab === cat ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${cycleCatTab === cat ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
                 >{cat}</button>
               ))}
               <div className="flex-1" />
               <div className="flex items-center gap-1">
                 <input
-                  className="text-xs border border-gray-300 rounded px-2 py-0.5 w-24 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  placeholder="새 분류명"
+                  className="text-xs border border-gray-300 rounded px-2 py-0.5 w-28 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder={`${cycleMajorTab} 소분류명`}
                   value={newCatName}
                   onChange={e => setNewCatName(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') addCycleCategory(); }}
+                  onKeyDown={e => { if (e.key === 'Enter') addSubCategory(cycleMajorTab); }}
                 />
-                <button onClick={addCycleCategory} disabled={!newCatName.trim() || !!cycleConfig[newCatName.trim()]}
-                  className="text-xs px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40">추가</button>
+                <button onClick={() => addSubCategory(cycleMajorTab)} disabled={!newCatName.trim() || !!cycleConfig[newCatName.trim()]}
+                  className="text-xs px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40">+ 소분류</button>
               </div>
             </div>
             <div className="px-4 py-2 border-b border-gray-100 flex items-center justify-between shrink-0">

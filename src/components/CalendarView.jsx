@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, syncGetConfig, submitEditRequest, fetchEditRequests, resolveEditRequest } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
-import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS } from '../lib/schedule';
+import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
 import { lunarToSolar } from '../lib/lunar';
 import OrderGroupManager from './OrderGroupManager';
@@ -40,15 +40,19 @@ const CYCLE_TYPES = [
 ];
 const DEFAULT_INTERVAL = { daily: 1, weekly: 7, biweekly: 14, monthly: null, quarterly: null };
 const CYCLE_GRADES = ['P1', 'P2', 'P3', '유지관리'];
-const CYCLE_CATS = ['공조', '압축공기', '질소가스'];
+const CYCLE_CATS = ['공조', '압축공기', '질소가스', '용수'];
 
 function mergeScheduleConfig(backend) {
   const base = JSON.parse(JSON.stringify(DEFAULT_SCHEDULE_SPECS));
   if (backend && typeof backend === 'object') {
-    for (const cat of CYCLE_CATS) {
-      if (backend[cat]) {
-        for (const g of CYCLE_GRADES) {
-          if (Array.isArray(backend[cat][g])) base[cat][g] = backend[cat][g];
+    // 백엔드의 모든 분류(기본 + 사용자가 추가한 소분류)를 반영한다.
+    for (const cat of Object.keys(backend)) {
+      if (!base[cat]) base[cat] = {};
+      const src = backend[cat];
+      if (src && typeof src === 'object') {
+        // __major 등 메타 키 보존 + 등급별 구간 병합
+        for (const key of Object.keys(src)) {
+          if (Array.isArray(src[key]) || key.startsWith('__')) base[cat][key] = src[key];
         }
       }
     }
@@ -1383,16 +1387,20 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
                 const isDragOver = dragOverDay === dateStr;
                 const dow = new Date(dateStr + 'T00:00:00').getDay();
 
-                const catPts = { 공조: {s:0,f:0,l:0,p:0}, 질소가스: 0, 압축공기: 0 };
+                // 비통합(공조·용수 등)은 유형별 합산, 통합(질소·압축 대분류)은 대분류별 float 합산
+                const catPts = { nonComb: { s:0, f:0, l:0, p:0 }, combined: {} };
                 schedEvts.forEach(({ zone }) => {
                   const s=zone.points_surface||0, f=zone.points_float||0, l=zone.points_fall||0, p=zone.points_particle||0;
-                  if (zone.category === '공조') { catPts['공조'].s+=s; catPts['공조'].f+=f; catPts['공조'].l+=l; catPts['공조'].p+=p; }
-                  // 질소가스·압축공기는 통합값(points_float=f) 하나만 집계 (일정관리와 일치)
-                  else if (zone.category === '질소가스') catPts['질소가스'] += f;
-                  else if (zone.category === '압축공기') catPts['압축공기'] += f;
+                  if (isCombinedCat(zone.category, scheduleConfig)) {
+                    const major = getMajorCat(zone.category, scheduleConfig);
+                    catPts.combined[major] = (catPts.combined[major] || 0) + f;
+                  } else {
+                    catPts.nonComb.s+=s; catPts.nonComb.f+=f; catPts.nonComb.l+=l; catPts.nonComb.p+=p;
+                  }
                 });
                 const tempPtsTotal = tempEvts.reduce((t,e)=>t+(e.points_surface||0)+(e.points_float||0)+(e.points_fall||0)+(e.points_particle||0), 0);
-                const hasPts = catPts['공조'].s+catPts['공조'].f+catPts['공조'].l+catPts['공조'].p+catPts['질소가스']+catPts['압축공기']+tempPtsTotal > 0;
+                const combTotal = Object.values(catPts.combined).reduce((a,b)=>a+b,0);
+                const hasPts = catPts.nonComb.s+catPts.nonComb.f+catPts.nonComb.l+catPts.nonComb.p+combTotal+tempPtsTotal > 0;
                 const nextCellData = grid[idx + 1];
                 const belowCellData = grid[idx + 7];
                 const boundaryRight = (isOther && nextCellData && !nextCellData.isOther)
@@ -1437,14 +1445,16 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
                         (dow === 0 || isHol) ? 'text-red-500' :
                         dow === 6 ? 'text-blue-500' : 'text-gray-700'
                       }`;
+                      const majorAbbr = { '질소가스': '질', '압축공기': '압', '용수': '용' };
                       const ptsChips = hasPts ? (
                         <div className={`flex flex-wrap gap-0.5 ${isOther ? 'opacity-50' : ''}`}>
-                          {catPts['공조'].s > 0 && <span className="text-[9px] leading-none bg-green-50 text-green-700 px-0.5 py-0.5 rounded">표{catPts['공조'].s}</span>}
-                          {catPts['공조'].f > 0 && <span className="text-[9px] leading-none bg-blue-50 text-blue-700 px-0.5 py-0.5 rounded">부{catPts['공조'].f}</span>}
-                          {catPts['공조'].l > 0 && <span className="text-[9px] leading-none bg-orange-50 text-orange-700 px-0.5 py-0.5 rounded">낙{catPts['공조'].l}</span>}
-                          {catPts['공조'].p > 0 && <span className="text-[9px] leading-none bg-pink-50 text-pink-700 px-0.5 py-0.5 rounded">입{catPts['공조'].p}</span>}
-                          {catPts['질소가스'] > 0 && <span className="text-[9px] leading-none bg-purple-100 text-purple-700 px-0.5 py-0.5 rounded">질{catPts['질소가스']}</span>}
-                          {catPts['압축공기'] > 0 && <span className="text-[9px] leading-none bg-yellow-100 text-yellow-700 px-0.5 py-0.5 rounded">압{catPts['압축공기']}</span>}
+                          {catPts.nonComb.s > 0 && <span className="text-[9px] leading-none bg-green-50 text-green-700 px-0.5 py-0.5 rounded">표{catPts.nonComb.s}</span>}
+                          {catPts.nonComb.f > 0 && <span className="text-[9px] leading-none bg-blue-50 text-blue-700 px-0.5 py-0.5 rounded">부{catPts.nonComb.f}</span>}
+                          {catPts.nonComb.l > 0 && <span className="text-[9px] leading-none bg-orange-50 text-orange-700 px-0.5 py-0.5 rounded">낙{catPts.nonComb.l}</span>}
+                          {catPts.nonComb.p > 0 && <span className="text-[9px] leading-none bg-pink-50 text-pink-700 px-0.5 py-0.5 rounded">입{catPts.nonComb.p}</span>}
+                          {Object.entries(catPts.combined).map(([major, v]) => v > 0 && (
+                            <span key={major} className="text-[9px] leading-none bg-purple-100 text-purple-700 px-0.5 py-0.5 rounded">{majorAbbr[major] || major.slice(0, 1)}{v}</span>
+                          ))}
                           {tempPtsTotal > 0 && <span className="text-[9px] leading-none bg-gray-100 text-gray-500 px-0.5 py-0.5 rounded">임{tempPtsTotal}</span>}
                         </div>
                       ) : null;
@@ -1543,9 +1553,9 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
             <div className="flex items-center gap-1.5 text-xs text-gray-500">
               <span className="w-3 h-3 rounded bg-yellow-50 border border-yellow-200 inline-block" />이번달 교정
             </div>
-            {/* Category chips — click to edit colors */}
-            {['공조', '질소가스', '압축공기'].map(cat => {
-              const c = chipColors[`cat_${cat}`] ?? DEFAULT_CHIP_COLORS[`cat_${cat}`];
+            {/* Category chips — click to edit colors (모든 분류: 기본 + 소분류) */}
+            {Object.keys(scheduleConfig).filter(k => !k.startsWith('__')).map(cat => {
+              const c = chipColors[`cat_${cat}`] ?? DEFAULT_CHIP_COLORS[`cat_${cat}`] ?? { bg: '#f3f4f6', border: '#e5e7eb' };
               return (
                 <button
                   key={cat}
@@ -1709,13 +1719,9 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
                           </p>
                           {(zone.points_surface || zone.points_float || zone.points_fall || zone.points_particle) ? (
                             <div className="flex gap-1 mt-1 flex-wrap">
-                              {zone.category === '질소가스' ? (
+                              {isCombinedCat(zone.category, scheduleConfig) ? (
                                 <span className="text-[10px] bg-purple-100 text-purple-700 px-1 py-0.5 rounded font-medium">
-                                  질소 {zone.points_float || 0}pt
-                                </span>
-                              ) : zone.category === '압축공기' ? (
-                                <span className="text-[10px] bg-yellow-100 text-yellow-700 px-1 py-0.5 rounded font-medium">
-                                  압축공기 {zone.points_float || 0}pt
+                                  {getMajorCat(zone.category, scheduleConfig)} {zone.points_float || 0}pt
                                 </span>
                               ) : (
                                 <>
