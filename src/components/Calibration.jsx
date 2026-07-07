@@ -55,7 +55,25 @@ export default function Calibration() {
   const [dropIdx, setDropIdx] = useState(null);
 
   useEffect(() => {
-    fetchCalibration().then(d => { setData(d); setLoading(false); });
+    fetchCalibration().then(async d => {
+      // 기존 상단 교정정보(성적서/교정일)를 연도별 교정내역으로 1회 이관 → 이후 최신 내역에서 표시
+      const migrated = [];
+      const list = (d || []).map(item => {
+        const hasHistory = item.history && item.history.length > 0;
+        const hasBase = item.calib_date && item.calib_date !== '미사용';
+        if (!hasHistory && (hasBase || item.cert_no)) {
+          const y = item.calib_date ? new Date(item.calib_date + 'T00:00:00').getFullYear() : new Date().getFullYear();
+          const entry = { id: newHistoryId(), year: y, cert_no: item.cert_no || '', calib_date: item.calib_date || '', next_calib_date: item.next_calib_date || '', note: '' };
+          const nu = { ...item, history: [entry] };
+          migrated.push(nu);
+          return nu;
+        }
+        return item;
+      });
+      setData(list);
+      setLoading(false);
+      for (const m of migrated) { try { await upsertCalibration(m); } catch { /* ignore */ } }
+    });
   }, []);
 
   const enriched = useMemo(() => data.map(item => {
@@ -128,11 +146,8 @@ export default function Calibration() {
   async function saveEdit() {
     setSaving(true);
     const orig = data.find(d => d.id === editingId) || {};
-    const payload = { ...orig, id: editingId,
-      no: form.no, sn: form.sn, cert_no: form.cert_no,
-      calib_date: form.calib_date || null,
-      next_calib_date: form.calib_date ? nextCalibDate(form.calib_date) : (form.next_calib_date || null),
-      name: form.name, note: form.note };
+    // 교정정보(성적서번호·교정일·차기)는 연도별 교정내역에서 관리 → 식별정보·비고만 수정
+    const payload = { ...orig, id: editingId, no: form.no, sn: form.sn, name: form.name, note: form.note };
     try {
       const saved = await upsertCalibration(payload);
       setData(prev => prev.map(d => d.id === editingId ? saved : d));
@@ -152,10 +167,9 @@ export default function Calibration() {
   async function addItem() {
     setSaving(true);
     const payload = {
-      no: form.no || '', sn: form.sn || '', cert_no: form.cert_no || '',
-      calib_date: form.calib_date || null,
-      next_calib_date: form.calib_date ? nextCalibDate(form.calib_date) : (form.next_calib_date || null),
-      name: form.name || '', note: form.note || '', history: [], sort_order: data.length,
+      no: form.no || '', sn: form.sn || '', name: form.name || '', note: form.note || '',
+      cert_no: '', calib_date: null, next_calib_date: null, // 교정정보는 연도별 교정내역에서 관리
+      history: [], sort_order: data.length,
     };
     try {
       const saved = await upsertCalibration(payload);
@@ -253,10 +267,10 @@ export default function Calibration() {
                           <td className="px-4 py-2 text-gray-400">{idx + 1}</td>
                           <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm" value={form.no || ''} onChange={e => setForm(f => ({ ...f, no: e.target.value }))} /></td>
                           <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm" value={form.sn || ''} onChange={e => setForm(f => ({ ...f, sn: e.target.value }))} /></td>
-                          <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm" value={form.cert_no || ''} onChange={e => setForm(f => ({ ...f, cert_no: e.target.value }))} /></td>
+                          <td className="px-4 py-2 text-gray-400 text-xs">{(item.eff || item).cert_no || '—'}</td>
                           <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm" value={form.name || ''} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></td>
-                          <td className="px-4 py-2"><input type="date" className="w-full border rounded px-2 py-1 text-sm" value={form.calib_date || ''} onChange={e => setForm(f => ({ ...f, calib_date: e.target.value }))} /></td>
-                          <td className="px-4 py-2"><input type="date" readOnly title="교정일 +1년 -1일 자동" className="w-full border rounded px-2 py-1 text-sm bg-gray-50 text-gray-500" value={nextCalibDate(form.calib_date) || ''} /></td>
+                          <td className="px-4 py-2 text-gray-400 text-xs">{formatDate((item.eff || item).calib_date)}</td>
+                          <td className="px-4 py-2 text-gray-400 text-xs">{formatDate((item.eff || item).next_calib_date)}</td>
                           <td className="px-4 py-2 text-center text-gray-300">—</td>
                           <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm" placeholder="비고" value={form.note || ''} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} /></td>
                           <td className="px-4 py-2 text-center whitespace-nowrap">
@@ -302,25 +316,18 @@ export default function Calibration() {
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 space-y-4">
             <h2 className="font-bold text-gray-800">교정 장비 추가</h2>
             <div className="grid grid-cols-2 gap-3">
-              {[{ key: 'no', label: '관리번호' }, { key: 'sn', label: 'S/N' }, { key: 'name', label: '장비명' }, { key: 'cert_no', label: '성적서번호' }].map(({ key, label }) => (
+              {[{ key: 'no', label: '관리번호' }, { key: 'sn', label: 'S/N' }, { key: 'name', label: '장비명' }].map(({ key, label }) => (
                 <div key={key}>
                   <label className="text-xs text-gray-500">{label}</label>
                   <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form[key] || ''} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} />
                 </div>
               ))}
               <div>
-                <label className="text-xs text-gray-500">교정일</label>
-                <input type="date" className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.calib_date || ''} onChange={e => setForm(f => ({ ...f, calib_date: e.target.value }))} />
-              </div>
-              <div>
-                <label className="text-xs text-gray-500">차기교정일 <span className="text-gray-300">(자동: +1년 -1일)</span></label>
-                <input type="date" readOnly className="w-full border rounded px-2 py-1.5 text-sm mt-0.5 bg-gray-50 text-gray-500" value={nextCalibDate(form.calib_date) || ''} />
+                <label className="text-xs text-gray-500">비고</label>
+                <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.note || ''} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
               </div>
             </div>
-            <div>
-              <label className="text-xs text-gray-500">비고</label>
-              <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.note || ''} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
-            </div>
+            <p className="text-xs text-gray-400">성적서번호·교정일·차기교정일은 추가 후 행을 펼쳐 <b>연도별 교정내역</b>에 입력하세요. 가장 최근 내역이 대표로 표시됩니다.</p>
             <div className="flex gap-2 pt-2">
               <button onClick={addItem} disabled={saving} className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">추가</button>
               <button onClick={() => setShowAdd(false)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">취소</button>
