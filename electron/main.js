@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Notification, screen, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, Notification, screen, Tray, Menu, nativeImage, powerSaveBlocker, powerMonitor } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -220,11 +220,19 @@ function loadPrefs() { try { return JSON.parse(fs.readFileSync(prefsPath(), 'utf
 function savePrefs(p) { try { fs.writeFileSync(prefsPath(), JSON.stringify(p, null, 2)); } catch { /* ignore */ } }
 
 // 부팅 시 자동 시작 등록/해제. 로그인 시엔 '--hidden'으로 실행 → 창 없이 트레이 상주.
+const AUTOSTART_ARGS = ['--hidden'];
 function applyAutoStart(enabled) {
   try {
     if (isDev) return; // 개발 모드에선 등록하지 않음
-    app.setLoginItemSettings({ openAtLogin: !!enabled, args: ['--hidden'] });
+    app.setLoginItemSettings({ openAtLogin: !!enabled, args: AUTOSTART_ARGS });
   } catch { /* ignore */ }
+}
+// 현재 상태 조회 — 설정값(prefs)을 기준으로 하고, 없으면 OS에 질의.
+// 주의: args로 등록한 로그인 항목은 같은 args로 질의해야 정확히 나온다(Windows).
+function getAutoStartEnabled() {
+  const p = loadPrefs();
+  if (typeof p.autoStartEnabled === 'boolean') return p.autoStartEnabled;
+  try { return app.getLoginItemSettings({ args: AUTOSTART_ARGS }).openAtLogin; } catch { return false; }
 }
 // 최초 실행 시 기본으로 자동 시작을 켠다(이후 사용자가 끄면 그 설정을 존중).
 function initAutoStart() {
@@ -232,7 +240,11 @@ function initAutoStart() {
   if (!p.autoStartInitialized) {
     applyAutoStart(true);
     p.autoStartInitialized = true;
+    p.autoStartEnabled = true;
     savePrefs(p);
+  } else {
+    // 업데이트로 실행 경로가 바뀌었을 수 있으니 저장된 설정을 다시 적용
+    applyAutoStart(p.autoStartEnabled !== false);
   }
 }
 
@@ -486,6 +498,7 @@ function showAlarmWindow(todo) {
 
 const firedAlarms = new Set(); // `${id}_${yyyy-MM-dd}` — 하루 1회 발사 보장
 let alarmTimer = null;
+let alarmBlockerId = null;
 function checkAlarms() {
   let data;
   try { data = loadData(); } catch { return; }
@@ -517,9 +530,29 @@ function checkAlarms() {
   });
 }
 function startAlarmScheduler() {
-  if (alarmTimer) clearInterval(alarmTimer);
-  alarmTimer = setInterval(checkAlarms, 30 * 1000);
-  checkAlarms();
+  // 윈도우가 백그라운드 앱을 절전 스로틀링하면 타이머가 멈춰 알람이 밀린다.
+  // prevent-app-suspension으로 스로틀링을 막아 실행 중에도 제때 울리게 한다.
+  try {
+    if (alarmBlockerId === null || !powerSaveBlocker.isStarted(alarmBlockerId)) {
+      alarmBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+    }
+  } catch { /* ignore */ }
+
+  // setInterval 대신 자체 재예약 setTimeout 체인 — 예외/지연에도 다음 체크가 항상 잡힘
+  if (alarmTimer) { clearTimeout(alarmTimer); alarmTimer = null; }
+  const tick = () => {
+    try { checkAlarms(); } catch { /* ignore */ }
+    alarmTimer = setTimeout(tick, 15 * 1000);
+  };
+  tick();
+
+  // 절전 복귀/화면 잠금해제 시 즉시 확인 (잠자는 동안 지난 알람 바로 표시)
+  try {
+    powerMonitor.removeAllListeners('resume');
+    powerMonitor.removeAllListeners('unlock-screen');
+    powerMonitor.on('resume', () => { try { checkAlarms(); } catch { /* ignore */ } });
+    powerMonitor.on('unlock-screen', () => { try { checkAlarms(); } catch { /* ignore */ } });
+  } catch { /* ignore */ }
 }
 
 // ─── 윈도우 생성 ────────────────────────────────────────────────────────────────
@@ -654,12 +687,13 @@ function registerHandlers() {
   ipcMain.handle('sync:pull', () => syncPull(true));
 
   // ── 부팅 시 자동 시작 ──
-  ipcMain.handle('app:getAutoStart', () => {
-    try { return app.getLoginItemSettings().openAtLogin; } catch { return false; }
-  });
+  ipcMain.handle('app:getAutoStart', () => getAutoStartEnabled());
   ipcMain.handle('app:setAutoStart', (_e, enabled) => {
     applyAutoStart(enabled);
-    const p = loadPrefs(); p.autoStartInitialized = true; savePrefs(p);
+    const p = loadPrefs();
+    p.autoStartInitialized = true;
+    p.autoStartEnabled = !!enabled;
+    savePrefs(p);
     return { ok: true, enabled: !!enabled };
   });
 
@@ -696,12 +730,16 @@ function registerHandlers() {
     if (todo.id) {
       const i = data.todos.findIndex(t => t.id === todo.id);
       if (i >= 0) data.todos[i] = todo; else data.todos.push(todo);
+      // 알람 시간을 수정했으면 오늘자 발사 기록을 지워 새 시간에 다시 울리게 한다
+      firedAlarms.forEach(k => { if (k.startsWith(todo.id + '_')) firedAlarms.delete(k); });
     } else {
       todo.id = newId();
       if (!todo.completedDates) todo.completedDates = [];
       data.todos.push(todo);
     }
     saveData(data);
+    // 방금 저장한 알람이 이미 지난 시각이면 바로 표시
+    setTimeout(() => { try { checkAlarms(); } catch { /* ignore */ } }, 500);
     return todo;
   });
   ipcMain.handle('todos:delete', (_e, id) => {
