@@ -504,6 +504,26 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     }
   }
 
+  // 그룹에 등급(P1/P2/P3/유지관리/OQ/PQ) 추가 — 삭제했던 등급 다시 추가 가능
+  async function handleAddGrade(group, grade) {
+    try {
+      const base = group.zones[0] || {};
+      const newZone = {
+        name: group.name, category: group.category, grade,
+        clean_grade: base.clean_grade || '',
+        points_float: base.points_float || 0, points_fall: base.points_fall || 0,
+        points_surface: base.points_surface || 0, points_particle: base.points_particle || 0,
+        sort_order: base.sort_order ?? (modalGroups.length * 1000),
+      };
+      const saved = await upsertZone(newZone);
+      setModalGroups(prev => prev.map(g => g.key === group.key
+        ? { ...g, zones: [...g.zones, saved].sort((a, b) => (GRADE_PRIORITY[b.grade] || 0) - (GRADE_PRIORITY[a.grade] || 0)) }
+        : g));
+    } catch (e) {
+      setError('등급 추가 실패: ' + e.message);
+    }
+  }
+
   // ─── 저장 ──────────────────────────────────────────────────
   async function saveOrderModal() {
     setSaving(true);
@@ -1057,7 +1077,8 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                         </div>
 
                         {/* 확장된 서브행 (등급별 인라인 편집) */}
-                        {isExpanded && group.zones.map((zone) => {
+                        {isExpanded && (<>
+                        {group.zones.map((zone) => {
                           const startVal = getZoneValue(zone, 'schedule_start') || '';
                           const cleanVal = getZoneValue(zone, 'clean_grade') || '';
                           const subStats = zoneStats(zone);
@@ -1155,6 +1176,24 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                             </div>
                           );
                         })}
+                        {/* 등급(구분) 추가 — 삭제한 P3/유지관리 등을 다시 추가 */}
+                        {(() => {
+                          const existing = new Set(group.zones.map(z => z.grade));
+                          const missing = GRADES.filter(g => !existing.has(g));
+                          if (missing.length === 0) return null;
+                          return (
+                            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50/40 border-b border-blue-100" style={{ paddingLeft: HANDLE_W + 4 }}>
+                              <span className="text-[10px] text-gray-400">구분 추가</span>
+                              {missing.map(g => (
+                                <button key={g} onClick={e => { e.stopPropagation(); handleAddGrade(group, g); }}
+                                  className={`text-[10px] px-1.5 py-0.5 rounded border border-dashed border-gray-300 hover:border-blue-400 hover:bg-blue-50 font-bold ${GRADE_COLORS[g] || 'text-gray-500'}`}>
+                                  + {g}
+                                </button>
+                              ))}
+                            </div>
+                          );
+                        })()}
+                        </>)}
                       </div>
                     );
                   })}
@@ -1392,7 +1431,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                       })}
                       <button onClick={() => addCyclePhase(cycleCatTab, grade)}
                         className="w-full px-3 py-1.5 text-xs text-blue-600 hover:bg-blue-50 border-t border-gray-50 font-medium">
-                        + 단계 추가
+                        + 구간 추가
                       </button>
                     </div>
                   </div>
