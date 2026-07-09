@@ -1872,6 +1872,17 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
 // 표로보기: 이번 달 측정 일정 목록 (더블클릭으로 완료 처리)
 function ScheduleTable({ rows, completions, year, month, getChipStyle, onToggleDone }) {
   const DOW = ['일', '월', '화', '수', '목', '금', '토'];
+  // 측정 1건의 포인트(통합 대분류는 float만, 그 외 4종 합산)
+  const zonePts = (z) => {
+    const f = z.points_float || 0, s = z.points_surface || 0, l = z.points_fall || 0, p = z.points_particle || 0;
+    return isCombinedCat(z.category) ? f : (s + f + l + p);
+  };
+  // 일별 합산 포인트 + 건수
+  const dayAgg = {};
+  rows.forEach(({ ds, zone }) => {
+    const a = dayAgg[ds] || (dayAgg[ds] = { pts: 0, cnt: 0 });
+    a.pts += zonePts(zone); a.cnt += 1;
+  });
   return (
     <div className="overflow-x-auto max-h-[calc(100vh-220px)]">
       <table className="w-full text-sm">
@@ -1879,15 +1890,16 @@ function ScheduleTable({ rows, completions, year, month, getChipStyle, onToggleD
           <tr className="bg-gray-50 border-b border-gray-200 text-xs text-gray-500">
             <th className="text-left px-3 py-2 font-medium w-28">날짜</th>
             <th className="text-center px-2 py-2 font-medium w-10">요일</th>
+            <th className="text-center px-2 py-2 font-medium w-24">일 합계</th>
             <th className="text-left px-3 py-2 font-medium">구역명</th>
             <th className="text-center px-2 py-2 font-medium w-16">등급</th>
-            <th className="text-center px-2 py-2 font-medium w-16">회차</th>
+            <th className="text-center px-2 py-2 font-medium w-20">회차</th>
             <th className="text-center px-2 py-2 font-medium w-20">상태</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-50">
           {rows.length === 0 && (
-            <tr><td colSpan={6} className="px-3 py-8 text-center text-sm text-gray-400">{year}년 {month}월 예정된 측정 일정이 없습니다.</td></tr>
+            <tr><td colSpan={7} className="px-3 py-8 text-center text-sm text-gray-400">{year}년 {month}월 예정된 측정 일정이 없습니다.</td></tr>
           )}
           {rows.map(({ ds, zone, measurement }, i) => {
             const d = new Date(ds + 'T00:00:00');
@@ -1895,18 +1907,24 @@ function ScheduleTable({ rows, completions, year, month, getChipStyle, onToggleD
             const done = completions.has(`${zone.id}_${measurement.num}`);
             const prev = rows[i - 1];
             const newDay = !prev || prev.ds !== ds;
+            const total = totalCount(zone) || measurement.num;
+            const numCls = measurement.isFirst ? 'text-green-600' : measurement.isLast ? 'text-red-600' : 'text-gray-700';
+            const agg = dayAgg[ds] || { pts: 0, cnt: 0 };
             return (
               <tr key={`${zone.id}_${measurement.num}_${ds}`}
                 onDoubleClick={() => onToggleDone(zone, measurement)}
-                className={`cursor-pointer hover:bg-blue-50/40 ${done ? 'bg-green-50/40' : ''}`}
+                className={`cursor-pointer hover:bg-blue-50/40 ${done ? 'bg-green-50/40' : ''} ${newDay && i > 0 ? 'border-t-2 border-gray-200' : ''}`}
                 title="더블클릭으로 완료 처리">
-                <td className={`px-3 py-2 text-xs ${newDay ? 'font-semibold text-gray-700' : 'text-gray-300'}`}>{newDay ? ds : ''}</td>
+                <td className={`px-3 py-2 text-xs ${newDay ? 'font-semibold text-gray-700' : 'text-gray-200'}`}>{newDay ? ds : ''}</td>
                 <td className={`px-2 py-2 text-center text-xs ${dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-gray-400'}`}>{newDay ? DOW[dow] : ''}</td>
-                <td className="px-3 py-2">
-                  <span className="inline-block px-1.5 py-0.5 rounded text-xs" style={getChipStyle(zone.category, zone.grade)}>{zone.name}</span>
+                <td className="px-2 py-2 text-center text-[11px]">
+                  {newDay && <span className="text-gray-500">{agg.cnt}건 · <b className="text-indigo-600">{agg.pts}pt</b></span>}
                 </td>
-                <td className="px-2 py-2 text-center text-xs font-medium text-gray-600">{zone.grade}</td>
-                <td className="px-2 py-2 text-center text-xs text-gray-500">{measurement.num}회차{measurement.isFirst ? ' (첫)' : measurement.isLast ? ' (끝)' : ''}</td>
+                <td className="px-3 py-2">
+                  <span className={`inline-block px-1.5 py-0.5 rounded text-xs ${done ? 'line-through opacity-60' : ''}`} style={getChipStyle(zone.category, zone.grade)}>{zone.name}</span>
+                </td>
+                <td className={`px-2 py-2 text-center text-xs font-medium text-gray-600 ${done ? 'line-through text-gray-400' : ''}`}>{zone.grade}</td>
+                <td className={`px-2 py-2 text-center text-xs font-bold ${numCls} ${done ? 'line-through opacity-60' : ''}`}>{measurement.num}/{total}회</td>
                 <td className="px-2 py-2 text-center">
                   <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${done ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{done ? '완료' : '예정'}</span>
                 </td>
