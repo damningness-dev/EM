@@ -20,7 +20,7 @@ const SESSION_KEY = 'em-session';
 const MENU = [
   { id: 'dashboard', label: '대시보드', icon: '📊' },
   { id: 'todo', label: '오늘의 할일', icon: '✅' },
-  { id: 'calendar', label: '달력보기', icon: '📆' },
+  { id: 'calendar', label: '월별 모니터링 일정', icon: '📆' },
   { id: 'monthly', label: '월별 모니터링', icon: '📅' },
   { id: 'status', label: '구역별 현황', icon: '📈' },
   { id: 'gantt',  label: '간트 차트',  icon: '📊' },

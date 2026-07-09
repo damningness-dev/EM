@@ -504,12 +504,12 @@ function showAlarmWindow(todo) {
     win.setAlwaysOnTop(true, 'screen-saver');
     try { win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch { /* ignore */ }
     const html = `<!doctype html><html><head><meta charset="utf-8"><style>
-      html,body{margin:0;height:100%}
+      html,body{margin:0}
       body{font-family:'Malgun Gothic','Segoe UI',sans-serif;background:#fff;border:2px solid #fb923c;border-radius:12px;box-sizing:border-box;display:flex;flex-direction:column;padding:14px;overflow:hidden}
       .h{display:flex;align-items:center;gap:6px;color:#ea580c;font-size:12px;font-weight:700;margin-bottom:6px}
-      .t{font-size:15px;font-weight:700;color:#111827;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-      .n{font-size:12px;color:#6b7280;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-      button{margin-top:auto;padding:8px;background:#f97316;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer}
+      .t{font-size:15px;font-weight:700;color:#111827;white-space:pre-wrap;word-break:break-word;line-height:1.35}
+      .n{font-size:12px;color:#6b7280;margin-top:4px;white-space:pre-wrap;word-break:break-word;line-height:1.35}
+      button{margin-top:12px;padding:8px;background:#f97316;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;flex-shrink:0}
       button:hover{background:#ea580c}
     </style></head><body>
       <div class="h">⏰ 할일 알람 ${todo.time ? '· ' + esc(todo.time) : ''}</div>
@@ -518,7 +518,15 @@ function showAlarmWindow(todo) {
       <button onclick="window.close()">확인</button>
     </body></html>`;
     win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
-    win.once('ready-to-show', () => { win.show(); win.moveTop(); });
+    win.once('ready-to-show', async () => {
+      // 내용 높이에 맞춰 창 높이 자동 조절 (잘림 방지)
+      try {
+        const h = await win.webContents.executeJavaScript('document.body.scrollHeight');
+        const newH = Math.min(Math.max(Math.ceil(h) + 4, 120), Math.floor(wa.height * 0.6));
+        win.setBounds({ x: wa.width - W - 16, y: Math.max(16, wa.height - newH - 16 - offset), width: W, height: newH });
+      } catch { /* ignore */ }
+      win.show(); win.moveTop();
+    });
     win.on('closed', () => { alarmWindows = alarmWindows.filter(x => x !== win); });
     alarmWindows.push(win);
     // 2분 후 자동 닫힘

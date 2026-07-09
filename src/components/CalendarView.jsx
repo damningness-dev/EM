@@ -1309,7 +1309,7 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
       {/* Header */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-gray-900">달력보기</h1>
+          <h1 className="text-2xl font-bold text-gray-900">월별 모니터링 일정</h1>
           {totalMonthSchedule > 0 && (
             <span className="text-xs bg-blue-100 text-blue-700 px-2.5 py-1 rounded-full font-medium">
               이번달 {totalMonthSchedule}건 측정 예정
@@ -1870,31 +1870,63 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
 }
 
 // 표로보기: 이번 달 측정 일정 목록 (더블클릭으로 완료 처리)
+const PT_TYPES = [
+  { key: 'float', label: '부', cls: 'text-blue-600' },
+  { key: 'fall', label: '낙', cls: 'text-orange-600' },
+  { key: 'surface', label: '표', cls: 'text-green-600' },
+  { key: 'particle', label: '입', cls: 'text-pink-600' },
+];
+const MAJOR_PT = { '질소가스': { label: '질', cls: 'text-purple-600' }, '압축공기': { label: '압', cls: 'text-yellow-700' } };
+
+// 구역 1건의 포인트 breakdown 스팬들 (통합 대분류는 하나로, 그 외 부/낙/표/입)
+function zonePtSpans(zone) {
+  if (isCombinedCat(zone.category)) {
+    const m = MAJOR_PT[getMajorCat(zone.category)] || { label: getMajorCat(zone.category).slice(0, 1), cls: 'text-purple-600' };
+    const v = zone.points_float || 0;
+    return v > 0 ? [<span key="c" className={`text-[11px] ${m.cls}`}>{m.label}{v}</span>] : [<span key="c" className="text-[11px] text-gray-300">—</span>];
+  }
+  const sp = PT_TYPES.map(t => {
+    const v = zone[`points_${t.key}`] || 0;
+    return v > 0 ? <span key={t.key} className={`text-[11px] ${t.cls}`}>{t.label}{v}</span> : null;
+  }).filter(Boolean);
+  return sp.length ? sp : [<span key="0" className="text-[11px] text-gray-300">—</span>];
+}
+
 function ScheduleTable({ rows, completions, year, month, getChipStyle, onToggleDone }) {
   const DOW = ['일', '월', '화', '수', '목', '금', '토'];
-  // 측정 1건의 포인트(통합 대분류는 float만, 그 외 4종 합산)
-  const zonePts = (z) => {
-    const f = z.points_float || 0, s = z.points_surface || 0, l = z.points_fall || 0, p = z.points_particle || 0;
-    return isCombinedCat(z.category) ? f : (s + f + l + p);
-  };
-  // 일별 합산 포인트 + 건수
+  // 일별 유형별 합산 (부/낙/표/입 + 대분류별 통합)
   const dayAgg = {};
   rows.forEach(({ ds, zone }) => {
-    const a = dayAgg[ds] || (dayAgg[ds] = { pts: 0, cnt: 0 });
-    a.pts += zonePts(zone); a.cnt += 1;
+    const a = dayAgg[ds] || (dayAgg[ds] = { float: 0, fall: 0, surface: 0, particle: 0, comb: {}, total: 0, cnt: 0 });
+    a.cnt += 1;
+    if (isCombinedCat(zone.category)) {
+      const major = getMajorCat(zone.category);
+      const v = zone.points_float || 0;
+      a.comb[major] = (a.comb[major] || 0) + v; a.total += v;
+    } else {
+      PT_TYPES.forEach(t => { const v = zone[`points_${t.key}`] || 0; a[t.key] += v; a.total += v; });
+    }
   });
+
+  function daySummary(a) {
+    const parts = [];
+    PT_TYPES.forEach(t => { if (a[t.key] > 0) parts.push(<span key={t.key} className={t.cls}>{t.label}{a[t.key]}</span>); });
+    Object.entries(a.comb).forEach(([m, v]) => { if (v > 0) { const mm = MAJOR_PT[m] || { label: m.slice(0, 1), cls: 'text-purple-600' }; parts.push(<span key={m} className={mm.cls}>{mm.label}{v}</span>); } });
+    return parts;
+  }
+
   return (
     <div className="overflow-x-auto max-h-[calc(100vh-220px)]">
       <table className="w-full text-sm">
         <thead className="sticky top-0 z-10">
           <tr className="bg-gray-50 border-b border-gray-200 text-xs text-gray-500">
-            <th className="text-left px-3 py-2 font-medium w-28">날짜</th>
-            <th className="text-center px-2 py-2 font-medium w-10">요일</th>
-            <th className="text-center px-2 py-2 font-medium w-24">일 합계</th>
+            <th className="text-left px-3 py-2 font-medium w-24">날짜</th>
+            <th className="text-center px-2 py-2 font-medium w-8">요일</th>
             <th className="text-left px-3 py-2 font-medium">구역명</th>
-            <th className="text-center px-2 py-2 font-medium w-16">등급</th>
-            <th className="text-center px-2 py-2 font-medium w-20">회차</th>
-            <th className="text-center px-2 py-2 font-medium w-20">상태</th>
+            <th className="text-center px-2 py-2 font-medium w-14">등급</th>
+            <th className="text-center px-2 py-2 font-medium w-16">회차</th>
+            <th className="text-left px-3 py-2 font-medium w-44">포인트</th>
+            <th className="text-center px-2 py-2 font-medium w-16">상태</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-50">
@@ -1909,27 +1941,41 @@ function ScheduleTable({ rows, completions, year, month, getChipStyle, onToggleD
             const newDay = !prev || prev.ds !== ds;
             const total = totalCount(zone) || measurement.num;
             const numCls = measurement.isFirst ? 'text-green-600' : measurement.isLast ? 'text-red-600' : 'text-gray-700';
-            const agg = dayAgg[ds] || { pts: 0, cnt: 0 };
-            return (
+            const a = dayAgg[ds];
+            const els = [];
+            // 날짜별 유형별 합계 요약 행
+            if (newDay) {
+              els.push(
+                <tr key={`${ds}_sum`} className="bg-indigo-50/70 border-t-2 border-indigo-100">
+                  <td className={`px-3 py-1.5 text-xs font-semibold ${dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-gray-700'}`}>{ds}</td>
+                  <td className={`px-2 py-1.5 text-center text-xs font-semibold ${dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-gray-500'}`}>{DOW[dow]}</td>
+                  <td colSpan={5} className="px-3 py-1.5 text-[11px]">
+                    <span className="text-gray-500 mr-1">{a.cnt}건</span>
+                    <span className="inline-flex flex-wrap gap-x-2 font-semibold">{daySummary(a)}</span>
+                    <b className="ml-2 text-indigo-700">합계 {a.total}pt</b>
+                  </td>
+                </tr>
+              );
+            }
+            els.push(
               <tr key={`${zone.id}_${measurement.num}_${ds}`}
                 onDoubleClick={() => onToggleDone(zone, measurement)}
-                className={`cursor-pointer hover:bg-blue-50/40 ${done ? 'bg-green-50/40' : ''} ${newDay && i > 0 ? 'border-t-2 border-gray-200' : ''}`}
+                className={`cursor-pointer hover:bg-blue-50/40 ${done ? 'bg-green-50/40' : ''}`}
                 title="더블클릭으로 완료 처리">
-                <td className={`px-3 py-2 text-xs ${newDay ? 'font-semibold text-gray-700' : 'text-gray-200'}`}>{newDay ? ds : ''}</td>
-                <td className={`px-2 py-2 text-center text-xs ${dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-gray-400'}`}>{newDay ? DOW[dow] : ''}</td>
-                <td className="px-2 py-2 text-center text-[11px]">
-                  {newDay && <span className="text-gray-500">{agg.cnt}건 · <b className="text-indigo-600">{agg.pts}pt</b></span>}
-                </td>
+                <td className="px-3 py-2"></td>
+                <td className="px-2 py-2"></td>
                 <td className="px-3 py-2">
                   <span className={`inline-block px-1.5 py-0.5 rounded text-xs ${done ? 'line-through opacity-60' : ''}`} style={getChipStyle(zone.category, zone.grade)}>{zone.name}</span>
                 </td>
-                <td className={`px-2 py-2 text-center text-xs font-medium text-gray-600 ${done ? 'line-through text-gray-400' : ''}`}>{zone.grade}</td>
-                <td className={`px-2 py-2 text-center text-xs font-bold ${numCls} ${done ? 'line-through opacity-60' : ''}`}>{measurement.num}/{total}회</td>
+                <td className="px-2 py-2 text-center text-xs font-medium text-gray-600">{zone.grade}</td>
+                <td className={`px-2 py-2 text-center text-xs font-bold ${numCls}`}>{measurement.num}/{total}회</td>
+                <td className="px-3 py-2"><span className="inline-flex flex-wrap gap-x-1.5">{zonePtSpans(zone)}</span></td>
                 <td className="px-2 py-2 text-center">
                   <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${done ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{done ? '완료' : '예정'}</span>
                 </td>
               </tr>
             );
+            return els;
           })}
         </tbody>
       </table>
