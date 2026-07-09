@@ -200,9 +200,9 @@ function setupAsarUpdater(win) {
   if (isDev) return;
   mainWin = win;
   setTimeout(checkForUpdate, 5000);
-  // 주기적 자동 확인 — 새 패치가 업로드되면 실행 중에도 자동으로 감지 (10분 간격)
+  // 주기적 자동 확인 — 새 패치가 업로드되면 실행 중에도 자동으로 감지 (3분 간격)
   if (!updateCheckTimer) {
-    updateCheckTimer = setInterval(checkForUpdate, 10 * 60 * 1000);
+    updateCheckTimer = setInterval(checkForUpdate, 3 * 60 * 1000);
   }
   // 트레이에서 창을 다시 열 때도 즉시 확인
   win.removeAllListeners('show');
