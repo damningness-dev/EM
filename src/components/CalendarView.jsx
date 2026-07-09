@@ -144,6 +144,7 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
   const [colorPicker, setColorPicker] = useState(null); // { key, label, type:'cat'|'grade', x, y }
   const colorPickerRef = useRef(null);
   const [optimizePopup, setOptimizePopup] = useState(false);
+  const [viewMode, setViewMode] = useState('calendar'); // 'calendar' | 'table'
   const [optimizeCapacities, setOptimizeCapacities] = useState(() => {
     try {
       const saved = localStorage.getItem('em-daily-capacities');
@@ -405,6 +406,19 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
     ));
     return map;
   }, [zones, scheduleAvoid, scheduleConfig, zoneOrderRank]);
+
+  // 표로보기: 이번 달 측정 일정을 날짜순 목록으로
+  const monthTableRows = useMemo(() => {
+    const prefix = `${year}-${String(month).padStart(2, '0')}-`;
+    const rows = [];
+    Object.entries(scheduleByDate).forEach(([ds, arr]) => {
+      if (!ds.startsWith(prefix)) return;
+      arr.forEach(({ zone, measurement }) => rows.push({ ds, zone, measurement }));
+    });
+    rows.sort((a, b) => a.ds.localeCompare(b.ds)
+      || (zoneOrderRank[a.zone.id] ?? 1e9) - (zoneOrderRank[b.zone.id] ?? 1e9));
+    return rows;
+  }, [scheduleByDate, year, month, zoneOrderRank]);
 
   const tempByDate = useMemo(() => {
     const map = {};
@@ -1303,6 +1317,10 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
           )}
         </div>
         <div className="flex items-center gap-2">
+          <div className="flex rounded-xl border border-gray-200 overflow-hidden bg-white text-sm">
+            <button onClick={() => setViewMode('calendar')} className={`px-3 py-1.5 font-medium ${viewMode === 'calendar' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>📅 달력</button>
+            <button onClick={() => setViewMode('table')} className={`px-3 py-1.5 font-medium ${viewMode === 'table' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>☰ 표</button>
+          </div>
           <button
             onClick={() => setOptimizePopup(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-xl hover:bg-indigo-100 transition-colors"
@@ -1363,6 +1381,13 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
       <div className="flex gap-5">
         {/* Calendar */}
         <div className="flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden min-w-0">
+          {viewMode === 'table' ? (
+            <ScheduleTable rows={monthTableRows} completions={completions} year={year} month={month}
+              getChipStyle={getChipStyle}
+              onToggleDone={(zone, m) => setCompletionPrompt({ zoneId: zone.id, zoneName: zone.name, grade: zone.grade, num: m.num, dateStr: format(m.date, 'yyyy-MM-dd'), isCompleted: completions.has(`${zone.id}_${m.num}`) })}
+            />
+          ) : (
+          <>
           {/* Day-of-week header */}
           <div className="grid grid-cols-7 border-b border-gray-100">
             {dowOrder.map(d => (
@@ -1544,6 +1569,8 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
                 );
               })}
             </div>
+          )}
+          </>
           )}
 
           {/* Legend */}
@@ -1838,6 +1865,56 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// 표로보기: 이번 달 측정 일정 목록 (더블클릭으로 완료 처리)
+function ScheduleTable({ rows, completions, year, month, getChipStyle, onToggleDone }) {
+  const DOW = ['일', '월', '화', '수', '목', '금', '토'];
+  return (
+    <div className="overflow-x-auto max-h-[calc(100vh-220px)]">
+      <table className="w-full text-sm">
+        <thead className="sticky top-0 z-10">
+          <tr className="bg-gray-50 border-b border-gray-200 text-xs text-gray-500">
+            <th className="text-left px-3 py-2 font-medium w-28">날짜</th>
+            <th className="text-center px-2 py-2 font-medium w-10">요일</th>
+            <th className="text-left px-3 py-2 font-medium">구역명</th>
+            <th className="text-center px-2 py-2 font-medium w-16">등급</th>
+            <th className="text-center px-2 py-2 font-medium w-16">회차</th>
+            <th className="text-center px-2 py-2 font-medium w-20">상태</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-50">
+          {rows.length === 0 && (
+            <tr><td colSpan={6} className="px-3 py-8 text-center text-sm text-gray-400">{year}년 {month}월 예정된 측정 일정이 없습니다.</td></tr>
+          )}
+          {rows.map(({ ds, zone, measurement }, i) => {
+            const d = new Date(ds + 'T00:00:00');
+            const dow = d.getDay();
+            const done = completions.has(`${zone.id}_${measurement.num}`);
+            const prev = rows[i - 1];
+            const newDay = !prev || prev.ds !== ds;
+            return (
+              <tr key={`${zone.id}_${measurement.num}_${ds}`}
+                onDoubleClick={() => onToggleDone(zone, measurement)}
+                className={`cursor-pointer hover:bg-blue-50/40 ${done ? 'bg-green-50/40' : ''}`}
+                title="더블클릭으로 완료 처리">
+                <td className={`px-3 py-2 text-xs ${newDay ? 'font-semibold text-gray-700' : 'text-gray-300'}`}>{newDay ? ds : ''}</td>
+                <td className={`px-2 py-2 text-center text-xs ${dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-gray-400'}`}>{newDay ? DOW[dow] : ''}</td>
+                <td className="px-3 py-2">
+                  <span className="inline-block px-1.5 py-0.5 rounded text-xs" style={getChipStyle(zone.category, zone.grade)}>{zone.name}</span>
+                </td>
+                <td className="px-2 py-2 text-center text-xs font-medium text-gray-600">{zone.grade}</td>
+                <td className="px-2 py-2 text-center text-xs text-gray-500">{measurement.num}회차{measurement.isFirst ? ' (첫)' : measurement.isLast ? ' (끝)' : ''}</td>
+                <td className="px-2 py-2 text-center">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${done ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{done ? '완료' : '예정'}</span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
