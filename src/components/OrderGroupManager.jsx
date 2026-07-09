@@ -575,6 +575,15 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
       phase.durationUnit = phase.unit;
       phase.durationValue = (phase.count || 1) * phase.interval;
     }
+    if (field === 'count') {
+      // 횟수 수동 입력 → 기간을 횟수×간격으로 맞춰 일관성 유지
+      const c = Math.max(1, parseInt(value) || 1);
+      phase.count = c;
+      phase.durationUnit = phase.unit;
+      phase.durationValue = c * phase.interval;
+      applyCycleConfig(next);
+      return;
+    }
     if (field === 'durationValue') {
       phase.durationValue = Math.max(1, parseInt(value) || 1);
     } else if (field === 'durationUnit') {
@@ -1371,12 +1380,20 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                               {CYCLE_UNITS.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
                             </select>
                             <span className="text-xs text-gray-400">간격으로</span>
-                            {/* 횟수: 자동 계산 */}
-                            <span className="text-xs font-semibold text-blue-600 ml-0.5">{count}회</span>
-                            <button onClick={() => removeCyclePhase(cycleCatTab, grade, idx)} className="ml-auto text-xs text-gray-300 hover:text-red-500 shrink-0" title="삭제">✕</button>
+                            {/* 횟수: 자동 계산 or 수동 입력 */}
+                            <input type="number" min="1" max="999" value={count}
+                              onChange={e => editCyclePhase(cycleCatTab, grade, idx, 'count', e.target.value)}
+                              title="측정 횟수 (수동 입력 가능)"
+                              className="w-12 text-xs font-semibold text-blue-600 border border-gray-200 rounded px-1 py-1 text-center focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                            <span className="text-xs text-gray-400">회</span>
+                            <button onClick={() => removeCyclePhase(cycleCatTab, grade, idx)} className="ml-auto text-xs text-gray-300 hover:text-red-500 shrink-0" title="단계 삭제">✕</button>
                           </div>
                         );
                       })}
+                      <button onClick={() => addCyclePhase(cycleCatTab, grade)}
+                        className="w-full px-3 py-1.5 text-xs text-blue-600 hover:bg-blue-50 border-t border-gray-50 font-medium">
+                        + 단계 추가
+                      </button>
                     </div>
                   </div>
                 );
