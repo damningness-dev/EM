@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
 import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, syncGetConfig, submitEditRequest, fetchEditRequests, resolveEditRequest } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
@@ -1892,90 +1892,105 @@ function zonePtSpans(zone) {
   return sp.length ? sp : [<span key="0" className="text-[11px] text-gray-300">—</span>];
 }
 
+const SCHED_TABLE_COLS = [
+  { key: 'date', label: '날짜', w: 92, align: 'left' },
+  { key: 'dow', label: '요일', w: 40, align: 'center' },
+  { key: 'zone', label: '구분', w: 230, align: 'left' },
+  { key: 'num', label: '회차', w: 70, align: 'center' },
+  { key: 'float', label: '부', w: 54, align: 'center', pt: true },
+  { key: 'fall', label: '낙', w: 54, align: 'center', pt: true },
+  { key: 'surface', label: '표', w: 54, align: 'center', pt: true },
+  { key: 'particle', label: '입자', w: 60, align: 'center', pt: true },
+  { key: 'status', label: '상태', w: 64, align: 'center' },
+];
+
 function ScheduleTable({ rows, completions, year, month, getChipStyle, onToggleDone }) {
   const DOW = ['일', '월', '화', '수', '목', '금', '토'];
-  // 일별 유형별 합산 (부/낙/표/입 + 대분류별 통합)
-  const dayAgg = {};
-  rows.forEach(({ ds, zone }) => {
-    const a = dayAgg[ds] || (dayAgg[ds] = { float: 0, fall: 0, surface: 0, particle: 0, comb: {}, total: 0, cnt: 0 });
-    a.cnt += 1;
-    if (isCombinedCat(zone.category)) {
-      const major = getMajorCat(zone.category);
-      const v = zone.points_float || 0;
-      a.comb[major] = (a.comb[major] || 0) + v; a.total += v;
-    } else {
-      PT_TYPES.forEach(t => { const v = zone[`points_${t.key}`] || 0; a[t.key] += v; a.total += v; });
-    }
+  const [colW, setColW] = useState(() => {
+    try { const s = JSON.parse(localStorage.getItem('em-sched-table-cols')); if (s && typeof s === 'object') return s; } catch { /* ignore */ }
+    return Object.fromEntries(SCHED_TABLE_COLS.map(c => [c.key, c.w]));
   });
-
-  function daySummary(a) {
-    const parts = [];
-    PT_TYPES.forEach(t => { if (a[t.key] > 0) parts.push(<span key={t.key} className={t.cls}>{t.label}{a[t.key]}</span>); });
-    Object.entries(a.comb).forEach(([m, v]) => { if (v > 0) { const mm = MAJOR_PT[m] || { label: m.slice(0, 1), cls: 'text-purple-600' }; parts.push(<span key={m} className={mm.cls}>{mm.label}{v}</span>); } });
-    return parts;
+  useEffect(() => { try { localStorage.setItem('em-sched-table-cols', JSON.stringify(colW)); } catch { /* ignore */ } }, [colW]);
+  const width = k => colW[k] ?? SCHED_TABLE_COLS.find(c => c.key === k)?.w ?? 60;
+  function startResize(e, key) {
+    e.preventDefault(); e.stopPropagation();
+    const startX = e.clientX, startW = width(key);
+    const onMove = ev => setColW(prev => ({ ...prev, [key]: Math.max(32, startW + ev.clientX - startX) }));
+    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
   }
 
+  // 날짜별 그룹 + 유형별 합계
+  const dayGroups = [];
+  let cur = null;
+  rows.forEach(r => {
+    if (!cur || cur.ds !== r.ds) { cur = { ds: r.ds, items: [], sum: { float: 0, fall: 0, surface: 0, particle: 0 } }; dayGroups.push(cur); }
+    cur.items.push(r);
+    PT_TYPES.forEach(t => { cur.sum[t.key] += r.zone[`points_${t.key}`] || 0; });
+  });
+
   return (
-    <div className="overflow-x-auto max-h-[calc(100vh-220px)]">
-      <table className="w-full text-sm">
+    <div className="overflow-auto max-h-[calc(100vh-220px)]">
+      <table className="text-sm border-collapse" style={{ tableLayout: 'fixed', width: SCHED_TABLE_COLS.reduce((s, c) => s + width(c.key), 0) }}>
+        <colgroup>{SCHED_TABLE_COLS.map(c => <col key={c.key} style={{ width: width(c.key) }} />)}</colgroup>
         <thead className="sticky top-0 z-10">
-          <tr className="bg-gray-50 border-b border-gray-200 text-xs text-gray-500">
-            <th className="text-left px-3 py-2 font-medium w-24">날짜</th>
-            <th className="text-center px-2 py-2 font-medium w-8">요일</th>
-            <th className="text-left px-3 py-2 font-medium">구역명</th>
-            <th className="text-center px-2 py-2 font-medium w-14">등급</th>
-            <th className="text-center px-2 py-2 font-medium w-16">회차</th>
-            <th className="text-left px-3 py-2 font-medium w-44">포인트</th>
-            <th className="text-center px-2 py-2 font-medium w-16">상태</th>
+          <tr className="bg-gray-100 text-xs text-gray-600">
+            {SCHED_TABLE_COLS.map(c => (
+              <th key={c.key} className={`relative px-2 py-2 font-semibold border border-gray-200 ${c.align === 'left' ? 'text-left' : 'text-center'} ${c.pt ? 'text-indigo-600' : ''}`}>
+                {c.label}
+                <span onMouseDown={e => startResize(e, c.key)}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+              </th>
+            ))}
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-50">
+        <tbody>
           {rows.length === 0 && (
-            <tr><td colSpan={7} className="px-3 py-8 text-center text-sm text-gray-400">{year}년 {month}월 예정된 측정 일정이 없습니다.</td></tr>
+            <tr><td colSpan={SCHED_TABLE_COLS.length} className="px-3 py-8 text-center text-sm text-gray-400 border border-gray-200">{year}년 {month}월 예정된 측정 일정이 없습니다.</td></tr>
           )}
-          {rows.map(({ ds, zone, measurement }, i) => {
-            const d = new Date(ds + 'T00:00:00');
+          {dayGroups.map(g => {
+            const d = new Date(g.ds + 'T00:00:00');
             const dow = d.getDay();
-            const done = completions.has(`${zone.id}_${measurement.num}`);
-            const prev = rows[i - 1];
-            const newDay = !prev || prev.ds !== ds;
-            const total = totalCount(zone) || measurement.num;
-            const numCls = measurement.isFirst ? 'text-green-600' : measurement.isLast ? 'text-red-600' : 'text-gray-700';
-            const a = dayAgg[ds];
-            const els = [];
-            // 날짜별 유형별 합계 요약 행
-            if (newDay) {
-              els.push(
-                <tr key={`${ds}_sum`} className="bg-indigo-50/70 border-t-2 border-indigo-100">
-                  <td className={`px-3 py-1.5 text-xs font-semibold ${dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-gray-700'}`}>{ds}</td>
-                  <td className={`px-2 py-1.5 text-center text-xs font-semibold ${dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-gray-500'}`}>{DOW[dow]}</td>
-                  <td colSpan={5} className="px-3 py-1.5 text-[11px]">
-                    <span className="text-gray-500 mr-1">{a.cnt}건</span>
-                    <span className="inline-flex flex-wrap gap-x-2 font-semibold">{daySummary(a)}</span>
-                    <b className="ml-2 text-indigo-700">합계 {a.total}pt</b>
-                  </td>
+            const dowCls = dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-gray-600';
+            const cellBase = 'px-2 py-1.5 border border-gray-100 text-xs';
+            return (
+              <Fragment key={g.ds}>
+                {g.items.map(({ zone, measurement }, ri) => {
+                  const done = completions.has(`${zone.id}_${measurement.num}`);
+                  const total = totalCount(zone) || measurement.num;
+                  const numCls = measurement.isFirst ? 'text-green-600' : measurement.isLast ? 'text-red-600' : 'text-gray-700';
+                  return (
+                    <tr key={`${zone.id}_${measurement.num}`}
+                      onDoubleClick={() => onToggleDone(zone, measurement)}
+                      className={`cursor-pointer hover:bg-blue-50/40 ${done ? 'bg-green-50/40' : ''}`}
+                      title="더블클릭으로 완료 처리">
+                      <td className={`${cellBase} font-semibold ${dowCls}`}>{ri === 0 ? g.ds : ''}</td>
+                      <td className={`${cellBase} text-center font-semibold ${dowCls}`}>{ri === 0 ? DOW[dow] : ''}</td>
+                      <td className={`${cellBase} truncate`}>
+                        <span className={`inline-block px-1 py-0.5 rounded ${done ? 'line-through opacity-60' : ''}`} style={getChipStyle(zone.category, zone.grade)}>{zone.name}[{zone.grade}]-{measurement.num}</span>
+                      </td>
+                      <td className={`${cellBase} text-center font-bold ${numCls}`}>{measurement.num}/{total}회</td>
+                      {PT_TYPES.map(t => {
+                        const v = zone[`points_${t.key}`] || 0;
+                        return <td key={t.key} className={`${cellBase} text-center ${v > 0 ? t.cls + ' font-medium' : 'text-gray-300'}`}>{v || 0}</td>;
+                      })}
+                      <td className={`${cellBase} text-center`}>
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${done ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{done ? '완료' : '예정'}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {/* 일별 합계 행 */}
+                <tr className="bg-indigo-50 font-semibold">
+                  <td className={`${cellBase} border-gray-200`}></td>
+                  <td className={`${cellBase} border-gray-200`}></td>
+                  <td className={`${cellBase} border-gray-200 text-right text-indigo-700`}>{g.items.length}건 · 일 합계</td>
+                  <td className={`${cellBase} border-gray-200 text-center text-indigo-700`}>{g.sum.float + g.sum.fall + g.sum.surface + g.sum.particle}</td>
+                  {PT_TYPES.map(t => <td key={t.key} className={`${cellBase} border-gray-200 text-center text-indigo-700`}>{g.sum[t.key]}</td>)}
+                  <td className={`${cellBase} border-gray-200`}></td>
                 </tr>
-              );
-            }
-            els.push(
-              <tr key={`${zone.id}_${measurement.num}_${ds}`}
-                onDoubleClick={() => onToggleDone(zone, measurement)}
-                className={`cursor-pointer hover:bg-blue-50/40 ${done ? 'bg-green-50/40' : ''}`}
-                title="더블클릭으로 완료 처리">
-                <td className="px-3 py-2"></td>
-                <td className="px-2 py-2"></td>
-                <td className="px-3 py-2">
-                  <span className={`inline-block px-1.5 py-0.5 rounded text-xs ${done ? 'line-through opacity-60' : ''}`} style={getChipStyle(zone.category, zone.grade)}>{zone.name}</span>
-                </td>
-                <td className="px-2 py-2 text-center text-xs font-medium text-gray-600">{zone.grade}</td>
-                <td className={`px-2 py-2 text-center text-xs font-bold ${numCls}`}>{measurement.num}/{total}회</td>
-                <td className="px-3 py-2"><span className="inline-flex flex-wrap gap-x-1.5">{zonePtSpans(zone)}</span></td>
-                <td className="px-2 py-2 text-center">
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${done ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{done ? '완료' : '예정'}</span>
-                </td>
-              </tr>
+              </Fragment>
             );
-            return els;
           })}
         </tbody>
       </table>
