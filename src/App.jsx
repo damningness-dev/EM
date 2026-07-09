@@ -22,7 +22,7 @@ const MENU = [
   { id: 'todo', label: '오늘의 할일', icon: '✅' },
   { id: 'calendar', label: '달력보기', icon: '📆' },
   { id: 'monthly', label: '월별 모니터링', icon: '📅' },
-  { id: 'status', label: '연간 현황', icon: '📈' },
+  { id: 'status', label: '구역별 현황', icon: '📈' },
   { id: 'gantt',  label: '간트 차트',  icon: '📊' },
   { id: 'annual', label: '연간 계획 (AHU)', icon: '🔧' },
   { id: 'calibration', label: '교정 관리', icon: '⚙️' },
