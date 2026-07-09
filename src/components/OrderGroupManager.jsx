@@ -136,6 +136,9 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
   // 폴더 이름 편집
   const [editingFolderId, setEditingFolderId] = useState(null);
   const [editingFolderName, setEditingFolderName] = useState('');
+  // 구역명(그룹) 이름 편집
+  const [editingGroupKey, setEditingGroupKey] = useState(null);
+  const [editingGroupName, setEditingGroupName] = useState('');
   // 구역 추가 — 시작일 입력 모드
   const [addZoneStartMode, setAddZoneStartMode] = useState('direct'); // 'direct' | 'reverse'
   const [addZoneStartDate, setAddZoneStartDate] = useState('');
@@ -149,6 +152,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
   const [cycleMajorTab, setCycleMajorTab] = useState('공조'); // 선택된 대분류
   const [cycleCatTab, setCycleCatTab] = useState('공조');     // 선택된 분류(대분류 자신 또는 소분류)
   const [newCatName, setNewCatName] = useState('');
+  const [renameCatName, setRenameCatName] = useState('');    // 소분류 이름 변경 입력
   // 컬럼 순서 / 너비 (localStorage 영속)
   const [colOrder, setColOrder] = useState(() => {
     try {
@@ -184,6 +188,11 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
       }
     }).catch(() => {});
   }, []);
+
+  // 소분류 선택 시 이름변경 입력값 동기화
+  useEffect(() => {
+    setRenameCatName(MAJOR_CATS.includes(cycleCatTab) ? '' : cycleCatTab);
+  }, [cycleCatTab]);
 
   // 선택 행 자동 스크롤
   useEffect(() => {
@@ -345,6 +354,25 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
       ...prev,
       [zoneId]: { ...(prev[zoneId] || {}), points_float: v, points_fall: 0, points_surface: 0, points_particle: 0 }
     }));
+  }
+
+  // 구역명(그룹) 이름 변경 — 그룹 내 모든 등급(zone)의 name을 함께 변경
+  function renameGroup(groupKey, newName) {
+    const name = newName.trim();
+    setEditingGroupKey(null);
+    if (!name) return;
+    const grp = modalGroups.find(g => g.key === groupKey);
+    if (!grp || grp.name === name) return;
+    const newKey = `${grp.category}|||${name}`;
+    const ids = grp.zones.map(z => z.id);
+    setModalGroups(prev => prev.map(g => g.key === groupKey
+      ? { ...g, name, key: newKey, zones: g.zones.map(z => ({ ...z, name })) }
+      : g));
+    setLocalEdits(prev => {
+      const next = { ...prev };
+      ids.forEach(id => { next[id] = { ...(next[id] || {}), name }; });
+      return next;
+    });
   }
 
   // 시작 회차 변경 — 저장 시 이 회차부터 다시 배치되도록 기존 수동 이동(override)은 초기화한다.
@@ -606,6 +634,31 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     delete next[cat];
     applyCycleConfig(next);
     setCycleCatTab(major);
+  }
+
+  // 소분류 이름 변경 — 측정주기 키 rename + 이 분류를 쓰는 구역들의 category 변경(즉시 저장)
+  async function renameSubCategory(oldName, newName) {
+    const name = newName.trim();
+    if (!name || name === oldName || cycleConfig[name] || MAJOR_CATS.includes(oldName)) return;
+    const next = JSON.parse(JSON.stringify(cycleConfig));
+    next[name] = next[oldName];
+    delete next[oldName];
+    applyCycleConfig(next);
+    // 구역 category 즉시 변경 (설정과 불일치로 orphan 되지 않도록)
+    const affected = modalGroups.filter(g => g.category === oldName).flatMap(g => g.zones);
+    for (const z of affected) {
+      try { await upsertZone({ ...z, ...(localEdits[z.id] || {}), category: name }); } catch { /* ignore */ }
+    }
+    setModalGroups(prev => prev.map(g => g.category === oldName
+      ? { ...g, category: name, key: `${name}|||${g.name}`, zones: g.zones.map(z => ({ ...z, category: name })) }
+      : g));
+    setLocalEdits(prev => {
+      const nx = { ...prev };
+      affected.forEach(z => { nx[z.id] = { ...(nx[z.id] || {}), category: name }; });
+      return nx;
+    });
+    setCycleCatTab(name);
+    window.electronAPI?.notifyDataChanged?.();
   }
 
   // 특정 대분류에 속한 소분류 목록 (레거시: __major 없는 커스텀 분류는 공조로 취급)
@@ -933,7 +986,23 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                                     onClick={e => { e.stopPropagation(); setExpandedRows(prev => { const s = new Set(prev); s.has(group.key) ? s.delete(group.key) : s.add(group.key); return s; }); }}
                                     className={`shrink-0 text-[10px] transition-transform ${isExpanded ? 'rotate-90' : ''} ${sel ? 'text-blue-200' : 'text-gray-400'}`}
                                   >▶</button>
-                                  <span className={`font-medium truncate ${sel ? 'text-white' : 'text-gray-800'}`}>{group.name}</span>
+                                  {editingGroupKey === group.key ? (
+                                    <input
+                                      autoFocus
+                                      className="flex-1 min-w-0 text-xs border border-blue-400 rounded px-1 py-0.5 text-gray-800 bg-white focus:outline-none"
+                                      value={editingGroupName}
+                                      onChange={e => setEditingGroupName(e.target.value)}
+                                      onClick={e => e.stopPropagation()}
+                                      onKeyDown={e => { if (e.key === 'Enter') renameGroup(group.key, editingGroupName); if (e.key === 'Escape') setEditingGroupKey(null); }}
+                                      onBlur={() => renameGroup(group.key, editingGroupName)}
+                                    />
+                                  ) : (
+                                    <span
+                                      className={`font-medium truncate ${sel ? 'text-white' : 'text-gray-800'}`}
+                                      title="더블클릭하여 구역명 수정"
+                                      onDoubleClick={e => { e.stopPropagation(); setEditingGroupKey(group.key); setEditingGroupName(group.name); }}
+                                    >{group.name}</span>
+                                  )}
                                 </div>
                               );
                             }
@@ -1224,8 +1293,20 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                   className="text-xs px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40">+ 소분류</button>
               </div>
             </div>
-            <div className="px-4 py-2 border-b border-gray-100 flex items-center justify-between shrink-0">
-              <p className="text-xs text-gray-400">등급별 측정 횟수·간격을 설정합니다. 변경 시 달력 일정이 즉시 재계산됩니다.</p>
+            <div className="px-4 py-2 border-b border-gray-100 flex items-center justify-between shrink-0 flex-wrap gap-2">
+              {!MAJOR_CATS.includes(cycleCatTab) ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-gray-400">소분류명</span>
+                  <input value={renameCatName} onChange={e => setRenameCatName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') { renameSubCategory(cycleCatTab, renameCatName); } }}
+                    className="text-xs border border-gray-300 rounded px-2 py-1 w-32 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                  <button onClick={() => renameSubCategory(cycleCatTab, renameCatName)}
+                    disabled={!renameCatName.trim() || renameCatName.trim() === cycleCatTab || !!cycleConfig[renameCatName.trim()]}
+                    className="text-xs px-2 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40">이름변경</button>
+                </div>
+              ) : (
+                <p className="text-xs text-gray-400">등급별 측정 횟수·간격을 설정합니다. 변경 시 달력 일정이 즉시 재계산됩니다.</p>
+              )}
               <div className="flex gap-2">
                 {!BUILTIN_CATS.includes(cycleCatTab) && (
                   <button onClick={() => removeCycleCategory(cycleCatTab)} className="text-xs px-2 py-1 bg-red-50 text-red-500 rounded hover:bg-red-100">분류 삭제</button>

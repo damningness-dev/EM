@@ -1449,6 +1449,7 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
                         dow === 6 ? 'text-blue-500' : 'text-gray-700'
                       }`;
                       const majorAbbr = { '질소가스': '질', '압축공기': '압', '용수': '용' };
+                      const majorChipCls = { '질소가스': 'bg-purple-100 text-purple-700', '압축공기': 'bg-yellow-100 text-yellow-700', '용수': 'bg-teal-100 text-teal-700' };
                       const ptsChips = hasPts ? (
                         <div className={`flex flex-wrap gap-0.5 ${isOther ? 'opacity-50' : ''}`}>
                           {catPts.nonComb.s > 0 && <span className="text-[9px] leading-none bg-green-50 text-green-700 px-0.5 py-0.5 rounded">표{catPts.nonComb.s}</span>}
@@ -1456,7 +1457,7 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
                           {catPts.nonComb.l > 0 && <span className="text-[9px] leading-none bg-orange-50 text-orange-700 px-0.5 py-0.5 rounded">낙{catPts.nonComb.l}</span>}
                           {catPts.nonComb.p > 0 && <span className="text-[9px] leading-none bg-pink-50 text-pink-700 px-0.5 py-0.5 rounded">입{catPts.nonComb.p}</span>}
                           {Object.entries(catPts.combined).map(([major, v]) => v > 0 && (
-                            <span key={major} className="text-[9px] leading-none bg-purple-100 text-purple-700 px-0.5 py-0.5 rounded">{majorAbbr[major] || major.slice(0, 1)}{v}</span>
+                            <span key={major} className={`text-[9px] leading-none px-0.5 py-0.5 rounded ${majorChipCls[major] || 'bg-purple-100 text-purple-700'}`}>{majorAbbr[major] || major.slice(0, 1)}{v}</span>
                           ))}
                           {tempPtsTotal > 0 && <span className="text-[9px] leading-none bg-gray-100 text-gray-500 px-0.5 py-0.5 rounded">임{tempPtsTotal}</span>}
                         </div>
