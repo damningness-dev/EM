@@ -1892,26 +1892,48 @@ function zonePtSpans(zone) {
   return sp.length ? sp : [<span key="0" className="text-[11px] text-gray-300">—</span>];
 }
 
-const SCHED_TABLE_COLS = [
-  { key: 'date', label: '날짜', w: 92, align: 'left' },
-  { key: 'dow', label: '요일', w: 40, align: 'center' },
-  { key: 'zone', label: '구분', w: 230, align: 'left' },
-  { key: 'num', label: '회차', w: 70, align: 'center' },
-  { key: 'float', label: '부', w: 54, align: 'center', pt: true },
-  { key: 'fall', label: '낙', w: 54, align: 'center', pt: true },
-  { key: 'surface', label: '표', w: 54, align: 'center', pt: true },
-  { key: 'particle', label: '입자', w: 60, align: 'center', pt: true },
-  { key: 'status', label: '상태', w: 64, align: 'center' },
-];
+// 포인트 컬럼 정의 — 질소/압축은 별도 컬럼(통합값), 부/낙/표/입자는 비-가스 값
+const PT_CLS = { float: 'text-blue-600', fall: 'text-orange-600', surface: 'text-green-600', particle: 'text-pink-600', nitro: 'text-purple-600', comp: 'text-yellow-700' };
+function ptValue(zone, key) {
+  const major = getMajorCat(zone.category);
+  if (key === 'nitro') return major === '질소가스' ? (zone.points_float || 0) : 0;
+  if (key === 'comp') return major === '압축공기' ? (zone.points_float || 0) : 0;
+  return isCombinedCat(zone.category) ? 0 : (zone[`points_${key}`] || 0);
+}
+const SCHED_COL_META = {
+  date: { label: '날짜', w: 92, align: 'left' },
+  dow: { label: '요일', w: 48, align: 'center' },
+  zone: { label: '구분', w: 230, align: 'left' },
+  num: { label: '회차', w: 70, align: 'center' },
+  float: { label: '부', w: 50, align: 'center', pt: true },
+  fall: { label: '낙', w: 50, align: 'center', pt: true },
+  surface: { label: '표', w: 50, align: 'center', pt: true },
+  particle: { label: '입자', w: 56, align: 'center', pt: true },
+  nitro: { label: '질소', w: 56, align: 'center', pt: true },
+  comp: { label: '압축', w: 56, align: 'center', pt: true },
+  status: { label: '상태', w: 64, align: 'center' },
+};
+const SCHED_DEFAULT_ORDER = ['date', 'dow', 'zone', 'num', 'float', 'fall', 'surface', 'particle', 'nitro', 'comp', 'status'];
+const PT_KEYS = ['float', 'fall', 'surface', 'particle', 'nitro', 'comp'];
 
 function ScheduleTable({ rows, completions, year, month, getChipStyle, onToggleDone }) {
   const DOW = ['일', '월', '화', '수', '목', '금', '토'];
   const [colW, setColW] = useState(() => {
     try { const s = JSON.parse(localStorage.getItem('em-sched-table-cols')); if (s && typeof s === 'object') return s; } catch { /* ignore */ }
-    return Object.fromEntries(SCHED_TABLE_COLS.map(c => [c.key, c.w]));
+    return {};
   });
+  const [colOrder, setColOrder] = useState(() => {
+    try {
+      const s = JSON.parse(localStorage.getItem('em-sched-table-order'));
+      if (Array.isArray(s)) { const valid = s.filter(k => SCHED_COL_META[k]); SCHED_DEFAULT_ORDER.forEach(k => { if (!valid.includes(k)) valid.push(k); }); return valid; }
+    } catch { /* ignore */ }
+    return [...SCHED_DEFAULT_ORDER];
+  });
+  const [dragKey, setDragKey] = useState(null);
   useEffect(() => { try { localStorage.setItem('em-sched-table-cols', JSON.stringify(colW)); } catch { /* ignore */ } }, [colW]);
-  const width = k => colW[k] ?? SCHED_TABLE_COLS.find(c => c.key === k)?.w ?? 60;
+  useEffect(() => { try { localStorage.setItem('em-sched-table-order', JSON.stringify(colOrder)); } catch { /* ignore */ } }, [colOrder]);
+
+  const width = k => colW[k] ?? SCHED_COL_META[k].w;
   function startResize(e, key) {
     e.preventDefault(); e.stopPropagation();
     const startX = e.clientX, startW = width(key);
@@ -1919,75 +1941,91 @@ function ScheduleTable({ rows, completions, year, month, getChipStyle, onToggleD
     const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
     document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
   }
+  function reorder(fromKey, toKey) {
+    if (!fromKey || fromKey === toKey) return;
+    setColOrder(prev => { const arr = prev.filter(k => k !== fromKey); const ti = arr.indexOf(toKey); if (ti < 0) return prev; arr.splice(ti, 0, fromKey); return arr; });
+  }
 
-  // 날짜별 그룹 + 유형별 합계
+  // 날짜별 그룹 + 컬럼별 합계
   const dayGroups = [];
   let cur = null;
   rows.forEach(r => {
-    if (!cur || cur.ds !== r.ds) { cur = { ds: r.ds, items: [], sum: { float: 0, fall: 0, surface: 0, particle: 0 } }; dayGroups.push(cur); }
+    if (!cur || cur.ds !== r.ds) { cur = { ds: r.ds, items: [], sum: {} }; PT_KEYS.forEach(k => cur.sum[k] = 0); dayGroups.push(cur); }
     cur.items.push(r);
-    PT_TYPES.forEach(t => { cur.sum[t.key] += r.zone[`points_${t.key}`] || 0; });
+    PT_KEYS.forEach(k => { cur.sum[k] += ptValue(r.zone, k); });
   });
+
+  const cellBase = 'px-2 py-1.5 border border-gray-100 text-xs';
+
+  // 셀 렌더 (컬럼 key별)
+  function bodyCell(key, ctx) {
+    const { zone, measurement, ri, g, dow, dowCls } = ctx;
+    const done = completions.has(`${zone.id}_${measurement.num}`);
+    const meta = SCHED_COL_META[key];
+    const alignCls = meta.align === 'left' ? '' : 'text-center';
+    if (key === 'date') return <td key={key} className={`${cellBase} font-semibold ${dowCls}`}>{ri === 0 ? g.ds : ''}</td>;
+    if (key === 'dow') return <td key={key} className={`${cellBase} text-center font-semibold ${dowCls}`}>{ri === 0 ? DOW[dow] : ''}</td>;
+    if (key === 'zone') return <td key={key} className={`${cellBase} truncate`}><span className={`inline-block px-1 py-0.5 rounded ${done ? 'line-through opacity-60' : ''}`} style={getChipStyle(zone.category, zone.grade)}>{zone.name}[{zone.grade}]-{measurement.num}</span></td>;
+    if (key === 'num') { const total = totalCount(zone) || measurement.num; const numCls = measurement.isFirst ? 'text-green-600' : measurement.isLast ? 'text-red-600' : 'text-gray-700'; return <td key={key} className={`${cellBase} text-center font-bold ${numCls}`}>{measurement.num}/{total}회</td>; }
+    if (key === 'status') return <td key={key} className={`${cellBase} text-center`}><span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${done ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{done ? '완료' : '예정'}</span></td>;
+    // 포인트 컬럼
+    const v = ptValue(zone, key);
+    return <td key={key} className={`${cellBase} ${alignCls} ${v > 0 ? PT_CLS[key] + ' font-medium' : 'text-gray-300'}`}>{v || 0}</td>;
+  }
+  function sumCell(key, g) {
+    if (key === 'dow') return <td key={key} className={`${cellBase} border-gray-200 text-center text-indigo-700 font-bold`}>합계</td>;
+    if (key === 'zone') return <td key={key} className={`${cellBase} border-gray-200 text-right text-gray-500`}>{g.items.length}건</td>;
+    if (PT_KEYS.includes(key)) return <td key={key} className={`${cellBase} border-gray-200 text-center font-bold ${g.sum[key] > 0 ? PT_CLS[key] : 'text-gray-300'}`}>{g.sum[key]}</td>;
+    return <td key={key} className={`${cellBase} border-gray-200`}></td>;
+  }
 
   return (
     <div className="overflow-auto max-h-[calc(100vh-220px)]">
-      <table className="text-sm border-collapse" style={{ tableLayout: 'fixed', width: SCHED_TABLE_COLS.reduce((s, c) => s + width(c.key), 0) }}>
-        <colgroup>{SCHED_TABLE_COLS.map(c => <col key={c.key} style={{ width: width(c.key) }} />)}</colgroup>
+      <table className="text-sm border-collapse" style={{ tableLayout: 'fixed', width: colOrder.reduce((s, k) => s + width(k), 0) }}>
+        <colgroup>{colOrder.map(k => <col key={k} style={{ width: width(k) }} />)}</colgroup>
         <thead className="sticky top-0 z-10">
           <tr className="bg-gray-100 text-xs text-gray-600">
-            {SCHED_TABLE_COLS.map(c => (
-              <th key={c.key} className={`relative px-2 py-2 font-semibold border border-gray-200 ${c.align === 'left' ? 'text-left' : 'text-center'} ${c.pt ? 'text-indigo-600' : ''}`}>
-                {c.label}
-                <span onMouseDown={e => startResize(e, c.key)}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
-              </th>
-            ))}
+            {colOrder.map(key => {
+              const meta = SCHED_COL_META[key];
+              return (
+                <th key={key}
+                  onDragOver={e => { if (dragKey) e.preventDefault(); }}
+                  onDrop={e => { const fk = e.dataTransfer.getData('col'); if (fk) { e.preventDefault(); reorder(fk, key); } setDragKey(null); }}
+                  className={`relative px-2 py-2 font-semibold border border-gray-200 ${meta.align === 'left' ? 'text-left' : 'text-center'} ${meta.pt ? PT_CLS[key] : ''} ${dragKey === key ? 'opacity-40' : ''}`}>
+                  <span draggable
+                    onDragStart={e => { e.dataTransfer.setData('col', key); e.dataTransfer.effectAllowed = 'move'; setDragKey(key); }}
+                    onDragEnd={() => setDragKey(null)}
+                    className="cursor-move select-none" title="드래그하여 순서 변경">{meta.label}</span>
+                  <span onMouseDown={e => startResize(e, key)} draggable={false} onDragStart={e => e.preventDefault()}
+                    className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
           {rows.length === 0 && (
-            <tr><td colSpan={SCHED_TABLE_COLS.length} className="px-3 py-8 text-center text-sm text-gray-400 border border-gray-200">{year}년 {month}월 예정된 측정 일정이 없습니다.</td></tr>
+            <tr><td colSpan={colOrder.length} className="px-3 py-8 text-center text-sm text-gray-400 border border-gray-200">{year}년 {month}월 예정된 측정 일정이 없습니다.</td></tr>
           )}
           {dayGroups.map(g => {
             const d = new Date(g.ds + 'T00:00:00');
             const dow = d.getDay();
             const dowCls = dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-gray-600';
-            const cellBase = 'px-2 py-1.5 border border-gray-100 text-xs';
             return (
               <Fragment key={g.ds}>
                 {g.items.map(({ zone, measurement }, ri) => {
                   const done = completions.has(`${zone.id}_${measurement.num}`);
-                  const total = totalCount(zone) || measurement.num;
-                  const numCls = measurement.isFirst ? 'text-green-600' : measurement.isLast ? 'text-red-600' : 'text-gray-700';
                   return (
                     <tr key={`${zone.id}_${measurement.num}`}
                       onDoubleClick={() => onToggleDone(zone, measurement)}
                       className={`cursor-pointer hover:bg-blue-50/40 ${done ? 'bg-green-50/40' : ''}`}
                       title="더블클릭으로 완료 처리">
-                      <td className={`${cellBase} font-semibold ${dowCls}`}>{ri === 0 ? g.ds : ''}</td>
-                      <td className={`${cellBase} text-center font-semibold ${dowCls}`}>{ri === 0 ? DOW[dow] : ''}</td>
-                      <td className={`${cellBase} truncate`}>
-                        <span className={`inline-block px-1 py-0.5 rounded ${done ? 'line-through opacity-60' : ''}`} style={getChipStyle(zone.category, zone.grade)}>{zone.name}[{zone.grade}]-{measurement.num}</span>
-                      </td>
-                      <td className={`${cellBase} text-center font-bold ${numCls}`}>{measurement.num}/{total}회</td>
-                      {PT_TYPES.map(t => {
-                        const v = zone[`points_${t.key}`] || 0;
-                        return <td key={t.key} className={`${cellBase} text-center ${v > 0 ? t.cls + ' font-medium' : 'text-gray-300'}`}>{v || 0}</td>;
-                      })}
-                      <td className={`${cellBase} text-center`}>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${done ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{done ? '완료' : '예정'}</span>
-                      </td>
+                      {colOrder.map(key => bodyCell(key, { zone, measurement, ri, g, dow, dowCls }))}
                     </tr>
                   );
                 })}
-                {/* 일별 합계 행 */}
                 <tr className="bg-indigo-50 font-semibold">
-                  <td className={`${cellBase} border-gray-200`}></td>
-                  <td className={`${cellBase} border-gray-200`}></td>
-                  <td className={`${cellBase} border-gray-200 text-right text-indigo-700`}>{g.items.length}건 · 일 합계</td>
-                  <td className={`${cellBase} border-gray-200 text-center text-indigo-700`}>{g.sum.float + g.sum.fall + g.sum.surface + g.sum.particle}</td>
-                  {PT_TYPES.map(t => <td key={t.key} className={`${cellBase} border-gray-200 text-center text-indigo-700`}>{g.sum[t.key]}</td>)}
-                  <td className={`${cellBase} border-gray-200`}></td>
+                  {colOrder.map(key => sumCell(key, g))}
                 </tr>
               </Fragment>
             );
