@@ -53,6 +53,13 @@ function lYearDays(y) {
 // 음력 1900-01-01 = 양력 1900-01-31 (앵커)
 const BASE_UTC = Date.UTC(1900, 0, 31);
 
+// 한국 음력(KASI) 보정 — 중국 기준 표와 하루 차이나는 날짜를 한국 기준으로 직접 지정.
+// (신월이 자정 부근이면 KST(UTC+9)/CST(UTC+8) 시차로 달의 시작일이 하루 달라진다)
+// key: `연-월-일` (윤달이면 뒤에 'L'), value: 'yyyy-MM-dd'(양력)
+const KR_LUNAR_OVERRIDES = {
+  '2027-1-1': '2027-02-07', // 설날 (중국표 2/6 → 한국 2/7)
+};
+
 /**
  * 음력 → 양력 변환
  * @param {number} y 음력 연도
@@ -63,6 +70,8 @@ const BASE_UTC = Date.UTC(1900, 0, 31);
  */
 export function lunarToSolar(y, m, d, isLeap = false) {
   if (y < MIN_YEAR || y > MAX_YEAR) return null;
+  const ov = KR_LUNAR_OVERRIDES[`${y}-${m}-${d}${isLeap ? 'L' : ''}`];
+  if (ov) { const [oy, om, od] = ov.split('-').map(Number); return new Date(oy, om - 1, od); }
   let offset = 0;
   for (let i = MIN_YEAR; i < y; i++) offset += lYearDays(i);
   const leap = leapMonth(y);
