@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
-import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, syncGetConfig, submitEditRequest, fetchEditRequests, resolveEditRequest } from '../lib/api';
+import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, syncGetConfig, submitEditRequest, fetchEditRequests, resolveEditRequest, fetchTodos, upsertTodo, deleteTodo } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
@@ -132,6 +132,7 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
   const [groupMovePrompt, setGroupMovePrompt] = useState(null); // { dateStr, dragData, groupName, members:[{zoneId,num,min,max,label}] }
   const [syncCfg, setSyncCfg] = useState({ gistId: '', role: 'member' }); // 공유 역할
   const [editRequests, setEditRequests] = useState([]); // 관리자: 대기중 편집 요청
+  const [todos, setTodos] = useState([]); // 할일 (측정 알람 추가 상태 확인용)
   const [tempSchedules, setTempSchedules] = useState([]);
   const [blockedDates, setBlockedDates] = useState(new Set()); // 일정비우기 날짜('yyyy-MM-dd')
   const [addSchedPopup, setAddSchedPopup] = useState(null); // { date }
@@ -280,6 +281,53 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
     if (!window.electronAPI?.onDataChanged) return;
     return window.electronAPI.onDataChanged(() => { reloadZonesGroups(); });
   }, []);
+
+  // 할일(측정 알람) 로드
+  useEffect(() => { fetchTodos().then(setTodos).catch(() => {}); }, []);
+
+  // 측정 → 할일 srcKey (중복 방지)
+  const measTodoKey = (zone, m, dateStr) => `meas:${zone.id}:${m.num}:${dateStr}`;
+  const hasMeasTodo = (zone, m, dateStr) => todos.some(t => t.srcKey === measTodoKey(zone, m, dateStr));
+
+  // 측정 일정을 그 날의 할일(알람)로 추가/해제 토글
+  async function toggleMeasTodo(zone, m, dateStr) {
+    const key = measTodoKey(zone, m, dateStr);
+    const existing = todos.find(t => t.srcKey === key);
+    if (existing) {
+      await deleteTodo(existing.id);
+      setTodos(prev => prev.filter(t => t.id !== existing.id));
+    } else {
+      const todo = {
+        title: `${zone.name}[${zone.grade}] ${m.num}회차 측정`,
+        date: dateStr, time: '09:00', alarmEnabled: true, repeat: 'none', interval: 1,
+        note: '측정 일정 알람', srcKey: key, completedDates: [],
+      };
+      const saved = await upsertTodo(todo);
+      setTodos(prev => [...prev, saved]);
+    }
+    window.electronAPI?.notifyDataChanged?.();
+  }
+
+  // 해당 날짜의 모든 측정을 한 번에 할일(알람)로 추가
+  async function addAllMeasTodos(dateStr) {
+    const evts = scheduleByDate[dateStr] || [];
+    const toAdd = evts.filter(({ zone, measurement }) => !hasMeasTodo(zone, measurement, dateStr));
+    if (toAdd.length === 0) { showSuccess('이미 모든 일정이 할일에 추가되어 있습니다.'); return; }
+    const added = [];
+    for (const { zone, measurement } of toAdd) {
+      try {
+        const saved = await upsertTodo({
+          title: `${zone.name}[${zone.grade}] ${measurement.num}회차 측정`,
+          date: dateStr, time: '09:00', alarmEnabled: true, repeat: 'none', interval: 1,
+          note: '측정 일정 알람', srcKey: measTodoKey(zone, measurement, dateStr), completedDates: [],
+        });
+        added.push(saved);
+      } catch { /* ignore */ }
+    }
+    setTodos(prev => [...prev, ...added]);
+    window.electronAPI?.notifyDataChanged?.();
+    showSuccess(`${added.length}건을 할일 알람(09:00)에 추가했습니다.`);
+  }
 
   // 공유 역할 로드 + (관리자면) 편집 요청 주기적 확인
   const reloadEditRequests = useCallback(() => {
@@ -1721,12 +1769,21 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
               {selectedDay && (selectedScheduleEvents.length > 0 || blockedDates.has(selectedDay)) && (
                 <div className="px-4 py-1.5 bg-blue-50 border-b border-blue-100 flex items-center justify-between gap-2">
                   <span className="text-xs font-semibold text-blue-600">측정 일정 ({selectedScheduleEvents.length}건)</span>
-                  <label className="flex items-center gap-1 text-xs text-gray-500 cursor-pointer select-none shrink-0"
-                    title="체크 시 이 날의 모든 일정을 다른 날로 옮기고, 이 날에는 어떤 일정도 배치되지 않습니다">
-                    <input type="checkbox" checked={blockedDates.has(selectedDay)}
-                      onChange={e => handleToggleBlockDay(selectedDay, e.target.checked)} className="rounded" />
-                    일정비우기
-                  </label>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {selectedScheduleEvents.length > 0 && (
+                      <button onClick={() => addAllMeasTodos(selectedDay)}
+                        className="flex items-center gap-1 text-xs text-orange-600 hover:text-orange-700"
+                        title="이 날의 모든 측정을 할일 알람으로 한 번에 추가">
+                        🔔 전체알람 추가
+                      </button>
+                    )}
+                    <label className="flex items-center gap-1 text-xs text-gray-500 cursor-pointer select-none"
+                      title="체크 시 이 날의 모든 일정을 다른 날로 옮기고, 이 날에는 어떤 일정도 배치되지 않습니다">
+                      <input type="checkbox" checked={blockedDates.has(selectedDay)}
+                        onChange={e => handleToggleBlockDay(selectedDay, e.target.checked)} className="rounded" />
+                      일정비우기
+                    </label>
+                  </div>
                 </div>
               )}
 
@@ -1759,7 +1816,14 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
                               {measurement.isLast && <span className="text-xs text-red-600 font-bold">마지막</span>}
                               {isDone && <span className="text-xs bg-green-500 text-white px-1 py-0.5 rounded font-bold">✓완료</span>}
                             </div>
-                            <span className="text-xs text-gray-400">#{measurement.num} / {totalCount(zone)}</span>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <button
+                                onClick={e => { e.stopPropagation(); toggleMeasTodo(zone, measurement, selectedDay); }}
+                                className={`text-sm leading-none ${hasMeasTodo(zone, measurement, selectedDay) ? 'text-orange-500' : 'text-gray-300 hover:text-orange-400'}`}
+                                title={hasMeasTodo(zone, measurement, selectedDay) ? '할일 알람 추가됨 (클릭 해제)' : '이 측정을 할일 알람으로 추가'}
+                              >{hasMeasTodo(zone, measurement, selectedDay) ? '🔔' : '🔕'}</button>
+                              <span className="text-xs text-gray-400">#{measurement.num} / {totalCount(zone)}</span>
+                            </div>
                           </div>
                           <p className={`text-sm font-medium break-words ${isDone ? 'text-gray-400 line-through' : 'text-gray-800'}`}>
                             {zone.name}[{zone.grade}]
