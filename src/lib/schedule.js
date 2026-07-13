@@ -24,6 +24,20 @@ function getNthWeekdayOfMonth(year, month, nth, dow) {
   return new Date(year, month - 1, day);
 }
 
+// 월 기반 측정의 이동 가능 창. 분기(3)·반기(6)·년(12)은 달력 경계에 맞춘다.
+//  - 분기: 1~3, 4~6, 7~9, 10~12월 / 반기: 1~6, 7~12월 / 년: 1~12월
+//  - 그 외(월 간격 N)는 시작월부터 롤링 span개월
+function monthSpanWindow(baseDate, spanMonths) {
+  const span = Math.max(1, spanMonths || 1);
+  const y = baseDate.getFullYear(), m = baseDate.getMonth();
+  let start;
+  if (span === 3) start = Math.floor(m / 3) * 3;
+  else if (span === 6) start = m < 6 ? 0 : 6;
+  else if (span === 12) start = 0;
+  else return { min: startOfMonth(baseDate), max: endOfMonth(addMonths(baseDate, span - 1)) };
+  return { min: new Date(y, start, 1), max: endOfMonth(new Date(y, start + span - 1, 1)) };
+}
+
 function isOverrideValid(overrideDate, baseDate, type, spanMonths = 1) {
   if (type === 'daily' || type === 'weekly' || type === 'biweekly') {
     const min = startOfWeek(baseDate, { weekStartsOn: 1 });
@@ -31,9 +45,7 @@ function isOverrideValid(overrideDate, baseDate, type, spanMonths = 1) {
     return overrideDate >= min && overrideDate <= max;
   }
   if (type === 'monthly' || type === 'quarterly') {
-    // 월/분기/반기: 시작 월부터 span개월 창 안이면 유효 (분기·반기 내 다른 달 이동 허용)
-    const min = startOfMonth(baseDate);
-    const max = endOfMonth(addMonths(baseDate, Math.max(1, spanMonths) - 1));
+    const { min, max } = monthSpanWindow(baseDate, spanMonths);
     return overrideDate >= min && overrideDate <= max;
   }
   return false;
@@ -302,8 +314,8 @@ export function getDragBounds(measurement) {
     };
   }
   if (type === 'monthly' || type === 'quarterly') {
-    // 월은 해당 월, 분기/반기(및 간격>1 월)는 span개월 만큼 이동 범위 확장
-    return { min: startOfMonth(baseDate), max: endOfMonth(addMonths(baseDate, Math.max(1, spanMonths || 1) - 1)) };
+    // 월은 해당 월, 분기/반기/년은 달력 경계에 맞춘 창 (그 밖으로 이동 시 오류)
+    return monthSpanWindow(baseDate, spanMonths);
   }
   return { min: baseDate, max: baseDate };
 }

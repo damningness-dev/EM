@@ -518,15 +518,23 @@ function showAlarmWindow(todo) {
       <button onclick="window.close()">확인</button>
     </body></html>`;
     win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
-    win.once('ready-to-show', async () => {
-      // 내용 높이에 맞춰 창 높이 자동 조절 (잘림 방지)
+    // data URL은 ready-to-show가 안 뜨는 경우가 있어, did-finish-load + 폴백 타이머로 확실히 표시
+    let shown = false;
+    const reveal = async () => {
+      if (shown || win.isDestroyed()) return;
+      shown = true;
       try {
-        const h = await win.webContents.executeJavaScript('document.body.scrollHeight');
-        const newH = Math.min(Math.max(Math.ceil(h) + 4, 120), Math.floor(wa.height * 0.6));
-        win.setBounds({ x: wa.width - W - 16, y: Math.max(16, wa.height - newH - 16 - offset), width: W, height: newH });
+        const h = await win.webContents.executeJavaScript('document.body.scrollHeight').catch(() => 0);
+        if (h) {
+          const newH = Math.min(Math.max(Math.ceil(h) + 4, 120), Math.floor(wa.height * 0.6));
+          win.setBounds({ x: wa.width - W - 16, y: Math.max(16, wa.height - newH - 16 - offset), width: W, height: newH });
+        }
       } catch { /* ignore */ }
-      win.show(); win.moveTop();
-    });
+      if (!win.isDestroyed()) { win.show(); win.moveTop(); }
+    };
+    win.webContents.once('did-finish-load', reveal);
+    win.once('ready-to-show', reveal);
+    setTimeout(reveal, 1200);
     win.on('closed', () => { alarmWindows = alarmWindows.filter(x => x !== win); });
     alarmWindows.push(win);
     // 2분 후 자동 닫힘
