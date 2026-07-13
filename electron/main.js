@@ -485,34 +485,48 @@ function todoOccursOn(todo, dateStr) {
 }
 
 // 데스크톱 알람 팝업 창 — 항상 위에 뜨는 별도 창(윈도우 알림 설정과 무관하게 확실히 표시)
-let alarmWindows = [];
+// 알람은 한 번에 하나씩. 확인(창 닫기) 전까지 유지되고, 그 사이 발생한 알람은
+// 대기열에 쌓았다가 확인하면 다음 알람을 표시한다.
+let alarmQueue = [];
+let currentAlarmWin = null;
 function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-function showAlarmWindow(todo) {
+
+function enqueueAlarm(todo) {
+  alarmQueue.push(todo);
+  showNextAlarm();
+}
+
+function showNextAlarm() {
+  if (currentAlarmWin && !currentAlarmWin.isDestroyed()) return; // 앞 알람 확인 대기
+  const todo = alarmQueue.shift();
+  if (!todo) return;
   try {
     const wa = screen.getPrimaryDisplay().workAreaSize;
     const W = 360, H = 150;
-    const offset = alarmWindows.length * (H + 10);
     const win = new BrowserWindow({
       width: W, height: H,
       x: wa.width - W - 16,
-      y: Math.max(16, wa.height - H - 16 - offset),
+      y: Math.max(16, wa.height - H - 16),
       frame: false, resizable: false, movable: true, minimizable: false, maximizable: false,
       alwaysOnTop: true, skipTaskbar: true, show: false,
       backgroundColor: '#ffffff',
       webPreferences: { contextIsolation: true },
     });
+    currentAlarmWin = win;
     win.setAlwaysOnTop(true, 'screen-saver');
     try { win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch { /* ignore */ }
+    const remain = alarmQueue.length;
     const html = `<!doctype html><html><head><meta charset="utf-8"><style>
       html,body{margin:0}
       body{font-family:'Malgun Gothic','Segoe UI',sans-serif;background:#fff;border:2px solid #fb923c;border-radius:12px;box-sizing:border-box;display:flex;flex-direction:column;padding:14px;overflow:hidden}
       .h{display:flex;align-items:center;gap:6px;color:#ea580c;font-size:12px;font-weight:700;margin-bottom:6px}
+      .q{margin-left:auto;font-size:11px;color:#9ca3af;font-weight:600}
       .t{font-size:15px;font-weight:700;color:#111827;white-space:pre-wrap;word-break:break-word;line-height:1.35}
       .n{font-size:12px;color:#6b7280;margin-top:4px;white-space:pre-wrap;word-break:break-word;line-height:1.35}
       button{margin-top:12px;padding:8px;background:#f97316;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;flex-shrink:0}
       button:hover{background:#ea580c}
     </style></head><body>
-      <div class="h">⏰ 할일 알람 ${todo.time ? '· ' + esc(todo.time) : ''}</div>
+      <div class="h">⏰ 할일 알람 ${todo.time ? '· ' + esc(todo.time) : ''}${remain > 0 ? `<span class="q">대기 ${remain}건</span>` : ''}</div>
       <div class="t">${esc(todo.title)}</div>
       ${todo.note ? `<div class="n">${esc(todo.note)}</div>` : ''}
       <button onclick="window.close()">확인</button>
@@ -527,7 +541,7 @@ function showAlarmWindow(todo) {
         const h = await win.webContents.executeJavaScript('document.body.scrollHeight').catch(() => 0);
         if (h) {
           const newH = Math.min(Math.max(Math.ceil(h) + 4, 120), Math.floor(wa.height * 0.6));
-          win.setBounds({ x: wa.width - W - 16, y: Math.max(16, wa.height - newH - 16 - offset), width: W, height: newH });
+          win.setBounds({ x: wa.width - W - 16, y: Math.max(16, wa.height - newH - 16), width: W, height: newH });
         }
       } catch { /* ignore */ }
       if (!win.isDestroyed()) { win.show(); win.moveTop(); }
@@ -535,11 +549,9 @@ function showAlarmWindow(todo) {
     win.webContents.once('did-finish-load', reveal);
     win.once('ready-to-show', reveal);
     setTimeout(reveal, 1200);
-    win.on('closed', () => { alarmWindows = alarmWindows.filter(x => x !== win); });
-    alarmWindows.push(win);
-    // 2분 후 자동 닫힘
-    setTimeout(() => { if (win && !win.isDestroyed()) win.close(); }, 120000);
-  } catch { /* ignore */ }
+    // 확인(창 닫힘) → 다음 알람 표시. 자동 닫힘 없음.
+    win.on('closed', () => { currentAlarmWin = null; setTimeout(showNextAlarm, 100); });
+  } catch { currentAlarmWin = null; }
 }
 
 const firedAlarms = new Set(); // `${id}_${yyyy-MM-dd}` — 하루 1회 발사 보장
@@ -561,8 +573,8 @@ function checkAlarms() {
     const key = `${t.id}_${todayStr}`;
     if (firedAlarms.has(key)) return;
     firedAlarms.add(key);
-    // 1) 데스크톱 팝업 창 (항상 위) — 윈도우 알림 설정과 무관하게 확실히 표시
-    showAlarmWindow(t);
+    // 1) 데스크톱 팝업 창 (항상 위) — 한 번에 하나씩, 확인 전까지 유지 + 대기열
+    enqueueAlarm(t);
     // 2) 작업표시줄 깜빡임
     try { if (mainWin && !mainWin.isDestroyed()) mainWin.flashFrame(true); } catch { /* ignore */ }
     // 3) 윈도우 네이티브 토스트 알림 (환경에 따라 표시)
