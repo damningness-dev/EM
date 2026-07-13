@@ -122,6 +122,8 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
   const [newHolidayRepeat, setNewHolidayRepeat] = useState(false);
   const [newHolidaySubstitute, setNewHolidaySubstitute] = useState(false);
   const [newHolidayLunar, setNewHolidayLunar] = useState(false);
+  const [newHolidayBridgeBefore, setNewHolidayBridgeBefore] = useState(0);
+  const [newHolidayBridgeAfter, setNewHolidayBridgeAfter] = useState(0);
   const [newHolidayRepeatType, setNewHolidayRepeatType] = useState('yearly');
   const [newHolidayNth, setNewHolidayNth] = useState(1);
   const [newHolidayDow, setNewHolidayDow] = useState(1);
@@ -1096,13 +1098,13 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
                                 ? { type: 'nth-weekday', nth: newHolidayNth, dow: newHolidayDow }
                                 : { type: newHolidayRepeatType })
                             : null);
-                      const h = { date: newHolidayLunar ? 'L' + newHolidayDate : newHolidayDate, name: newHolidayName.trim(), repeat, substitute: newHolidaySubstitute, lunar: newHolidayLunar };
+                      const h = { date: newHolidayLunar ? 'L' + newHolidayDate : newHolidayDate, name: newHolidayName.trim(), repeat, substitute: newHolidaySubstitute, lunar: newHolidayLunar, bridgeBefore: Math.max(0, parseInt(newHolidayBridgeBefore) || 0), bridgeAfter: Math.max(0, parseInt(newHolidayBridgeAfter) || 0) };
                       const saved = await upsertHoliday(h);
                       setHolidayDefs(prev => {
                         const idx = prev.findIndex(x => x.date === saved.date);
                         return idx >= 0 ? prev.map((x,i) => i === idx ? saved : x) : [...prev, saved];
                       });
-                      setNewHolidayDate(''); setNewHolidayName(''); setNewHolidayRepeat(false); setNewHolidaySubstitute(false); setNewHolidayLunar(false);
+                      setNewHolidayDate(''); setNewHolidayName(''); setNewHolidayRepeat(false); setNewHolidaySubstitute(false); setNewHolidayLunar(false); setNewHolidayBridgeBefore(0); setNewHolidayBridgeAfter(0);
                     }}
                     className="px-2.5 py-1.5 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 shrink-0"
                   >추가</button>
@@ -1122,6 +1124,21 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
                     대체공휴일
                     <span className="text-[10px] text-gray-400">(주말이면 다음 평일 휴무)</span>
                   </label>
+                </div>
+                {/* 연휴 (기준일 앞/뒤 포함 일수) */}
+                <div className="flex items-center gap-2 flex-wrap text-xs text-gray-600">
+                  <span className="text-gray-500">연휴</span>
+                  <label className="flex items-center gap-1">앞
+                    <input type="number" min="0" max="10" value={newHolidayBridgeBefore}
+                      onChange={e => setNewHolidayBridgeBefore(Math.max(0, parseInt(e.target.value) || 0))}
+                      className="w-12 border border-gray-200 rounded px-1.5 py-1 text-center focus:outline-none focus:ring-1 focus:ring-blue-500" />일
+                  </label>
+                  <label className="flex items-center gap-1">뒤
+                    <input type="number" min="0" max="10" value={newHolidayBridgeAfter}
+                      onChange={e => setNewHolidayBridgeAfter(Math.max(0, parseInt(e.target.value) || 0))}
+                      className="w-12 border border-gray-200 rounded px-1.5 py-1 text-center focus:outline-none focus:ring-1 focus:ring-blue-500" />일
+                  </label>
+                  <span className="text-[10px] text-gray-400">기준일 앞/뒤를 "이름 연휴"로 포함 (앞뒤 모두 가능)</span>
                 </div>
                 {newHolidayLunar && newHolidayDate && (() => {
                   const [, lmm, ldd] = newHolidayDate.split('-').map(Number);
@@ -1192,6 +1209,7 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
                         <span className="text-sm text-red-600 font-medium">{h.name}</span>
                         {h.lunar && <span className="ml-1.5 text-[10px] text-amber-600 bg-amber-50 px-1 py-0.5 rounded">음력</span>}
                         {repeatLabel && <span className="ml-1.5 text-[10px] text-blue-500 bg-blue-50 px-1 py-0.5 rounded">{repeatLabel}</span>}
+                        {(h.bridgeBefore > 0 || h.bridgeAfter > 0) && <span className="ml-1.5 text-[10px] text-orange-600 bg-orange-50 px-1 py-0.5 rounded">연휴 {h.bridgeBefore > 0 ? `앞${h.bridgeBefore}` : ''}{h.bridgeBefore > 0 && h.bridgeAfter > 0 ? '·' : ''}{h.bridgeAfter > 0 ? `뒤${h.bridgeAfter}` : ''}</span>}
                         {h.substitute && <span className="ml-1.5 text-[10px] text-emerald-600 bg-emerald-50 px-1 py-0.5 rounded">대체공휴일</span>}
                       </div>
                       <label className="flex items-center gap-1 text-[10px] text-gray-500 cursor-pointer select-none shrink-0" title="주말이면 다음 평일을 대체공휴일로 지정">

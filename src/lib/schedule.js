@@ -622,10 +622,12 @@ export function buildHolidayMap(holidayDefs, fromYear, toYear) {
   const map = {};
   const pad = n => String(n).padStart(2, '0');
   // 모든 발생일 수집 (대체공휴일 처리를 위해 기본 공휴일을 먼저 모두 등록한 뒤 처리)
-  const occurrences = []; // { date, name, substitute }
+  const occurrences = []; // { date, name, substitute, before, after }
   holidayDefs.forEach(h => {
     const sub = !!h.substitute;
-    const push = dateStr => occurrences.push({ date: dateStr, name: h.name, substitute: sub });
+    const before = Math.max(0, parseInt(h.bridgeBefore) || 0);
+    const after = Math.max(0, parseInt(h.bridgeAfter) || 0);
+    const push = dateStr => occurrences.push({ date: dateStr, name: h.name, substitute: sub, before, after });
     if (h.lunar) {
       // 음력 공휴일: 저장된 date는 'L'+음력ISO. 양력으로 변환해 등록.
       const [ly, lmm, ldd] = h.date.replace(/^L/, '').split('-').map(Number);
@@ -671,18 +673,29 @@ export function buildHolidayMap(holidayDefs, fromYear, toYear) {
   // 1차: 기본 공휴일 등록
   occurrences.forEach(o => { map[o.date] = o.name; });
 
-  // 2차: 대체공휴일 — 발생일이 주말이면 다음 평일(비공휴일)을 휴무로 지정
+  // 2차: 연휴 — 기준일 앞/뒤 지정 일수를 "이름 연휴"로 등록 (이미 등록된 공휴일은 유지)
+  occurrences.forEach(o => {
+    if (!o.before && !o.after) return;
+    const base = new Date(o.date + 'T00:00:00');
+    for (let i = 1; i <= o.before; i++) { const ds = format(addDays(base, -i), 'yyyy-MM-dd'); if (!map[ds]) map[ds] = `${o.name} 연휴`; }
+    for (let i = 1; i <= o.after; i++) { const ds = format(addDays(base, i), 'yyyy-MM-dd'); if (!map[ds]) map[ds] = `${o.name} 연휴`; }
+  });
+
+  // 3차: 대체공휴일 — 연휴 블록(기준일+앞뒤) 중 주말인 날 수만큼 블록 이후 평일에 대체 지정
   occurrences.forEach(o => {
     if (!o.substitute) return;
     const base = new Date(o.date + 'T00:00:00');
-    const dow = base.getDay();
-    if (dow !== 0 && dow !== 6) return; // 주말이 아니면 대체 없음
-    let d = base;
-    for (let i = 0; i < 14; i++) {
+    const block = [];
+    for (let i = o.before; i >= 1; i--) block.push(addDays(base, -i));
+    block.push(base);
+    for (let i = 1; i <= o.after; i++) block.push(addDays(base, i));
+    const weekendCount = block.filter(d => d.getDay() === 0 || d.getDay() === 6).length;
+    if (weekendCount === 0) return;
+    let d = block[block.length - 1], added = 0;
+    for (let guard = 0; guard < 30 && added < weekendCount; guard++) {
       d = addDays(d, 1);
-      const wd = d.getDay();
-      const ds = format(d, 'yyyy-MM-dd');
-      if (wd !== 0 && wd !== 6 && !map[ds]) { map[ds] = `${o.name} 대체공휴일`; break; }
+      const wd = d.getDay(), ds = format(d, 'yyyy-MM-dd');
+      if (wd !== 0 && wd !== 6 && !map[ds]) { map[ds] = `${o.name} 대체공휴일`; added++; }
     }
   });
 
