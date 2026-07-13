@@ -399,8 +399,8 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     });
   }
 
-  function handleDateBlur(zone) {
-    // cascade: P1/P2/P3인 경우 이후 등급 시작일 자동 계산
+  async function handleDateBlur(zone) {
+    // cascade: P1/P2/P3인 경우 이후 등급 시작일 자동 계산 + 없는 후속 등급은 자동 생성
     if (!PROGRESSION.includes(zone.grade)) return;
     const dateStr = getZoneValue(zone, 'schedule_start');
     if (!dateStr) return;
@@ -411,24 +411,38 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
         g.zones.map(z => ({ ...z, ...(localEdits[z.id] || {}) }))
       );
       const mergedZone = { ...zone, ...(localEdits[zone.id] || {}) };
-      // computeCascadeSchedules returns [{ zoneData }]
       const cascadeResult = computeCascadeSchedules(mergedZone, allZones, holidayMap);
-      if (cascadeResult && cascadeResult.length > 0) {
-        const newEdits = { ...localEdits };
-        cascadeResult.forEach(({ zoneData: zd }) => {
-          if (zd.id && zd.id !== zone.id) {
-            newEdits[zd.id] = { ...(newEdits[zd.id] || {}), schedule_start: zd.schedule_start, schedule_overrides: {} };
-          }
-        });
-        setLocalEdits(newEdits);
-        setModalGroups(prev => prev.map(g => ({
-          ...g,
-          zones: g.zones.map(z => {
-            const hit = cascadeResult.find(({ zoneData: zd }) => zd.id === z.id);
-            return hit ? { ...z, ...hit.zoneData } : z;
-          })
-        })));
+      if (!cascadeResult || cascadeResult.length === 0) return;
+
+      const newEdits = { ...localEdits };
+      const createdZones = [];
+      for (const { zoneData: zd } of cascadeResult) {
+        if (zd.id) {
+          // 이미 있는 후속 등급 → 시작일만 갱신
+          if (zd.id !== zone.id) newEdits[zd.id] = { ...(newEdits[zd.id] || {}), schedule_start: zd.schedule_start, schedule_overrides: {} };
+        } else {
+          // 없는 후속 등급(P3/유지관리 등) → 새로 생성
+          try {
+            const saved = await upsertZone({ ...zd, sort_order: zone.sort_order ?? modalGroups.length * 1000 });
+            createdZones.push(saved);
+          } catch { /* ignore */ }
+        }
       }
+      setLocalEdits(newEdits);
+      const groupKey = `${zone.category}|||${zone.name}`;
+      setModalGroups(prev => prev.map(g => {
+        let zones = g.zones.map(z => {
+          const hit = cascadeResult.find(({ zoneData: zd }) => zd.id === z.id);
+          return hit ? { ...z, ...hit.zoneData } : z;
+        });
+        if (g.key === groupKey && createdZones.length) {
+          const ids = new Set(zones.map(z => z.id));
+          zones = [...zones, ...createdZones.filter(cz => !ids.has(cz.id))]
+            .sort((a, b) => (GRADE_PRIORITY[b.grade] || 0) - (GRADE_PRIORITY[a.grade] || 0));
+        }
+        return { ...g, zones };
+      }));
+      if (createdZones.length) window.electronAPI?.notifyDataChanged?.();
     } catch (err) {
       console.warn('cascade error:', err);
     }
