@@ -735,7 +735,10 @@ export function computeCascadeSchedules(startZone, allZones, holidayMap = {}) {
 
     const zoneData = existing
       ? { ...existing, schedule_start: nextStartStr, schedule_overrides: {} }
-      : { name: startZone.name, category: startZone.category, grade: nextGrade, clean_grade: startZone.clean_grade ?? null, schedule_start: nextStartStr, schedule_overrides: {}, monthly_weekday_rule: null };
+      : { name: startZone.name, category: startZone.category, grade: nextGrade, clean_grade: startZone.clean_grade ?? null,
+          points_float: startZone.points_float || 0, points_fall: startZone.points_fall || 0,
+          points_surface: startZone.points_surface || 0, points_particle: startZone.points_particle || 0,
+          schedule_start: nextStartStr, schedule_overrides: {}, monthly_weekday_rule: null };
 
     results.push({ zoneData });
     currentZone = zoneData;

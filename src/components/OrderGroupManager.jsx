@@ -144,6 +144,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
   const [addZoneStartDate, setAddZoneStartDate] = useState('');
   const [addZoneCurrentCount, setAddZoneCurrentCount] = useState(1);
   const [addZoneStartNum, setAddZoneStartNum] = useState(1); // 시작 회차 (입력 시작일 = N번째 측정)
+  const [addZonePts, setAddZonePts] = useState({ float: '', fall: '', surface: '', particle: '' }); // 측정포인트
   // 우클릭 컨텍스트 메뉴
   const [contextMenu, setContextMenu] = useState(null); // { x, y, groupIdx }
   const contextMenuRef = useRef(null);
@@ -399,33 +400,25 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     });
   }
 
-  async function handleDateBlur(zone) {
-    // cascade: P1/P2/P3인 경우 이후 등급 시작일 자동 계산 + 없는 후속 등급은 자동 생성
-    if (!PROGRESSION.includes(zone.grade)) return;
-    const dateStr = getZoneValue(zone, 'schedule_start');
-    if (!dateStr) return;
+  // 후속 등급 cascade: 시작일 기준으로 P2→P3→유지관리 시작일 자동 계산,
+  // 없는 후속 등급은 자동 생성(포인트·청정등급 상속). handleDateBlur/구역추가 공용.
+  async function cascadeFollowingGrades(zone) {
+    if (!PROGRESSION.includes(zone.grade) || !zone.schedule_start) return;
     try {
-      const startYear = new Date(dateStr).getFullYear();
+      const startYear = new Date(zone.schedule_start).getFullYear();
       const holidayMap = buildHolidayMap(holidayDefs, startYear, startYear + 4);
-      const allZones = modalGroups.flatMap(g =>
-        g.zones.map(z => ({ ...z, ...(localEdits[z.id] || {}) }))
-      );
-      const mergedZone = { ...zone, ...(localEdits[zone.id] || {}) };
-      const cascadeResult = computeCascadeSchedules(mergedZone, allZones, holidayMap);
+      const allZones = modalGroups.flatMap(g => g.zones.map(z => ({ ...z, ...(localEdits[z.id] || {}) })));
+      if (!allZones.some(z => z.id === zone.id)) allZones.push(zone);
+      const cascadeResult = computeCascadeSchedules(zone, allZones, holidayMap);
       if (!cascadeResult || cascadeResult.length === 0) return;
 
       const newEdits = { ...localEdits };
       const createdZones = [];
       for (const { zoneData: zd } of cascadeResult) {
         if (zd.id) {
-          // 이미 있는 후속 등급 → 시작일만 갱신
           if (zd.id !== zone.id) newEdits[zd.id] = { ...(newEdits[zd.id] || {}), schedule_start: zd.schedule_start, schedule_overrides: {} };
         } else {
-          // 없는 후속 등급(P3/유지관리 등) → 새로 생성
-          try {
-            const saved = await upsertZone({ ...zd, sort_order: zone.sort_order ?? modalGroups.length * 1000 });
-            createdZones.push(saved);
-          } catch { /* ignore */ }
+          try { createdZones.push(await upsertZone({ ...zd, sort_order: zone.sort_order ?? modalGroups.length * 1000 })); } catch { /* ignore */ }
         }
       }
       setLocalEdits(newEdits);
@@ -448,6 +441,12 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     }
   }
 
+  function handleDateBlur(zone) {
+    const dateStr = getZoneValue(zone, 'schedule_start');
+    if (!dateStr) return;
+    cascadeFollowingGrades({ ...zone, ...(localEdits[zone.id] || {}), schedule_start: dateStr });
+  }
+
   // ─── 구역 추가 ──────────────────────────────────────────────
   async function handleAddZone() {
     const name = addZoneName.trim();
@@ -460,12 +459,18 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
         schedule_start = reverseCalcStartDate(addZoneCategory, addZoneGrade, addZoneCurrentCount) || undefined;
       }
       const startNum = Math.max(1, parseInt(addZoneStartNum) || 1);
+      const combined = isCombinedCat(addZoneCategory);
+      const num = v => parseInt(v) || 0;
       const newZone = {
         name,
         category: addZoneCategory,
         grade: addZoneGrade,
         clean_grade: addZoneCleanGrade,
         sort_order: modalGroups.length * 1000,
+        points_float: num(addZonePts.float),
+        points_fall: combined ? 0 : num(addZonePts.fall),
+        points_surface: combined ? 0 : num(addZonePts.surface),
+        points_particle: combined ? 0 : num(addZonePts.particle),
         ...(schedule_start ? { schedule_start } : {}),
         ...(startNum > 1 ? { start_num: startNum } : {}),
       };
@@ -482,6 +487,8 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
         }
         return [{ name: saved.name, category: saved.category, key, zones: [saved] }, ...prev];
       });
+      // 시작일이 있으면 뒤 등급 자동 생성 (cascade)
+      if (saved.schedule_start) await cascadeFollowingGrades(saved);
       setAddZoneName('');
       setAddZoneGrade('P1');
       setAddZoneCleanGrade('A');
@@ -489,6 +496,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
       setAddZoneCurrentCount(1);
       setAddZoneStartNum(1);
       setAddZoneStartMode('direct');
+      setAddZonePts({ float: '', fall: '', surface: '', particle: '' });
       setShowAddZone(false);
     } catch (e) {
       setError('구역 추가 실패: ' + e.message);
@@ -916,6 +924,25 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                     {CLEAN_GRADES.map(g => <option key={g} value={g}>청정{g}</option>)}
                   </select>
                 </div>
+                {/* 측정포인트 수 */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-gray-500">측정포인트</span>
+                  {isCombinedCat(addZoneCategory) ? (
+                    <label className="flex items-center gap-1 text-xs text-gray-500">통합
+                      <input type="number" min="0" max="999" value={addZonePts.float}
+                        onChange={e => setAddZonePts(p => ({ ...p, float: e.target.value }))}
+                        className="w-14 text-xs border border-gray-300 rounded px-1.5 py-1 text-center focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </label>
+                  ) : (
+                    [['float', '부유균'], ['fall', '낙하균'], ['surface', '표면균'], ['particle', '부유입자']].map(([k, label]) => (
+                      <label key={k} className="flex items-center gap-1 text-xs text-gray-500">{label}
+                        <input type="number" min="0" max="999" value={addZonePts[k]}
+                          onChange={e => setAddZonePts(p => ({ ...p, [k]: e.target.value }))}
+                          className="w-12 text-xs border border-gray-300 rounded px-1 py-1 text-center focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                      </label>
+                    ))
+                  )}
+                </div>
                 {/* 시작일 입력 모드 */}
                 <div className="flex items-center gap-2 flex-wrap">
                   <div className="flex rounded border border-gray-300 overflow-hidden text-[10px] shrink-0">
@@ -963,7 +990,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                   <div className="flex-1" />
                   <button onClick={handleAddZone} disabled={!addZoneName.trim()}
                     className="text-xs px-2.5 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40">추가</button>
-                  <button onClick={() => { setShowAddZone(false); setAddZoneName(''); setAddZoneStartDate(''); setAddZoneCurrentCount(1); setAddZoneStartNum(1); setAddZoneStartMode('direct'); }}
+                  <button onClick={() => { setShowAddZone(false); setAddZoneName(''); setAddZoneStartDate(''); setAddZoneCurrentCount(1); setAddZoneStartNum(1); setAddZoneStartMode('direct'); setAddZonePts({ float: '', fall: '', surface: '', particle: '' }); }}
                     className="text-xs px-2 py-1 border border-gray-200 rounded text-gray-500 hover:bg-gray-50">취소</button>
                 </div>
               </div>
