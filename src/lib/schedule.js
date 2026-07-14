@@ -160,25 +160,26 @@ export function getScheduleSpec(category, grade) {
 }
 
 // A working day = weekday (Mon–Fri) that is not a registered holiday.
-export function isWorkingDay(date, holidayMap = {}) {
+// allowWeekend: P1(일간)처럼 주말도 허용할 때 true (공휴일/일정비우기만 회피)
+export function isWorkingDay(date, holidayMap = {}, allowWeekend = false) {
   const dow = date.getDay();
-  if (dow === 0 || dow === 6) return false;
+  if (!allowWeekend && (dow === 0 || dow === 6)) return false;
   if (holidayMap[format(date, 'yyyy-MM-dd')]) return false;
   return true;
 }
 
 // If date falls on a weekend/holiday, shift to the nearest working day within
 // the measurement cycle window — backward first (Sat→Fri→Thu...), then forward.
-function adjustToWorkingDay(date, bounds, holidayMap) {
-  if (isWorkingDay(date, holidayMap)) return date;
+function adjustToWorkingDay(date, bounds, holidayMap, allowWeekend = false) {
+  if (isWorkingDay(date, holidayMap, allowWeekend)) return date;
   let d = addDays(date, -1);
   while (d >= bounds.min) {
-    if (isWorkingDay(d, holidayMap)) return d;
+    if (isWorkingDay(d, holidayMap, allowWeekend)) return d;
     d = addDays(d, -1);
   }
   d = addDays(date, 1);
   while (d <= bounds.max) {
-    if (isWorkingDay(d, holidayMap)) return d;
+    if (isWorkingDay(d, holidayMap, allowWeekend)) return d;
     d = addDays(d, 1);
   }
   return date;
@@ -221,6 +222,8 @@ export function calcMeasurements(zone, holidayMap = {}, usedDates = null) {
     // 월 기반 측정의 이동 가능 범위(개월). 분기=3, 반기=6, 년=12, 월×간격 등.
     // 이 값만큼 이동 범위가 넓어져 해당 분기/반기 내 다른 달로도 옮길 수 있다.
     const spanMonths = MONTHS_PER_UNIT[phase.unit] ? phase.interval * MONTHS_PER_UNIT[phase.unit] : 1;
+    // P1(일간) 측정은 주말도 포함 (연속 측정이 주말에 막혀 밀리지 않도록)
+    const allowWeekend = phase.unit === 'day';
 
     // Phase transition: advance baseDate by new phase's interval after last measurement.
     // (처음 처리하는 구간은 시작일이 곧 baseDate이므로 이동하지 않는다)
@@ -248,13 +251,12 @@ export function calcMeasurements(zone, holidayMap = {}, usedDates = null) {
         scheduledDate = rawOverride;
       } else {
         const bounds = getDragBounds({ type: ptype, baseDate: effectiveBaseDate, spanMonths });
-        scheduledDate = adjustToWorkingDay(effectiveBaseDate, bounds, holidayMap);
+        scheduledDate = adjustToWorkingDay(effectiveBaseDate, bounds, holidayMap, allowWeekend);
         // 같은 구역(또는 같은 구역명)의 앞선 일정이 이미 이 날을 차지했다면,
-        // 겹치지 않도록 다음 근무일(주말·공휴일·일정비우기 제외)로 순차적으로 밀어낸다.
-        // → 첫 회차부터 자연스럽게 하루씩 뒤로 배치된다.
+        // 겹치지 않도록 다음 배치 가능일(P1은 주말 포함, 공휴일·일정비우기 제외)로 밀어낸다.
         while (used.has(format(scheduledDate, 'yyyy-MM-dd'))) {
           scheduledDate = addDays(scheduledDate, 1);
-          while (!isWorkingDay(scheduledDate, holidayMap)) scheduledDate = addDays(scheduledDate, 1);
+          while (!isWorkingDay(scheduledDate, holidayMap, allowWeekend)) scheduledDate = addDays(scheduledDate, 1);
         }
       }
       used.add(format(scheduledDate, 'yyyy-MM-dd'));
@@ -275,12 +277,8 @@ export function calcMeasurements(zone, holidayMap = {}, usedDates = null) {
         baseDate = addMonths(baseDate, phase.interval * MONTHS_PER_UNIT[phase.unit]);
       } else if (phase.unit === 'week') {
         baseDate = addDays(baseDate, phase.interval * 7);
-      } else if (phase.unit === 'day' && phase.interval === 1) {
-        // 1일 간격: 주말 건너뜀
-        let next = addDays(baseDate, 1);
-        while (next.getDay() === 0 || next.getDay() === 6) next = addDays(next, 1);
-        baseDate = next;
       } else {
+        // 일간: 주말 건너뛰지 않고 그대로 간격만큼 진행 (P1 주말 포함)
         baseDate = addDays(baseDate, phase.interval);
       }
     }

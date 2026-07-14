@@ -720,6 +720,22 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
       return;
     }
 
+    // 같은 구역의 현재 측정일(회차→날짜) 맵
+    const zoneMeas = {};
+    Object.entries(scheduleByDate).forEach(([ds, arr]) => {
+      arr.forEach(ev => { if (String(ev.zone.id) === String(zone.id)) zoneMeas[ev.measurement.num] = ds; });
+    });
+    // 같은 날 같은 구역 2개 이상 방지
+    if (Object.entries(zoneMeas).some(([n, ds]) => Number(n) !== dragData.num && ds === dateStr)) {
+      showError('같은 날짜에 같은 구역의 측정을 2개 이상 둘 수 없습니다.');
+      return;
+    }
+    // 측정 순서 역전 방지 (이전 회차보다 앞·다음 회차보다 뒤로 못 감)
+    const prevDs = zoneMeas[dragData.num - 1];
+    const nextDs = zoneMeas[dragData.num + 1];
+    if (prevDs && dateStr <= prevDs) { showError('이전 회차보다 앞선 날짜로는 옮길 수 없습니다 (측정 순서 유지).'); return; }
+    if (nextDs && dateStr >= nextDs) { showError('다음 회차보다 늦은 날짜로는 옮길 수 없습니다 (측정 순서 유지).'); return; }
+
     // 이동 대상이 그룹(폴더)에 속하고, 같은 날 같은 그룹의 다른 일정이 함께 있으면
     // 그룹 전체를 옮길지 물어본다.
     const grp = groups.find(g => (g.zoneIds || []).some(id => String(id) === String(zone.id)));
