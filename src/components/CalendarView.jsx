@@ -725,16 +725,9 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
     Object.entries(scheduleByDate).forEach(([ds, arr]) => {
       arr.forEach(ev => { if (String(ev.zone.id) === String(zone.id)) zoneMeas[ev.measurement.num] = ds; });
     });
-    // 같은 날 같은 구역 2개 이상 방지
-    if (Object.entries(zoneMeas).some(([n, ds]) => Number(n) !== dragData.num && ds === dateStr)) {
-      showError('같은 날짜에 같은 구역의 측정을 2개 이상 둘 수 없습니다.');
-      return;
-    }
-    // 측정 순서 역전 방지 (이전 회차보다 앞·다음 회차보다 뒤로 못 감)
+    // 이전 회차보다 앞선(또는 같은) 날짜로는 이동 불가 — 뒤로 밀 수는 있어도 앞 회차를 추월할 순 없다
     const prevDs = zoneMeas[dragData.num - 1];
-    const nextDs = zoneMeas[dragData.num + 1];
     if (prevDs && dateStr <= prevDs) { showError('이전 회차보다 앞선 날짜로는 옮길 수 없습니다 (측정 순서 유지).'); return; }
-    if (nextDs && dateStr >= nextDs) { showError('다음 회차보다 늦은 날짜로는 옮길 수 없습니다 (측정 순서 유지).'); return; }
 
     // 이동 대상이 그룹(폴더)에 속하고, 같은 날 같은 그룹의 다른 일정이 함께 있으면
     // 그룹 전체를 옮길지 물어본다.
@@ -763,7 +756,18 @@ export default function CalendarView({ year: initYear, onYearChange, user }) {
       }
     }
 
-    await applyMoves([{ zoneId: dragData.zoneId, num: dragData.num, date: dateStr }]);
+    await moveMeasurementWithReflow(zone, dragData.num, dateStr);
+  }
+
+  // 단일 측정 이동 — 해당 회차를 옮기고, 이후 회차의 수동이동은 초기화해
+  // 자동으로 뒤로 밀리게(순서 유지 재계산) 한다. (시작일 옮길 때와 유사)
+  async function moveMeasurementWithReflow(zone, num, dateStr) {
+    const ov = { ...(zone.schedule_overrides || {}) };
+    ov[String(num)] = dateStr;
+    Object.keys(ov).forEach(k => { if (Number(k) > num) delete ov[k]; });
+    const updated = { ...zone, schedule_overrides: ov };
+    await upsertZone(updated);
+    setZones(prev => prev.map(z => z.id === zone.id ? updated : z));
   }
 
   // 여러 측정을 새 날짜로 이동 — 구역별로 override를 합쳐 한 번에 저장.

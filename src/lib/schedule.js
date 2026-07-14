@@ -160,26 +160,31 @@ export function getScheduleSpec(category, grade) {
 }
 
 // A working day = weekday (Mon–Fri) that is not a registered holiday.
-// allowWeekend: P1(일간)처럼 주말도 허용할 때 true (공휴일/일정비우기만 회피)
-export function isWorkingDay(date, holidayMap = {}, allowWeekend = false) {
+// allowWeekend: P1(일간)처럼 주말 허용 / allowHoliday: 공휴일 허용.
+// '일정비우기'(수동 차단)는 항상 회피한다.
+export function isWorkingDay(date, holidayMap = {}, allowWeekend = false, allowHoliday = false) {
   const dow = date.getDay();
   if (!allowWeekend && (dow === 0 || dow === 6)) return false;
-  if (holidayMap[format(date, 'yyyy-MM-dd')]) return false;
+  const h = holidayMap[format(date, 'yyyy-MM-dd')];
+  if (h) {
+    if (h === '일정비우기') return false;
+    if (!allowHoliday) return false;
+  }
   return true;
 }
 
 // If date falls on a weekend/holiday, shift to the nearest working day within
 // the measurement cycle window — backward first (Sat→Fri→Thu...), then forward.
-function adjustToWorkingDay(date, bounds, holidayMap, allowWeekend = false) {
-  if (isWorkingDay(date, holidayMap, allowWeekend)) return date;
+function adjustToWorkingDay(date, bounds, holidayMap, allowWeekend = false, allowHoliday = false) {
+  if (isWorkingDay(date, holidayMap, allowWeekend, allowHoliday)) return date;
   let d = addDays(date, -1);
   while (d >= bounds.min) {
-    if (isWorkingDay(d, holidayMap, allowWeekend)) return d;
+    if (isWorkingDay(d, holidayMap, allowWeekend, allowHoliday)) return d;
     d = addDays(d, -1);
   }
   d = addDays(date, 1);
   while (d <= bounds.max) {
-    if (isWorkingDay(d, holidayMap, allowWeekend)) return d;
+    if (isWorkingDay(d, holidayMap, allowWeekend, allowHoliday)) return d;
     d = addDays(d, 1);
   }
   return date;
@@ -215,6 +220,7 @@ export function calcMeasurements(zone, holidayMap = {}, usedDates = null) {
   let num = startNum;
   let baseDate = new Date(zone.schedule_start + 'T00:00:00');
   let lastBaseDate = null;
+  let prevScheduled = null; // 직전 회차의 실제 배치일 (순서 유지용)
 
   for (let phaseIdx = startPhaseIdx; phaseIdx < normSpec.length; phaseIdx++) {
     const phase = normSpec[phaseIdx];
@@ -222,8 +228,9 @@ export function calcMeasurements(zone, holidayMap = {}, usedDates = null) {
     // 월 기반 측정의 이동 가능 범위(개월). 분기=3, 반기=6, 년=12, 월×간격 등.
     // 이 값만큼 이동 범위가 넓어져 해당 분기/반기 내 다른 달로도 옮길 수 있다.
     const spanMonths = MONTHS_PER_UNIT[phase.unit] ? phase.interval * MONTHS_PER_UNIT[phase.unit] : 1;
-    // P1(일간) 측정은 주말도 포함 (연속 측정이 주말에 막혀 밀리지 않도록)
-    const allowWeekend = phase.unit === 'day';
+    // P1(일간) 측정은 주말·공휴일도 포함 (연속 측정이 막혀 밀리지 않도록; 일정비우기만 회피)
+    const dailyMode = phase.unit === 'day';
+    const allowWeekend = dailyMode, allowHoliday = dailyMode;
 
     // Phase transition: advance baseDate by new phase's interval after last measurement.
     // (처음 처리하는 구간은 시작일이 곧 baseDate이므로 이동하지 않는다)
@@ -251,15 +258,20 @@ export function calcMeasurements(zone, holidayMap = {}, usedDates = null) {
         scheduledDate = rawOverride;
       } else {
         const bounds = getDragBounds({ type: ptype, baseDate: effectiveBaseDate, spanMonths });
-        scheduledDate = adjustToWorkingDay(effectiveBaseDate, bounds, holidayMap, allowWeekend);
-        // 같은 구역(또는 같은 구역명)의 앞선 일정이 이미 이 날을 차지했다면,
-        // 겹치지 않도록 다음 배치 가능일(P1은 주말 포함, 공휴일·일정비우기 제외)로 밀어낸다.
+        scheduledDate = adjustToWorkingDay(effectiveBaseDate, bounds, holidayMap, allowWeekend, allowHoliday);
+        // 순서 유지: 앞 회차보다 늦어야 한다 (앞 회차가 뒤로 밀리면 함께 밀림)
+        if (prevScheduled && scheduledDate <= prevScheduled) {
+          scheduledDate = addDays(prevScheduled, 1);
+          while (!isWorkingDay(scheduledDate, holidayMap, allowWeekend, allowHoliday)) scheduledDate = addDays(scheduledDate, 1);
+        }
+        // 같은 구역의 앞선 일정이 이미 이 날을 차지했다면 다음 배치 가능일로 밀어낸다.
         while (used.has(format(scheduledDate, 'yyyy-MM-dd'))) {
           scheduledDate = addDays(scheduledDate, 1);
-          while (!isWorkingDay(scheduledDate, holidayMap, allowWeekend)) scheduledDate = addDays(scheduledDate, 1);
+          while (!isWorkingDay(scheduledDate, holidayMap, allowWeekend, allowHoliday)) scheduledDate = addDays(scheduledDate, 1);
         }
       }
       used.add(format(scheduledDate, 'yyyy-MM-dd'));
+      prevScheduled = scheduledDate;
 
       lastBaseDate = new Date(baseDate);
       measurements.push({
