@@ -10,9 +10,21 @@ const REPEAT_OPTIONS = [
   { value: 'daily', label: '매일' },
   { value: 'weekly', label: '매주' },
   { value: 'monthly', label: '매월' },
+  { value: 'quarter', label: '분기' },
+  { value: 'half', label: '반기' },
   { value: 'yearly', label: '매년' },
 ];
-const REPEAT_LABEL = { none: '', daily: '매일', weekly: '매주', monthly: '매월', yearly: '매년' };
+const REPEAT_LABEL = { none: '', daily: '매일', weekly: '매주', monthly: '매월', quarter: '분기', half: '반기', yearly: '매년' };
+const NTH_LABEL = ['', '첫째', '둘째', '셋째', '넷째', '마지막'];
+
+function nthWeekdayOfMonth(year, month0, nth, dow) {
+  const firstDow = new Date(year, month0, 1).getDay();
+  let day = 1 + ((dow - firstDow + 7) % 7);
+  const daysInMonth = new Date(year, month0 + 1, 0).getDate();
+  if (nth === 5) { while (day + 7 <= daysInMonth) day += 7; }
+  else { day += (nth - 1) * 7; if (day > daysInMonth) return null; }
+  return day;
+}
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 function fmtDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
@@ -39,28 +51,52 @@ function rangeDates(view) {
   return [t]; // day
 }
 
-// todo가 특정 날짜에 발생하는지 (반복주기 반영) — main.js와 동일 로직
+// todo가 특정 날짜에 발생하는지 (일정 반복 반영) — main.js와 동일 로직.
+// 반복 없음 + 마감기한이면 마감까지 매일 표시.
 function todoOccursOn(todo, dateStr) {
   if (!todo.date || dateStr < todo.date) return false;
   const repeat = todo.repeat || 'none';
-  if (repeat === 'none') return dateStr === todo.date;
+  if (repeat === 'none') {
+    if (todo.due) return dateStr <= todo.due;
+    return dateStr === todo.date;
+  }
+  if (todo.due && dateStr > todo.due) return false;
   const base = new Date(todo.date + 'T00:00:00');
   const d = new Date(dateStr + 'T00:00:00');
   const interval = Math.max(1, todo.interval || 1);
   const dayDiff = Math.round((d - base) / 86400000);
   if (repeat === 'daily') return dayDiff >= 0 && dayDiff % interval === 0;
   if (repeat === 'weekly') return dayDiff >= 0 && dayDiff % (7 * interval) === 0;
-  if (repeat === 'monthly') {
-    if (d.getDate() !== base.getDate()) return false;
-    const m = (d.getFullYear() - base.getFullYear()) * 12 + (d.getMonth() - base.getMonth());
-    return m >= 0 && m % interval === 0;
-  }
-  if (repeat === 'yearly') {
-    if (d.getDate() !== base.getDate() || d.getMonth() !== base.getMonth()) return false;
-    const y = d.getFullYear() - base.getFullYear();
-    return y >= 0 && y % interval === 0;
+  const per = repeat === 'monthly' ? 1 : repeat === 'quarter' ? 3 : repeat === 'half' ? 6 : repeat === 'yearly' ? 12 : 0;
+  if (per > 0) {
+    const step = per * interval;
+    const months = (d.getFullYear() - base.getFullYear()) * 12 + (d.getMonth() - base.getMonth());
+    if (months < 0 || months % step !== 0) return false;
+    if (repeat === 'monthly' && todo.monthlyMode === 'nthWeekday') {
+      const day = nthWeekdayOfMonth(d.getFullYear(), d.getMonth(), todo.nth || 1, todo.dow || 0);
+      return day != null && d.getDate() === day;
+    }
+    const dom = (repeat === 'monthly' && todo.monthlyMode === 'day' && todo.monthlyDay) ? todo.monthlyDay : base.getDate();
+    return d.getDate() === dom;
   }
   return false;
+}
+
+function repeatText(todo) {
+  const r = todo.repeat || 'none';
+  if (r === 'none') return todo.due ? '마감까지 매일' : '';
+  const iv = todo.interval > 1 ? todo.interval : '';
+  if (r === 'monthly' && todo.monthlyMode === 'nthWeekday') return `${iv}매월 ${NTH_LABEL[todo.nth || 1]} ${DOW[todo.dow || 0]}요일`;
+  if (r === 'monthly' && todo.monthlyMode === 'day') return `${iv}매월 ${todo.monthlyDay || ''}일`;
+  return iv + REPEAT_LABEL[r];
+}
+function alarmText(todo) {
+  const a = todo.alarm || (todo.alarmEnabled && todo.time ? { enabled: true, mode: 'atTime', time: todo.time, base: 'each' } : null);
+  if (!a || !a.enabled) return null;
+  const baseKr = a.base === 'start' ? '시작일' : a.base === 'end' ? '종료일' : '일정마다';
+  if (a.mode === 'minBefore') return `${baseKr} ${a.minBefore}분 전`;
+  if (a.mode === 'dayBefore') return `${baseKr} ${a.dayBefore}일 전 ${a.time}`;
+  return `${baseKr} ${a.time}`;
 }
 
 function dDay(dateStr) {
@@ -106,7 +142,13 @@ export default function TodoToday() {
   const [todos, setTodos] = useState([]);
   const [showTodoForm, setShowTodoForm] = useState(false);
   const [editingTodo, setEditingTodo] = useState(null); // 편집중 todo id
-  const blankForm = { title: '', date: todayStr(), due: '', time: '', repeat: 'none', interval: 1, alarmEnabled: false, note: '' };
+  const blankForm = {
+    title: '', date: todayStr(), due: '', note: '',
+    // 일정 반복
+    repeat: 'none', interval: 1, monthlyMode: 'day', monthlyDay: new Date().getDate(), nth: 1, dow: new Date().getDay(),
+    // 알람
+    alarmEnabled: false, alarmMode: 'atTime', alarmTime: '09:00', alarmMinBefore: 30, alarmDayBefore: 1, alarmBase: 'each',
+  };
   const [todoForm, setTodoForm] = useState(blankForm);
   const [todoView, setTodoView] = useState('day'); // day | week | month
 
@@ -130,16 +172,26 @@ export default function TodoToday() {
   async function saveTodo() {
     const title = todoForm.title.trim();
     if (!title) return;
+    const f = todoForm;
+    const alarm = f.alarmEnabled && f.alarmTime ? {
+      enabled: true, mode: f.alarmMode || 'atTime', time: f.alarmTime,
+      minBefore: Math.max(0, parseInt(f.alarmMinBefore) || 0),
+      dayBefore: Math.max(0, parseInt(f.alarmDayBefore) || 0),
+      base: f.alarmBase || 'each',
+    } : { enabled: false };
     const payload = {
       ...(editingTodo ? { ...todos.find(t => t.id === editingTodo) } : {}),
       title,
-      date: todoForm.date || todayStr(),
-      due: todoForm.due || '',
-      time: todoForm.time || '',
-      repeat: todoForm.repeat || 'none',
-      interval: Math.max(1, parseInt(todoForm.interval) || 1),
-      alarmEnabled: !!todoForm.alarmEnabled && !!todoForm.time,
-      note: todoForm.note || '',
+      date: f.date || todayStr(),
+      due: f.due || '',
+      repeat: f.repeat || 'none',
+      interval: Math.max(1, parseInt(f.interval) || 1),
+      monthlyMode: f.monthlyMode || 'day',
+      monthlyDay: Math.max(1, Math.min(31, parseInt(f.monthlyDay) || 1)),
+      nth: f.nth || 1, dow: f.dow ?? 0,
+      alarm,
+      alarmEnabled: alarm.enabled, time: alarm.enabled ? alarm.time : '', // 구형 호환
+      note: f.note || '',
     };
     const saved = await upsertTodo(payload);
     setTodos(prev => {
@@ -166,7 +218,15 @@ export default function TodoToday() {
 
   function startEditTodo(t) {
     setEditingTodo(t.id);
-    setTodoForm({ title: t.title, date: t.date || todayStr(), due: t.due || '', time: t.time || '', repeat: t.repeat || 'none', interval: t.interval || 1, alarmEnabled: !!t.alarmEnabled, note: t.note || '' });
+    const a = t.alarm || (t.alarmEnabled && t.time ? { enabled: true, mode: 'atTime', time: t.time, base: 'each' } : null);
+    setTodoForm({
+      title: t.title, date: t.date || todayStr(), due: t.due || '', note: t.note || '',
+      repeat: t.repeat || 'none', interval: t.interval || 1,
+      monthlyMode: t.monthlyMode || 'day', monthlyDay: t.monthlyDay || new Date(t.date + 'T00:00:00').getDate() || 1,
+      nth: t.nth || 1, dow: t.dow ?? (t.date ? new Date(t.date + 'T00:00:00').getDay() : 0),
+      alarmEnabled: !!(a && a.enabled), alarmMode: a?.mode || 'atTime', alarmTime: a?.time || '09:00',
+      alarmMinBefore: a?.minBefore ?? 30, alarmDayBefore: a?.dayBefore ?? 1, alarmBase: a?.base || 'each',
+    });
     setShowTodoForm(true);
   }
 
@@ -246,28 +306,93 @@ export default function TodoToday() {
               <input type="date" value={todoForm.due} onChange={e => setTodoForm(f => ({ ...f, due: e.target.value }))}
                 className="border border-gray-300 rounded px-2 py-1 text-sm" />
             </label>
-            <label className="flex items-center gap-1.5 text-xs text-gray-600">
-              반복
-              <select value={todoForm.repeat} onChange={e => setTodoForm(f => ({ ...f, repeat: e.target.value }))}
-                className="border border-gray-300 rounded px-2 py-1 text-sm bg-white">
-                {REPEAT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
-            </label>
+          </div>
+
+          {/* 일정 반복 */}
+          <div className="flex flex-wrap items-center gap-2 bg-gray-50 rounded-lg px-3 py-2">
+            <span className="text-xs font-semibold text-gray-500">🔁 일정 반복</span>
+            <select value={todoForm.repeat} onChange={e => setTodoForm(f => ({ ...f, repeat: e.target.value }))}
+              className="border border-gray-300 rounded px-2 py-1 text-sm bg-white">
+              {REPEAT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            {todoForm.repeat === 'none' && todoForm.due && <span className="text-[11px] text-gray-400">마감기한까지 매일 표시</span>}
             {todoForm.repeat !== 'none' && (
-              <label className="flex items-center gap-1 text-xs text-gray-600">
-                간격
+              <label className="flex items-center gap-1 text-xs text-gray-600">간격
                 <input type="number" min="1" max="365" value={todoForm.interval}
                   onChange={e => setTodoForm(f => ({ ...f, interval: Math.max(1, parseInt(e.target.value) || 1) }))}
-                  className="w-14 border border-gray-300 rounded px-1.5 py-1 text-sm text-center" />
-                {todoForm.repeat === 'daily' ? '일' : todoForm.repeat === 'weekly' ? '주' : todoForm.repeat === 'monthly' ? '개월' : '년'}마다
+                  className="w-12 border border-gray-300 rounded px-1 py-1 text-sm text-center" />
+                {todoForm.repeat === 'daily' ? '일' : todoForm.repeat === 'weekly' ? '주' : todoForm.repeat === 'monthly' ? '개월' : todoForm.repeat === 'quarter' ? '분기' : todoForm.repeat === 'half' ? '반기' : '년'}마다
               </label>
             )}
-            <label className="flex items-center gap-1.5 text-xs text-gray-600">
+            {todoForm.repeat === 'monthly' && (
+              <>
+                <select value={todoForm.monthlyMode} onChange={e => setTodoForm(f => ({ ...f, monthlyMode: e.target.value }))}
+                  className="border border-gray-300 rounded px-2 py-1 text-sm bg-white">
+                  <option value="day">며칠</option>
+                  <option value="nthWeekday">몇째 주 요일</option>
+                </select>
+                {todoForm.monthlyMode === 'day' ? (
+                  <label className="flex items-center gap-1 text-xs text-gray-600">
+                    <input type="number" min="1" max="31" value={todoForm.monthlyDay}
+                      onChange={e => setTodoForm(f => ({ ...f, monthlyDay: Math.max(1, Math.min(31, parseInt(e.target.value) || 1)) }))}
+                      className="w-12 border border-gray-300 rounded px-1 py-1 text-sm text-center" />일
+                  </label>
+                ) : (
+                  <>
+                    <select value={todoForm.nth} onChange={e => setTodoForm(f => ({ ...f, nth: parseInt(e.target.value) }))}
+                      className="border border-gray-300 rounded px-2 py-1 text-sm bg-white">
+                      {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{NTH_LABEL[n]}</option>)}
+                    </select>
+                    <select value={todoForm.dow} onChange={e => setTodoForm(f => ({ ...f, dow: parseInt(e.target.value) }))}
+                      className="border border-gray-300 rounded px-2 py-1 text-sm bg-white">
+                      {DOW.map((d, i) => <option key={i} value={i}>{d}요일</option>)}
+                    </select>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* 알람 (일정 반복과 별도) */}
+          <div className="flex flex-wrap items-center gap-2 bg-orange-50 rounded-lg px-3 py-2">
+            <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-600">
               <input type="checkbox" checked={todoForm.alarmEnabled} onChange={e => setTodoForm(f => ({ ...f, alarmEnabled: e.target.checked }))} />
               ⏰ 알람
-              <input type="time" value={todoForm.time} onChange={e => setTodoForm(f => ({ ...f, time: e.target.value }))}
-                className="border border-gray-300 rounded px-2 py-1 text-sm" />
             </label>
+            {todoForm.alarmEnabled && (
+              <>
+                <select value={todoForm.alarmBase} onChange={e => setTodoForm(f => ({ ...f, alarmBase: e.target.value }))}
+                  className="border border-gray-300 rounded px-2 py-1 text-sm bg-white" title="알람 기준">
+                  <option value="each">일정마다</option>
+                  <option value="start">시작일 기준</option>
+                  <option value="end">종료일 기준</option>
+                </select>
+                <select value={todoForm.alarmMode} onChange={e => setTodoForm(f => ({ ...f, alarmMode: e.target.value }))}
+                  className="border border-gray-300 rounded px-2 py-1 text-sm bg-white">
+                  <option value="atTime">일정 시각에</option>
+                  <option value="minBefore">몇 분 전</option>
+                  <option value="dayBefore">며칠 전</option>
+                </select>
+                {todoForm.alarmMode === 'minBefore' && (
+                  <label className="flex items-center gap-1 text-xs text-gray-600">
+                    <input type="number" min="0" max="1440" value={todoForm.alarmMinBefore}
+                      onChange={e => setTodoForm(f => ({ ...f, alarmMinBefore: Math.max(0, parseInt(e.target.value) || 0) }))}
+                      className="w-14 border border-gray-300 rounded px-1 py-1 text-sm text-center" />분 전
+                  </label>
+                )}
+                {todoForm.alarmMode === 'dayBefore' && (
+                  <label className="flex items-center gap-1 text-xs text-gray-600">
+                    <input type="number" min="0" max="60" value={todoForm.alarmDayBefore}
+                      onChange={e => setTodoForm(f => ({ ...f, alarmDayBefore: Math.max(0, parseInt(e.target.value) || 0) }))}
+                      className="w-12 border border-gray-300 rounded px-1 py-1 text-sm text-center" />일 전
+                  </label>
+                )}
+                <label className="flex items-center gap-1 text-xs text-gray-600">시각
+                  <input type="time" value={todoForm.alarmTime} onChange={e => setTodoForm(f => ({ ...f, alarmTime: e.target.value }))}
+                    className="border border-gray-300 rounded px-2 py-1 text-sm" />
+                </label>
+              </>
+            )}
           </div>
           <input
             className="w-full border border-gray-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -343,13 +468,11 @@ export default function TodoToday() {
                             {dd < 0 ? `기한초과 ${-dd}일` : dd === 0 ? '오늘마감' : `D-${dd}`}
                           </span>
                         )}
-                        {t.repeat && t.repeat !== 'none' && (
-                          <span className="text-[10px] px-1.5 py-0.5 bg-purple-100 text-purple-600 rounded">
-                            {(t.interval > 1 ? t.interval : '') + REPEAT_LABEL[t.repeat]}
-                          </span>
+                        {repeatText(t) && (
+                          <span className="text-[10px] px-1.5 py-0.5 bg-purple-100 text-purple-600 rounded">🔁 {repeatText(t)}</span>
                         )}
-                        {t.alarmEnabled && t.time && (
-                          <span className="text-[10px] px-1.5 py-0.5 bg-orange-100 text-orange-600 rounded">⏰ {t.time}</span>
+                        {alarmText(t) && (
+                          <span className="text-[10px] px-1.5 py-0.5 bg-orange-100 text-orange-600 rounded">⏰ {alarmText(t)}</span>
                         )}
                         <button onClick={e => { e.stopPropagation(); startEditTodo(t); }} className="text-gray-300 hover:text-blue-500 text-xs px-1">✎</button>
                         <button onClick={e => { e.stopPropagation(); handleDeleteTodo(t.id); }} className="text-gray-300 hover:text-red-500 text-xs px-1">✕</button>

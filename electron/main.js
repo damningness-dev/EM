@@ -459,29 +459,93 @@ async function resolveEditRequest(commentId) {
 // ─── 할일(반복 일정) 알람 ──────────────────────────────────────────────────────
 
 function pad2(n) { return String(n).padStart(2, '0'); }
+function ymd(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+function hm(d) { return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
+function addDaysStr(dateStr, n) { const d = new Date(dateStr + 'T00:00:00'); d.setDate(d.getDate() + n); return ymd(d); }
+function minusMinutes(hmStr, mins) {
+  const [h, m] = (hmStr || '00:00').split(':').map(Number);
+  let t = h * 60 + m - (mins || 0);
+  if (t < 0) t = 0;
+  return `${pad2(Math.floor(t / 60))}:${pad2(t % 60)}`;
+}
+// 해당 월의 n번째 요일(1~4, 5=마지막) 날짜(day) 반환
+function nthWeekdayOfMonth(year, month0, nth, dow) {
+  const firstDow = new Date(year, month0, 1).getDay();
+  let day = 1 + ((dow - firstDow + 7) % 7);
+  const daysInMonth = new Date(year, month0 + 1, 0).getDate();
+  if (nth === 5) { while (day + 7 <= daysInMonth) day += 7; }
+  else { day += (nth - 1) * 7; if (day > daysInMonth) return null; }
+  return day;
+}
 
-// todo가 특정 날짜에 발생하는지 (반복주기 반영)
+// todo가 특정 날짜에 발생하는지 (일정 반복 반영). 반복 없음 + 마감기한이면 마감까지 매일.
 function todoOccursOn(todo, dateStr) {
   if (!todo.date || dateStr < todo.date) return false;
   const repeat = todo.repeat || 'none';
-  if (repeat === 'none') return dateStr === todo.date;
+  if (repeat === 'none') {
+    if (todo.due) return dateStr <= todo.due; // 마감까지 매일 표시
+    return dateStr === todo.date;
+  }
+  if (todo.due && dateStr > todo.due) return false; // 마감 이후 중단
   const base = new Date(todo.date + 'T00:00:00');
   const d = new Date(dateStr + 'T00:00:00');
   const interval = Math.max(1, todo.interval || 1);
   const dayDiff = Math.round((d - base) / 86400000);
   if (repeat === 'daily') return dayDiff >= 0 && dayDiff % interval === 0;
   if (repeat === 'weekly') return dayDiff >= 0 && dayDiff % (7 * interval) === 0;
-  if (repeat === 'monthly') {
-    if (d.getDate() !== base.getDate()) return false;
-    const m = (d.getFullYear() - base.getFullYear()) * 12 + (d.getMonth() - base.getMonth());
-    return m >= 0 && m % interval === 0;
-  }
-  if (repeat === 'yearly') {
-    if (d.getDate() !== base.getDate() || d.getMonth() !== base.getMonth()) return false;
-    const y = d.getFullYear() - base.getFullYear();
-    return y >= 0 && y % interval === 0;
+  // 월/분기/반기/년
+  const per = repeat === 'monthly' ? 1 : repeat === 'quarter' ? 3 : repeat === 'half' ? 6 : repeat === 'yearly' ? 12 : 0;
+  if (per > 0) {
+    const step = per * interval;
+    const months = (d.getFullYear() - base.getFullYear()) * 12 + (d.getMonth() - base.getMonth());
+    if (months < 0 || months % step !== 0) return false;
+    if (repeat === 'monthly' && todo.monthlyMode === 'nthWeekday') {
+      const day = nthWeekdayOfMonth(d.getFullYear(), d.getMonth(), todo.nth || 1, todo.dow || 0);
+      return day != null && d.getDate() === day;
+    }
+    const dom = (repeat === 'monthly' && todo.monthlyMode === 'day' && todo.monthlyDay) ? todo.monthlyDay : base.getDate();
+    return d.getDate() === dom;
   }
   return false;
+}
+
+// 알람 설정 정규화 (구형 alarmEnabled/time → 신형 alarm 객체)
+function todoAlarm(todo) {
+  if (todo.alarm && typeof todo.alarm === 'object') return todo.alarm;
+  if (todo.alarmEnabled && todo.time) return { enabled: true, mode: 'atTime', time: todo.time, base: 'each' };
+  return null;
+}
+
+// 지금(now) 이 todo의 알람을 울려야 하면 { key, occDay } 반환, 아니면 null.
+function todoAlarmDueNow(todo, now) {
+  const a = todoAlarm(todo);
+  if (!a || !a.enabled || !a.time) return null;
+  const todayStr = ymd(now);
+  const nowHM = hm(now);
+  const mode = a.mode || 'atTime';
+  const base = a.base || 'each';
+
+  // 이 알람이 겨냥하는 '기준일'(occDay) 후보를 구한다.
+  let occDays = [];
+  if (base === 'start') occDays = todo.date ? [todo.date] : [];
+  else if (base === 'end') occDays = todo.due ? [todo.due] : [];
+  else { // each: 오늘 기준으로 알람 대상 occurrence를 역산
+    if (mode === 'dayBefore') { const occ = addDaysStr(todayStr, a.dayBefore || 0); if (todoOccursOn(todo, occ)) occDays = [occ]; }
+    else if (todoOccursOn(todo, todayStr)) occDays = [todayStr];
+  }
+  for (const occDay of occDays) {
+    // 알람이 실제로 울리는 날짜/시각
+    let alarmDay = occDay;
+    if (mode === 'dayBefore') alarmDay = addDaysStr(occDay, -(a.dayBefore || 0));
+    if (alarmDay !== todayStr) continue;
+    const fireHM = mode === 'minBefore' ? minusMinutes(a.time, a.minBefore || 0) : a.time;
+    if (nowHM < fireHM) continue;
+    if ((todo.completedDates || []).includes(occDay)) continue;
+    const key = `${todo.id}_${occDay}_${mode}`;
+    if (firedAlarms.has(key)) continue;
+    return { key, occDay };
+  }
+  return null;
 }
 
 // 데스크톱 알람 팝업 창 — 항상 위에 뜨는 별도 창(윈도우 알림 설정과 무관하게 확실히 표시)
@@ -563,16 +627,10 @@ function checkAlarms() {
   const todos = data.todos || [];
   if (!todos.length) return;
   const now = new Date();
-  const todayStr = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
-  const nowHM = `${pad2(now.getHours())}:${pad2(now.getMinutes())}`;
   todos.forEach(t => {
-    if (!t.alarmEnabled || !t.time) return;
-    if (!todoOccursOn(t, todayStr)) return;
-    if ((t.completedDates || []).includes(todayStr)) return;
-    if (nowHM < t.time) return;
-    const key = `${t.id}_${todayStr}`;
-    if (firedAlarms.has(key)) return;
-    firedAlarms.add(key);
+    const fire = todoAlarmDueNow(t, now);
+    if (!fire) return;
+    firedAlarms.add(fire.key);
     // 1) 데스크톱 팝업 창 (항상 위) — 한 번에 하나씩, 확인 전까지 유지 + 대기열
     enqueueAlarm(t);
     // 2) 작업표시줄 깜빡임
