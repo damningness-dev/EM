@@ -290,6 +290,13 @@ export default function Calibration() {
                           <td className={`px-4 py-3 text-center font-semibold text-sm ${getDDayColor(item.dday)}`}>{getDDayLabel(item.dday)}</td>
                           <td className="px-4 py-3 text-center text-xs text-gray-400">{item.note}</td>
                           <td className="px-4 py-3 text-center whitespace-nowrap">
+                            {(() => {
+                              const lf = latestHistory(item);
+                              return lf?.filePath ? (
+                                <button onClick={async () => { const r = await openCalibFile(lf.filePath); if (r && !r.ok) alert('열기 실패: ' + (r.error || '')); }}
+                                  className="px-1.5 py-1 rounded text-sm mr-1 hover:bg-emerald-50" title={`최근 성적서 열기: ${lf.fileName || ''}`}>📄</button>
+                              ) : null;
+                            })()}
                             <button onClick={() => { setEditingId(item.id); setForm({ ...item }); }} className="px-2 py-1 text-blue-600 hover:bg-blue-50 rounded text-xs mr-1">수정</button>
                             <button onClick={() => handleDelete(item.id)} className="px-2 py-1 text-red-500 hover:bg-red-50 rounded text-xs">삭제</button>
                           </td>
