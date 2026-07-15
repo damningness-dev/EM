@@ -35,9 +35,9 @@ function dueDday(dueStr) {
   const t = new Date(); t.setHours(0, 0, 0, 0);
   return Math.round((due - t) / 86400000);
 }
-// 뷰(일간/주간/월간)에 표시할 날짜 배열
-function rangeDates(view) {
-  const t = new Date(); t.setHours(0, 0, 0, 0);
+// 뷰(일간/주간/월간)에 표시할 날짜 배열 (anchor 날짜를 기준으로 계산)
+function rangeDates(view, anchor) {
+  const t = new Date(anchor || new Date()); t.setHours(0, 0, 0, 0);
   if (view === 'week') {
     const dow = (t.getDay() + 6) % 7; // 월=0
     const start = new Date(t); start.setDate(t.getDate() - dow);
@@ -151,6 +151,20 @@ export default function TodoToday() {
   };
   const [todoForm, setTodoForm] = useState(blankForm);
   const [todoView, setTodoView] = useState('day'); // day | week | month
+  const [todoAnchor, setTodoAnchor] = useState(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; });
+  function shiftTodoAnchor(dir) {
+    setTodoAnchor(prev => {
+      const d = new Date(prev);
+      if (todoView === 'week') d.setDate(d.getDate() + dir * 7);
+      else if (todoView === 'month') d.setMonth(d.getMonth() + dir);
+      else d.setDate(d.getDate() + dir);
+      return d;
+    });
+  }
+  function goTodoToday() {
+    const d = new Date(); d.setHours(0, 0, 0, 0);
+    setTodoAnchor(d);
+  }
 
   useEffect(() => {
     Promise.all([
@@ -413,8 +427,19 @@ export default function TodoToday() {
 
       {/* 할일 목록 — 일간/주간/월간 (더블클릭으로 완료) */}
       {(() => {
-        const dates = rangeDates(todoView);         // 이 뷰에 표시할 날짜 목록
+        const dates = rangeDates(todoView, todoAnchor); // 이 뷰에 표시할 날짜 목록
         const rangeSet = dates.map(d => fmtDate(d));
+        const isTodayPeriod = rangeSet.includes(todayStr());
+        let periodLabel;
+        if (todoView === 'week') {
+          const s = dates[0], e = dates[dates.length - 1];
+          periodLabel = `${s.getMonth() + 1}/${s.getDate()} ~ ${e.getMonth() + 1}/${e.getDate()}`;
+        } else if (todoView === 'month') {
+          periodLabel = `${dates[0].getFullYear()}년 ${dates[0].getMonth() + 1}월`;
+        } else {
+          const d = dates[0];
+          periodLabel = `${d.getMonth() + 1}/${d.getDate()} (${DOW[d.getDay()]})`;
+        }
         // 날짜별 발생 할일 그룹
         const groups = dates.map(d => {
           const ds = fmtDate(d);
@@ -424,12 +449,23 @@ export default function TodoToday() {
         }).filter(g => g.items.length > 0);
         const totalCnt = groups.reduce((s, g) => s + g.items.length, 0);
         const doneCnt = groups.reduce((s, g) => s + g.items.filter(t => (t.completedDates || []).includes(g.ds)).length, 0);
-        const viewLabel = { day: '오늘', week: '이번 주', month: '이번 달' }[todoView];
         return (
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-100 bg-gray-50">
+            <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-100 bg-gray-50 flex-wrap">
               <span className="text-base">📝</span>
-              <span className="font-semibold text-gray-800 text-sm">할일 · {viewLabel}</span>
+              <span className="font-semibold text-gray-800 text-sm">
+                할일 · {periodLabel}
+                {isTodayPeriod && <span className="text-blue-500 font-normal text-xs ml-1">· 지금</span>}
+              </span>
+              <div className="flex items-center gap-0.5">
+                <button onClick={() => shiftTodoAnchor(-1)} title="이전"
+                  className="w-5 h-5 flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded text-xs">◀</button>
+                {!isTodayPeriod && (
+                  <button onClick={goTodoToday} className="px-1.5 py-0.5 text-[11px] text-blue-600 hover:underline">오늘</button>
+                )}
+                <button onClick={() => shiftTodoAnchor(1)} title="다음"
+                  className="w-5 h-5 flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded text-xs">▶</button>
+              </div>
               <div className="flex rounded-lg border border-gray-200 overflow-hidden ml-2 text-xs">
                 {[['day', '일간'], ['week', '주간'], ['month', '월간']].map(([v, label]) => (
                   <button key={v} onClick={() => setTodoView(v)}
@@ -439,7 +475,7 @@ export default function TodoToday() {
               {totalCnt > 0 && <span className={`ml-auto text-sm font-bold ${doneCnt === totalCnt ? 'text-green-600' : 'text-blue-600'}`}>{doneCnt}/{totalCnt}</span>}
             </div>
             {groups.length === 0 ? (
-              <div className="px-5 py-4 text-sm text-gray-400">{viewLabel} 예정된 할일이 없습니다. "+ 할일 추가"로 등록하세요.</div>
+              <div className="px-5 py-4 text-sm text-gray-400">{periodLabel} 예정된 할일이 없습니다. "+ 할일 추가"로 등록하세요.</div>
             ) : groups.map(g => (
               <div key={g.ds}>
                 {todoView !== 'day' && (
