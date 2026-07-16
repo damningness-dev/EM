@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
-import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo } from '../lib/api';
+import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
@@ -142,6 +142,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   const [changeLog, setChangeLog] = useState([]); // [{ id, msg }] 미저장 변경 내역
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [changeSummary, setChangeSummary] = useState(null); // 저장 직후 보여줄 변경 내역 팝업 (string[])
+  const [saveSyncNote, setSaveSyncNote] = useState(null); // 저장 직후 공유 동기화 업로드 결과 메시지
   const CHANGE_HISTORY_KEY = 'em-schedule-change-history';
   const CHANGE_HISTORY_MAX = 50;
   const [changeHistory, setChangeHistory] = useState(() => {
@@ -922,6 +923,22 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
       setChangeSummary(msgs);
       recordChangeHistory(msgs);
       setChangeLog([]);
+
+      // 저장한 일정을 다른 PC와 공유하기 위해 공유 동기화(Gist)에 자동 업로드한다.
+      // 공유 설정(Gist ID + 토큰)이 없으면 조용히 건너뛴다.
+      try {
+        const cfg = await syncGetConfig();
+        if (cfg?.gistId && cfg?.hasToken) {
+          const r = await syncUpload();
+          setSaveSyncNote(r?.ok
+            ? '🔄 다른 PC와 공유 완료'
+            : `⚠ 공유 업로드 실패: ${r?.error || ''} (사이드바 "지금 동기화"에서 다시 시도하세요)`);
+        } else {
+          setSaveSyncNote(null);
+        }
+      } catch {
+        setSaveSyncNote('⚠ 공유 업로드 중 오류가 발생했습니다. 사이드바 "지금 동기화"에서 다시 시도하세요.');
+      }
     } catch (e) {
       showError('저장 실패: ' + e.message);
     } finally {
@@ -957,7 +974,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
 
       {/* 일정 저장 완료 후 변동 내역 알람 */}
       {changeSummary && (
-        <div className="fixed inset-0 z-[250] flex items-center justify-center bg-black/40" onClick={() => setChangeSummary(null)}>
+        <div className="fixed inset-0 z-[250] flex items-center justify-center bg-black/40" onClick={() => { setChangeSummary(null); setSaveSyncNote(null); }}>
           <div className="bg-white rounded-2xl shadow-2xl w-[420px] max-w-[92vw] max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2">
               <span className="text-lg">🔔</span>
@@ -970,9 +987,12 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                   <li key={i} className="text-sm text-gray-700 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">{msg}</li>
                 ))}
               </ul>
+              {saveSyncNote && (
+                <p className={`text-xs mt-3 ${saveSyncNote.startsWith('⚠') ? 'text-red-500' : 'text-emerald-600'}`}>{saveSyncNote}</p>
+              )}
             </div>
             <div className="px-5 py-3 border-t border-gray-100">
-              <button onClick={() => setChangeSummary(null)}
+              <button onClick={() => { setChangeSummary(null); setSaveSyncNote(null); }}
                 className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">확인</button>
             </div>
           </div>
