@@ -178,6 +178,16 @@ export default function TodoToday() {
     const d = todoDates[0];
     todoPeriodLabel = `${d.getMonth() + 1}/${d.getDate()} (${DOW[d.getDay()]})`;
   }
+  let todoDateLine;
+  if (todoView === 'week') {
+    const s = todoDates[0], e = todoDates[todoDates.length - 1];
+    todoDateLine = `${s.getFullYear()}년 ${MONTH_KR[s.getMonth()]} ${s.getDate()}일 ~ ${MONTH_KR[e.getMonth()]} ${e.getDate()}일`;
+  } else if (todoView === 'month') {
+    todoDateLine = `${todoDates[0].getFullYear()}년 ${MONTH_KR[todoDates[0].getMonth()]}`;
+  } else {
+    const d = todoDates[0];
+    todoDateLine = `${d.getFullYear()}년 ${MONTH_KR[d.getMonth()]} ${d.getDate()}일 (${DOW[d.getDay()]}요일)`;
+  }
 
   useEffect(() => {
     Promise.all([
@@ -302,20 +312,20 @@ export default function TodoToday() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">오늘의 할일</h1>
           <p className="text-gray-500 text-sm mt-0.5">
-            {year}년 {MONTH_KR[month - 1]} {today.getDate()}일 ({dow}요일)
+            {todoDateLine}
+            {isTodayPeriod && <span className="text-blue-500 ml-1">· 지금</span>}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-1 text-sm">
-            <span className="font-semibold text-gray-700">{todoPeriodLabel}</span>
-            {isTodayPeriod && <span className="text-blue-500 text-xs">· 지금</span>}
             <button onClick={() => shiftTodoAnchor(-1)} title="이전"
-              className="w-5 h-5 flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded text-xs">◀</button>
-            {!isTodayPeriod && (
-              <button onClick={goTodoToday} className="px-1.5 py-0.5 text-[11px] text-blue-600 hover:underline">오늘</button>
-            )}
+              className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded text-xs">◀</button>
+            <button onClick={goTodoToday} disabled={isTodayPeriod} title="오늘로 이동"
+              className={`px-2 py-1 text-xs rounded whitespace-nowrap ${isTodayPeriod ? 'text-gray-300 cursor-not-allowed' : 'text-blue-600 hover:bg-blue-50'}`}>
+              오늘로 이동
+            </button>
             <button onClick={() => shiftTodoAnchor(1)} title="다음"
-              className="w-5 h-5 flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded text-xs">▶</button>
+              className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-gray-100 rounded text-xs">▶</button>
           </div>
           <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs">
             {[['day', '일간'], ['week', '주간'], ['month', '월간']].map(([v, label]) => (
@@ -472,7 +482,7 @@ export default function TodoToday() {
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-100 bg-gray-50">
               <span className="text-base">📝</span>
-              <span className="font-semibold text-gray-800 text-sm">할일 · {todoPeriodLabel}</span>
+              <span className="font-semibold text-gray-800 text-sm">할일</span>
               {totalCnt > 0 && <span className={`ml-auto text-sm font-bold ${doneCnt === totalCnt ? 'text-green-600' : 'text-blue-600'}`}>{doneCnt}/{totalCnt}</span>}
             </div>
             {groups.length === 0 ? (
