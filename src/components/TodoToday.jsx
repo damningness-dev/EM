@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
-import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, fetchTodos, upsertTodo, deleteTodo, toggleTodoDone } from '../lib/api';
+import { useState, useEffect, useMemo } from 'react';
+import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, fetchTodos, upsertTodo, deleteTodo, toggleTodoDone, fetchHolidays } from '../lib/api';
+import { buildHolidayMap } from '../lib/schedule';
 import { parseISO, differenceInDays } from 'date-fns';
 
 const DOW = ['일', '월', '화', '수', '목', '금', '토'];
@@ -140,6 +141,7 @@ export default function TodoToday() {
 
   // 할일(반복 일정)
   const [todos, setTodos] = useState([]);
+  const [holidayDefs, setHolidayDefs] = useState([]);
   const [showTodoForm, setShowTodoForm] = useState(false);
   const [editingTodo, setEditingTodo] = useState(null); // 편집중 todo id
   const blankForm = {
@@ -189,6 +191,23 @@ export default function TodoToday() {
     todoDateLine = `${d.getFullYear()}년 ${MONTH_KR[d.getMonth()]} ${d.getDate()}일 (${DOW[d.getDay()]}요일)`;
   }
 
+  // 토요일=파란색, 일요일·공휴일=빨간색 + 공휴일 이름 표시용
+  const anchorYear = todoAnchor.getFullYear();
+  const holidays = useMemo(
+    () => buildHolidayMap(holidayDefs, anchorYear - 1, anchorYear + 1),
+    [holidayDefs, anchorYear]
+  );
+  function dateColorClass(dow, isHoliday) {
+    if (dow === 0 || isHoliday) return 'text-red-500';
+    if (dow === 6) return 'text-blue-500';
+    return '';
+  }
+  // 일간 보기의 상단 날짜 표시용 (요일 색상 + 공휴일 이름)
+  const todoDayHoliday = todoView === 'day' ? holidays[fmtDate(todoDates[0])] : null;
+  const todoDateLineClass = todoView === 'day'
+    ? (dateColorClass(todoDates[0].getDay(), !!todoDayHoliday) || 'text-gray-500')
+    : 'text-gray-500';
+
   useEffect(() => {
     Promise.all([
       fetchCalibration(),
@@ -196,12 +215,14 @@ export default function TodoToday() {
       fetchMonitoringData(year, month),
       fetchAnnualPlan(year),
       fetchTodos().catch(() => []),
-    ]).then(([cal, zns, mon, plan, tds]) => {
+      fetchHolidays().catch(() => []),
+    ]).then(([cal, zns, mon, plan, tds, hols]) => {
       setCalibration(cal);
       setZones(zns);
       setMonitoring(mon);
       setAnnualPlan(plan);
       setTodos(tds || []);
+      setHolidayDefs(hols || []);
       setLoading(false);
     });
   }, []);
@@ -311,8 +332,9 @@ export default function TodoToday() {
       <div className="flex items-end justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">오늘의 할일</h1>
-          <p className="text-gray-500 text-sm mt-0.5">
+          <p className={`text-sm mt-0.5 ${todoDateLineClass}`}>
             {todoDateLine}
+            {todoDayHoliday && ` · ${todoDayHoliday}`}
             {isTodayPeriod && <span className="text-blue-500 ml-1">· 지금</span>}
           </p>
         </div>
@@ -489,11 +511,15 @@ export default function TodoToday() {
               <div className="px-5 py-4 text-sm text-gray-400">{todoPeriodLabel} 예정된 할일이 없습니다. "+ 할일 추가"로 등록하세요.</div>
             ) : groups.map(g => (
               <div key={g.ds}>
-                {todoView !== 'day' && (
-                  <div className="px-5 py-1.5 bg-gray-50/70 text-xs font-semibold text-gray-500 border-b border-gray-100">
-                    {g.d.getMonth() + 1}/{g.d.getDate()} ({DOW[g.d.getDay()]}) {g.ds === todayStr() && <span className="text-blue-500">· 오늘</span>}
-                  </div>
-                )}
+                {todoView !== 'day' && (() => {
+                  const gHoliday = holidays[g.ds];
+                  const gColorClass = dateColorClass(g.d.getDay(), !!gHoliday) || 'text-gray-500';
+                  return (
+                    <div className={`px-5 py-1.5 bg-gray-50/70 text-xs font-semibold border-b border-gray-100 ${gColorClass}`}>
+                      {g.d.getMonth() + 1}/{g.d.getDate()} ({DOW[g.d.getDay()]}){gHoliday && ` ${gHoliday}`} {g.ds === todayStr() && <span className="text-blue-500">· 오늘</span>}
+                    </div>
+                  );
+                })()}
                 {g.items.map(t => {
                   const done = (t.completedDates || []).includes(g.ds);
                   const dd = t.due ? dueDday(t.due) : null;
