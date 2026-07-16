@@ -695,7 +695,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
           dragData,
           groupName: grp.name,
           members: siblings.map(ev => {
-            const b = getDragBounds(ev.measurement);
+            const b = getDragBounds(ev.measurement, scheduleAvoid);
             return {
               zoneId: ev.zone.id, num: ev.measurement.num,
               min: format(b.min, 'yyyy-MM-dd'), max: format(b.max, 'yyyy-MM-dd'),
@@ -1558,7 +1558,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                         >{c.name}</div>
                       ))}
                       {schedEvts.map(({ zone, measurement }, i) => {
-                        const bounds = getDragBounds(measurement);
+                        const bounds = getDragBounds(measurement, scheduleAvoid);
                         const label = `${zone.name}[${zone.grade}]-${measurement.num}`;
                         const isDone = completions.has(`${zone.id}_${measurement.num}`);
                         return (
@@ -1737,7 +1737,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                 <>
                   <div className="divide-y divide-gray-50">
                     {selectedScheduleEvents.map(({ zone, measurement }) => {
-                      const bounds = getDragBounds(measurement);
+                      const bounds = getDragBounds(measurement, scheduleAvoid);
                       const compKey = `${zone.id}_${measurement.num}`;
                       const isDone = completions.has(compKey);
                       return (

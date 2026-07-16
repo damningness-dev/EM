@@ -38,14 +38,9 @@ function monthSpanWindow(baseDate, spanMonths) {
   return { min: new Date(y, start, 1), max: endOfMonth(new Date(y, start + span - 1, 1)) };
 }
 
-function isOverrideValid(overrideDate, baseDate, type, spanMonths = 1) {
-  if (type === 'daily' || type === 'weekly' || type === 'biweekly') {
-    const min = startOfWeek(baseDate, { weekStartsOn: 1 });
-    const max = endOfWeek(baseDate, { weekStartsOn: 1 });
-    return overrideDate >= min && overrideDate <= max;
-  }
-  if (type === 'monthly' || type === 'quarterly') {
-    const { min, max } = monthSpanWindow(baseDate, spanMonths);
+function isOverrideValid(overrideDate, baseDate, type, spanMonths = 1, holidayMap = {}) {
+  if (type === 'daily' || type === 'weekly' || type === 'biweekly' || type === 'monthly' || type === 'quarterly') {
+    const { min, max } = getDragBounds({ type, baseDate, spanMonths }, holidayMap);
     return overrideDate >= min && overrideDate <= max;
   }
   return false;
@@ -252,12 +247,12 @@ export function calcMeasurements(zone, holidayMap = {}, usedDates = null) {
 
       const key = String(num);
       const rawOverride = overrides[key] ? new Date(overrides[key] + 'T00:00:00') : null;
-      const hasValidOverride = rawOverride && isOverrideValid(rawOverride, effectiveBaseDate, ptype, spanMonths);
+      const hasValidOverride = rawOverride && isOverrideValid(rawOverride, effectiveBaseDate, ptype, spanMonths, holidayMap);
       let scheduledDate;
       if (hasValidOverride) {
         scheduledDate = rawOverride;
       } else {
-        const bounds = getDragBounds({ type: ptype, baseDate: effectiveBaseDate, spanMonths });
+        const bounds = getDragBounds({ type: ptype, baseDate: effectiveBaseDate, spanMonths }, holidayMap);
         scheduledDate = adjustToWorkingDay(effectiveBaseDate, bounds, holidayMap, allowWeekend, allowHoliday);
         // 순서 유지: 앞 회차보다 늦어야 한다 (앞 회차가 뒤로 밀리면 함께 밀림)
         if (prevScheduled && scheduledDate <= prevScheduled) {
@@ -314,10 +309,27 @@ export function totalCount(zone) {
   return spec.reduce((sum, p) => sum + p.count, 0);
 }
 
-export function getDragBounds(measurement) {
+// P1(일간) 이동 제한 창의 기준 작업일 수 — 주말/공휴일은 세지 않고, 그만큼 창을 늘린다.
+const DAILY_BOUND_WORKDAYS = 7;
+
+export function getDragBounds(measurement, holidayMap = {}) {
   const { type, baseDate, spanMonths } = measurement;
 
-  if (type === 'daily' || type === 'weekly' || type === 'biweekly') {
+  if (type === 'daily') {
+    // 작업일(평일·비공휴일) 기준 7일 창. 창 안에 주말/공휴일이 끼면 그 일수만큼
+    // 최대 이동일을 뒤로 늘려, 실제 사용 가능한 작업일 수는 항상 7일을 유지한다.
+    const min = startOfWeek(baseDate, { weekStartsOn: 1 });
+    let max = min;
+    let workdays = 0;
+    let d = new Date(min);
+    while (workdays < DAILY_BOUND_WORKDAYS) {
+      if (isWorkingDay(d, holidayMap, false, false)) workdays++;
+      max = d;
+      if (workdays < DAILY_BOUND_WORKDAYS) d = addDays(d, 1);
+    }
+    return { min, max };
+  }
+  if (type === 'weekly' || type === 'biweekly') {
     return {
       min: startOfWeek(baseDate, { weekStartsOn: 1 }),
       max: endOfWeek(baseDate, { weekStartsOn: 1 }),
@@ -351,7 +363,7 @@ export function alignGroupSchedules(groupZones, holidayMap = {}) {
     const ms = calcMeasurements(zone, holidayMap);
     let changed = false;
     for (const m of ms) {
-      const bounds = getDragBounds(m);
+      const bounds = getDragBounds(m, holidayMap);
       // 마스터 측정일 중 이 측정의 허용 창(window) 안에 있는 날짜
       const candidates = masterDates.filter(d => d >= bounds.min && d <= bounds.max);
       if (candidates.length) {
@@ -408,7 +420,7 @@ export function optimizeMonthSchedule({ zones, tempSchedules = [], completions =
       const ds = format(m.date, 'yyyy-MM-dd');
       if (!ds.startsWith(prefix)) return;
       events.push({ zoneId: zone.id, num: m.num, pts, ptTotal, category: zone.category,
-                    bounds: getDragBounds(m), ds, done: completions.has(`${zone.id}_${m.num}`) });
+                    bounds: getDragBounds(m, holidayMap), ds, done: completions.has(`${zone.id}_${m.num}`) });
     });
   });
 
