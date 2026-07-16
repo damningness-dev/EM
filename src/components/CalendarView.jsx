@@ -133,6 +133,23 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   const [todos, setTodos] = useState([]); // 할일 (측정 알람 추가 상태 확인용)
   const [tempSchedules, setTempSchedules] = useState([]);
   const [blockedDates, setBlockedDates] = useState(new Set()); // 일정비우기 날짜('yyyy-MM-dd')
+
+  // ── 일정 초안(저장하기 전까지 미반영) ──
+  // 측정일 이동/시작일 재설정/일정비우기/임시일정/일정 최적화는 로컬 상태만 바꾸고,
+  // "일정 저장하기"를 눌러야 실제로 저장된다. "되돌리기"는 마지막 저장 시점으로 전체 복원한다.
+  const savedSnapshotRef = useRef(null); // { zones, blockedDates, tempSchedules } (마지막 저장 상태)
+  const pendingTempDeletesRef = useRef([]); // 저장 시 함께 삭제할 임시일정 id
+  const [changeLog, setChangeLog] = useState([]); // [{ id, msg }] 미저장 변경 내역
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [changeSummary, setChangeSummary] = useState(null); // 저장 직후 보여줄 변경 내역 팝업 (string[])
+
+  function logChange(msg) {
+    setChangeLog(prev => [...prev, { id: `${prev.length}-${Math.random().toString(36).slice(2)}`, msg }]);
+  }
+  // changeLog를 마운트-1회성 effect(useEffect(...,[]))의 클로저에서도 최신값으로 읽기 위한 ref
+  const changeLogRef = useRef([]);
+  useEffect(() => { changeLogRef.current = changeLog; }, [changeLog]);
+
   const [addSchedPopup, setAddSchedPopup] = useState(null); // { date }
   const [addSchedName, setAddSchedName] = useState('');
   const [addSchedPts, setAddSchedPts] = useState({ surface: '', float: '', fall: '', particle: '' });
@@ -214,22 +231,18 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     return m;
   }, [holidays, blockedDates]);
 
+  // 구역/그룹/공휴일/완료/임시일정/측정주기설정/일정비우기는 월·연도와 무관한 전역 데이터라
+  // 마운트 시 한 번만 불러온다. (매번 다시 불러오면 저장하지 않은 일정 초안이 사라지므로)
   useEffect(() => {
-    setLoading(true);
-    setSelectedDay(null);
     Promise.all([
-      fetchCalibration(),
       fetchZones(),
-      fetchMonitoringData(year, month),
-      fetchAnnualPlan(year),
       fetchGroups(),
       fetchHolidays(),
       fetchCompletions(),
       fetchTempSchedules(),
       fetchScheduleConfig(),
       fetchBlockedDates(),
-    ]).then(([cal, zns, mon, plan, grps, hols, comps, temps, schedCfg, blocked]) => {
-      setCalibration(cal);
+    ]).then(([zns, grps, hols, comps, temps, schedCfg, blocked]) => {
       const mergedCfg = mergeScheduleConfig(schedCfg);
       setScheduleConfig(mergedCfg);
       setScheduleConfigState(mergedCfg);
@@ -239,20 +252,41 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
         legacy.forEach(z => upsertZone({ ...z, category: '공조' }));
         zns = zns.map(z => z.category === '청정등급' ? { ...z, category: '공조' } : z);
       }
+      const blockedSet = new Set(blocked || []);
       setZones(zns);
-      setMonitoring(mon);
-      setAnnualPlan(plan);
       setGroups(grps);
       setHolidayDefs(hols);
       setCompletions(new Set(comps.map(c => `${c.zoneId}_${c.num}`)));
       setTempSchedules(temps);
-      setBlockedDates(new Set(blocked || []));
-      setLoading(false);
+      setBlockedDates(blockedSet);
+      savedSnapshotRef.current = { zones: zns, blockedDates: blockedSet, tempSchedules: temps };
       // 월별 모니터링에 입력한 측정포인트를 구역 points_*로 backfill (비어있는 구역만)
       backfillZonePointsFromMonitoring(zns, [year - 1, year, year + 1])
-        .then(({ zones: filled, changed }) => { if (changed) setZones(filled); })
+        .then(({ zones: filled, changed }) => {
+          if (changed) {
+            setZones(filled);
+            if (savedSnapshotRef.current) savedSnapshotRef.current.zones = filled;
+          }
+        })
         .catch(() => {});
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 달력에 표시할 월별 데이터(교정/모니터링 실적/AHU 계획)는 월 이동 시마다 새로 불러온다.
+  useEffect(() => {
+    setLoading(true);
+    setSelectedDay(null);
+    Promise.all([
+      fetchCalibration(),
+      fetchMonitoringData(year, month),
+      fetchAnnualPlan(year),
+    ]).then(([cal, mon, plan]) => {
+      setCalibration(cal);
+      setMonitoring(mon);
+      setAnnualPlan(plan);
+      setLoading(false);
+    }).catch(() => setLoading(false));
   }, [year, month]);
 
   // 순서/그룹 관리 — Electron 별도 창(항상 위) 우선, 없으면 인앱 오버레이
@@ -265,13 +299,19 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     }
   }
 
-  // 구역/그룹/공휴일 다시 불러오기 (별도 창에서 저장 후 동기화)
+  // 구역/그룹/공휴일 다시 불러오기 (별도 창 저장 또는 공유 동기화로 데이터가 바뀌었을 때 호출됨)
+  // 저장하지 않은 일정 초안이 있으면 구역 정보는 덮어쓰지 않는다 (초안 유실 방지).
   async function reloadZonesGroups() {
     try {
       const [zns, grps, hols] = await Promise.all([fetchZones(), fetchGroups(), fetchHolidays()]);
-      setZones(zns);
       setGroups(grps);
       setHolidayDefs(hols);
+      if (changeLogRef.current.length > 0) {
+        showError('저장하지 않은 일정 변경사항이 있어 외부 변경 내용을 반영하지 않았습니다. 저장하거나 되돌린 뒤 새로고침하세요.');
+        return;
+      }
+      setZones(zns);
+      if (savedSnapshotRef.current) savedSnapshotRef.current.zones = zns;
     } catch { /* ignore */ }
   }
 
@@ -570,11 +610,11 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
         if (!zone) continue;
         movedCount += Object.keys(overrides[zid]).length;
         const u = { ...zone, schedule_overrides: { ...(zone.schedule_overrides || {}), ...overrides[zid] } };
-        await upsertZone(u);
         updates.push(u);
       }
       setZones(prev => prev.map(z => updates.find(u => u.id === z.id) || z));
-      showSuccess(`${year}년 ${month}월 일정 ${movedCount}건을 재배치했습니다.`);
+      logChange(`일정 최적화: ${year}년 ${month}월 ${movedCount}건 재배치`);
+      showSuccess(`${year}년 ${month}월 일정 ${movedCount}건을 재배치했습니다. "일정 저장하기"를 눌러야 반영됩니다.`);
       setOptimizePopup(false);
     } finally {
       setOptimizing(false);
@@ -654,10 +694,9 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     // 일정관리의 시작일·종료예정일도 자동으로 갱신됨.
     if (dragData.isFirst) {
       const updated = { ...zone, schedule_start: dateStr, schedule_overrides: {} };
-      await upsertZone(updated);
       setZones(prev => prev.map(z => z.id === zone.id ? updated : z));
-      window.electronAPI?.notifyDataChanged?.();
-      showSuccess('시작일을 옮기고 이후 일정을 재배치했습니다.');
+      logChange(`시작일 변경: ${zone.name}[${zone.grade}] → ${dateStr} (이후 일정 재배치)`);
+      showSuccess('시작일을 옮기고 이후 일정을 재배치했습니다. "일정 저장하기"를 눌러야 반영됩니다.');
       return;
     }
 
@@ -707,23 +746,25 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
       }
     }
 
-    await moveMeasurementWithReflow(zone, dragData.num, dateStr);
+    logChange(`${zone.name}[${zone.grade}] ${dragData.num}회차: ${dragData.fromDateStr || '?'} → ${dateStr}`);
+    moveMeasurementWithReflow(zone, dragData.num, dateStr);
+    showSuccess(`${zone.name}[${zone.grade}] ${dragData.num}회차를 ${dateStr}로 옮겼습니다. "일정 저장하기"를 눌러야 반영됩니다.`);
   }
 
   // 단일 측정 이동 — 해당 회차를 옮기고, 이후 회차의 수동이동은 초기화해
   // 자동으로 뒤로 밀리게(순서 유지 재계산) 한다. (시작일 옮길 때와 유사)
-  async function moveMeasurementWithReflow(zone, num, dateStr) {
+  // 저장하기 전까지는 로컬 상태만 바뀐다.
+  function moveMeasurementWithReflow(zone, num, dateStr) {
     const ov = { ...(zone.schedule_overrides || {}) };
     ov[String(num)] = dateStr;
     Object.keys(ov).forEach(k => { if (Number(k) > num) delete ov[k]; });
     const updated = { ...zone, schedule_overrides: ov };
-    await upsertZone(updated);
     setZones(prev => prev.map(z => z.id === zone.id ? updated : z));
   }
 
-  // 여러 측정을 새 날짜로 이동 — 구역별로 override를 합쳐 한 번에 저장.
+  // 여러 측정을 새 날짜로 이동 — 구역별로 override를 합쳐 로컬 상태에 반영(초안).
   // moves: [{ zoneId, num, date }]
-  async function applyMoves(moves) {
+  function applyMoves(moves) {
     const byZone = {};
     moves.forEach(mv => { (byZone[mv.zoneId] || (byZone[mv.zoneId] = [])).push(mv); });
     const updates = [];
@@ -735,12 +776,15 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
       updates.push({ ...zone, schedule_overrides: ov });
     });
     if (!updates.length) return;
-    await Promise.all(updates.map(u => upsertZone(u)));
     setZones(prev => prev.map(z => updates.find(u => u.id === z.id) || z));
+    moves.forEach(mv => {
+      const zone = zones.find(z => String(z.id) === String(mv.zoneId));
+      if (zone) logChange(`${zone.name}[${zone.grade}] ${mv.num}회차 → ${mv.date}`);
+    });
   }
 
   // 그룹 이동 프롬프트 확정 — includeMembers=true면 그룹 구성원까지 함께 이동.
-  async function confirmGroupMove(includeMembers) {
+  function confirmGroupMove(includeMembers) {
     const p = groupMovePrompt;
     if (!p) return;
     const moves = [{ zoneId: p.dragData.zoneId, num: p.dragData.num, date: p.dateStr }];
@@ -752,19 +796,16 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
       });
     }
     setGroupMovePrompt(null);
-    await applyMoves(moves);
-    if (includeMembers) {
-      const moved = moves.length;
-      showSuccess(skipped > 0
-        ? `${moved}건 이동 (이동 범위를 벗어난 ${skipped}건은 제외)`
-        : `그룹 일정 ${moved}건을 함께 이동했습니다.`);
-    }
+    applyMoves(moves);
+    const moved = moves.length;
+    showSuccess((includeMembers
+      ? (skipped > 0 ? `${moved}건 이동 (이동 범위를 벗어난 ${skipped}건은 제외)` : `그룹 일정 ${moved}건을 함께 이동했습니다.`)
+      : `${moved}건 이동했습니다.`) + ' "일정 저장하기"를 눌러야 반영됩니다.');
   }
 
-  // 일정비우기 토글: 체크 시 해당일 일정을 모두 다른 날로 옮기고 그 날짜를 차단
-  async function handleToggleBlockDay(dateStr, checked) {
+  // 일정비우기 토글: 체크 시 해당일 일정을 모두 다른 날로 옮기고 그 날짜를 차단 (초안)
+  function handleToggleBlockDay(dateStr, checked) {
     if (!requireAdmin()) return;
-    await setBlockedDate(dateStr, checked);
     setBlockedDates(prev => {
       const n = new Set(prev);
       if (checked) n.add(dateStr); else n.delete(dateStr);
@@ -783,12 +824,72 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
         updates.push({ ...zone, schedule_overrides: nextOv });
       });
       if (updates.length) {
-        await Promise.all(updates.map(u => upsertZone(u)));
         setZones(prev => prev.map(z => {
           const u = updates.find(x => x.id === z.id);
           return u || z;
         }));
       }
+    }
+    logChange(`${dateStr} 일정비우기 ${checked ? '설정' : '해제'}`);
+    showSuccess(`일정비우기를 ${checked ? '설정' : '해제'}했습니다. "일정 저장하기"를 눌러야 반영됩니다.`);
+  }
+
+  // 되돌리기 — 마지막 저장 시점 상태로 전체 복원 (측정일 이동/시작일 변경/일정비우기/임시일정/최적화 초안 전체 취소)
+  function handleRevertDraft() {
+    if (!requireAdmin()) return;
+    const snap = savedSnapshotRef.current;
+    if (!snap) return;
+    setZones(snap.zones);
+    setBlockedDates(new Set(snap.blockedDates));
+    setTempSchedules(snap.tempSchedules);
+    pendingTempDeletesRef.current = [];
+    setChangeLog([]);
+    showSuccess('마지막 저장 상태로 되돌렸습니다.');
+  }
+
+  // 일정 저장하기 — 초안(zones/blockedDates/tempSchedules)을 실제로 저장하고,
+  // 저장된 변경 내역을 요약 팝업으로 보여준다.
+  async function handleSaveSchedule() {
+    if (!requireAdmin()) return;
+    const snap = savedSnapshotRef.current;
+    if (!snap || changeLog.length === 0) { showSuccess('저장할 변경 사항이 없습니다.'); return; }
+    setSavingSchedule(true);
+    try {
+      const snapZonesById = new Map(snap.zones.map(z => [z.id, z]));
+      const changedZones = zones.filter(z => snapZonesById.get(z.id) !== z);
+      await Promise.all(changedZones.map(z => upsertZone(z)));
+
+      const addedBlocked = [...blockedDates].filter(d => !snap.blockedDates.has(d));
+      const removedBlocked = [...snap.blockedDates].filter(d => !blockedDates.has(d));
+      await Promise.all([
+        ...addedBlocked.map(d => setBlockedDate(d, true)),
+        ...removedBlocked.map(d => setBlockedDate(d, false)),
+      ]);
+
+      const drafts = tempSchedules.filter(t => t._draftNew);
+      const savedDrafts = await Promise.all(drafts.map(t => {
+        const { _draftNew, id, ...rest } = t;
+        return addTempSchedule(rest);
+      }));
+      const toDelete = pendingTempDeletesRef.current;
+      await Promise.all(toDelete.map(id => deleteTempSchedule(id)));
+
+      const finalTemp = tempSchedules.map(t => {
+        if (!t._draftNew) return t;
+        const idx = drafts.indexOf(t);
+        return savedDrafts[idx] || t;
+      });
+      setTempSchedules(finalTemp);
+      pendingTempDeletesRef.current = [];
+
+      savedSnapshotRef.current = { zones, blockedDates: new Set(blockedDates), tempSchedules: finalTemp };
+      window.electronAPI?.notifyDataChanged?.();
+      setChangeSummary(changeLog.map(c => c.msg));
+      setChangeLog([]);
+    } catch (e) {
+      showError('저장 실패: ' + e.message);
+    } finally {
+      setSavingSchedule(false);
     }
   }
 
@@ -815,6 +916,30 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
           <span className="text-base shrink-0 mt-0.5">✓</span>
           <span className="text-sm font-medium flex-1 leading-snug">{successToast}</span>
           <button onClick={() => setSuccessToast(null)} className="text-green-200 hover:text-white text-lg leading-none shrink-0">✕</button>
+        </div>
+      )}
+
+      {/* 일정 저장 완료 후 변동 내역 알람 */}
+      {changeSummary && (
+        <div className="fixed inset-0 z-[250] flex items-center justify-center bg-black/40" onClick={() => setChangeSummary(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[420px] max-w-[92vw] max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2">
+              <span className="text-lg">🔔</span>
+              <h3 className="text-base font-bold text-gray-900">일정이 저장되었습니다</h3>
+            </div>
+            <div className="px-5 py-3 overflow-y-auto flex-1">
+              <p className="text-xs text-gray-400 mb-2">변경 내역 {changeSummary.length}건</p>
+              <ul className="space-y-1.5">
+                {changeSummary.map((msg, i) => (
+                  <li key={i} className="text-sm text-gray-700 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">{msg}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="px-5 py-3 border-t border-gray-100">
+              <button onClick={() => setChangeSummary(null)}
+                className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">확인</button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -955,18 +1080,22 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
               <button
                 id="add-sched-submit"
                 disabled={!addSchedName.trim()}
-                onClick={async () => {
+                onClick={() => {
                   if (!addSchedName.trim()) return;
+                  // 저장하기 전까지는 로컬 임시 id로만 보관 (_draftNew), 저장 시 실제로 생성된다.
                   const entry = {
+                    id: `draft-${Date.now()}-${Math.random().toString(36).slice(2)}`,
                     date: addSchedPopup.date,
                     name: addSchedName.trim(),
                     points_surface: parseInt(addSchedPts.surface) || 0,
                     points_float: parseInt(addSchedPts.float) || 0,
                     points_fall: parseInt(addSchedPts.fall) || 0,
                     points_particle: parseInt(addSchedPts.particle) || 0,
+                    _draftNew: true,
                   };
-                  const saved = await addTempSchedule(entry);
-                  setTempSchedules(prev => [...prev, saved]);
+                  setTempSchedules(prev => [...prev, entry]);
+                  logChange(`임시일정 추가: ${entry.name} (${entry.date})`);
+                  showSuccess('임시 일정을 추가했습니다. "일정 저장하기"를 눌러야 반영됩니다.');
                   setAddSchedPopup(null);
                   setAddSchedName('');
                   setAddSchedPts({ surface: '', float: '', fall: '', particle: '' });
@@ -1338,6 +1467,15 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
           holidayDefs={holidayDefs}
           onClose={() => setShowOrderManager(false)}
           onSaved={(updatedZones, updatedGroups) => {
+            // 일정 관리(OrderGroupManager)는 자체적으로 즉시 저장하므로, 여기서 바뀐
+            // 구역은 초안 기준선(savedSnapshotRef)도 함께 갱신한다. 건드리지 않은 구역은
+            // 기존 기준선을 유지해 "월별 모니터링 일정"의 미저장 초안이 사라지지 않게 한다.
+            if (savedSnapshotRef.current) {
+              const prevById = new Map(zones.map(z => [z.id, z]));
+              const snapById = new Map(savedSnapshotRef.current.zones.map(z => [z.id, z]));
+              const nextSnapZones = updatedZones.map(z => (prevById.get(z.id) !== z ? z : (snapById.get(z.id) || z)));
+              savedSnapshotRef.current = { ...savedSnapshotRef.current, zones: nextSnapZones };
+            }
             setZones(updatedZones);
             setGroups(updatedGroups);
           }}
@@ -1354,8 +1492,33 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
               이번달 {totalMonthSchedule}건 측정 예정
             </span>
           )}
+          {changeLog.length > 0 && (
+            <span className="text-xs bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full font-medium">
+              미저장 변경 {changeLog.length}건
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
+          {adminUnlocked && (
+            <>
+              <button
+                onClick={handleRevertDraft}
+                disabled={changeLog.length === 0}
+                title="마지막 저장 상태로 되돌리기"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-xl border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                ↩ 되돌리기
+              </button>
+              <button
+                onClick={handleSaveSchedule}
+                disabled={changeLog.length === 0 || savingSchedule}
+                title="변경된 일정을 저장"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                {savingSchedule ? '저장 중…' : '💾 일정 저장하기'}
+              </button>
+            </>
+          )}
           <div className="flex rounded-xl border border-gray-200 overflow-hidden bg-white text-sm">
             <button onClick={() => setViewMode('calendar')} className={`px-3 py-1.5 font-medium ${viewMode === 'calendar' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>📅 달력</button>
             <button onClick={() => setViewMode('table')} className={`px-3 py-1.5 font-medium ${viewMode === 'table' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>☰ 표</button>
@@ -1808,10 +1971,13 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                         <div className="flex items-center justify-between gap-1 mb-1">
                           <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-orange-50 border border-orange-200 text-orange-600">임시</span>
                           <button
-                            onClick={async () => {
+                            onClick={() => {
                               if (!requireAdmin()) return;
-                              await deleteTempSchedule(t.id);
+                              // 이미 저장된 임시일정이면 삭제를 "저장하기" 때까지 예약, 초안(_draftNew)이면 바로 제거
+                              if (!t._draftNew) pendingTempDeletesRef.current = [...pendingTempDeletesRef.current, t.id];
                               setTempSchedules(prev => prev.filter(x => x.id !== t.id));
+                              logChange(`임시일정 삭제: ${t.name} (${t.date})`);
+                              showSuccess('임시 일정을 삭제 예약했습니다. "일정 저장하기"를 눌러야 반영됩니다.');
                             }}
                             className="text-xs text-gray-400 hover:text-red-500 leading-none"
                           >✕</button>

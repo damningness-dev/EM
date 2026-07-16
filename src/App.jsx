@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import Dashboard from './components/Dashboard';
 import Calibration from './components/Calibration';
 import AnnualPlan from './components/AnnualPlan';
-import MonthlyMonitoring from './components/MonthlyMonitoring';
 import ZoneStatus from './components/ZoneStatus';
 import ZoneGantt from './components/ZoneGantt';
 import TodoToday from './components/TodoToday';
@@ -18,7 +17,6 @@ const MENU = [
   { id: 'dashboard', label: '대시보드', icon: '📊' },
   { id: 'todo', label: '오늘의 할일', icon: '✅' },
   { id: 'calendar', label: '월별 모니터링 일정', icon: '📆' },
-  { id: 'monthly', label: '월별 모니터링', icon: '📅' },
   { id: 'status', label: '구역별 현황', icon: '📈' },
   { id: 'gantt',  label: '간트 차트',  icon: '📊' },
   { id: 'annual', label: '연간 계획 (AHU)', icon: '🔧' },
@@ -149,7 +147,6 @@ export default function App() {
           {page === 'dashboard' && <Dashboard year={year} />}
           {page === 'todo' && <TodoToday />}
           {page === 'calendar' && <CalendarView year={year} onYearChange={setYear} adminUnlocked={adminUnlocked} />}
-          {page === 'monthly' && <MonthlyMonitoring year={year} onYearChange={setYear} />}
           {page === 'status' && <ZoneStatus year={year} onYearChange={setYear} />}
           {page === 'gantt'  && <ZoneGantt  year={year} onYearChange={setYear} />}
           {page === 'annual' && <AnnualPlan year={year} onYearChange={setYear} />}
