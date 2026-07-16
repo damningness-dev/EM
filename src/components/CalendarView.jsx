@@ -142,6 +142,20 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   const [changeLog, setChangeLog] = useState([]); // [{ id, msg }] 미저장 변경 내역
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [changeSummary, setChangeSummary] = useState(null); // 저장 직후 보여줄 변경 내역 팝업 (string[])
+  const CHANGE_HISTORY_KEY = 'em-schedule-change-history';
+  const CHANGE_HISTORY_MAX = 50;
+  const [changeHistory, setChangeHistory] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(CHANGE_HISTORY_KEY)) || []; } catch { return []; }
+  }); // [{ ts, changes:[msg,...] }] 저장할 때마다 누적되는 일정변경 알람 내역 (이 PC에 보관)
+  const [showChangeHistory, setShowChangeHistory] = useState(false);
+
+  function recordChangeHistory(changes) {
+    setChangeHistory(prev => {
+      const next = [{ ts: new Date().toISOString(), changes }, ...prev].slice(0, CHANGE_HISTORY_MAX);
+      try { localStorage.setItem(CHANGE_HISTORY_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }
 
   function logChange(msg) {
     setChangeLog(prev => [...prev, { id: `${prev.length}-${Math.random().toString(36).slice(2)}`, msg }]);
@@ -460,6 +474,14 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     return map;
   }, [zones, scheduleAvoid, scheduleConfig, zoneOrderRank]);
 
+  // 특정 구역/회차가 (이동 전) 현재 어느 날짜에 배치돼 있는지 조회 — 변경 알람에 "이전 날짜"를 표시하기 위함
+  function currentDateOf(zoneId, num) {
+    for (const [ds, arr] of Object.entries(scheduleByDate)) {
+      if (arr.some(ev => String(ev.zone.id) === String(zoneId) && ev.measurement.num === num)) return ds;
+    }
+    return null;
+  }
+
   // 표로보기: 이번 달 측정 일정을 날짜순 목록으로
   const monthTableRows = useMemo(() => {
     const prefix = `${year}-${String(month).padStart(2, '0')}-`;
@@ -605,15 +627,20 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
       }
       let movedCount = 0;
       const updates = [];
+      const moveLogs = [];
       for (const zid of zoneIds) {
         const zone = zones.find(z => String(z.id) === String(zid));
         if (!zone) continue;
+        Object.entries(overrides[zid]).forEach(([num, toDate]) => {
+          const fromDate = currentDateOf(zid, Number(num));
+          moveLogs.push(`${zone.name}[${zone.grade}] ${num}회차: ${fromDate || '?'} → ${toDate}`);
+        });
         movedCount += Object.keys(overrides[zid]).length;
         const u = { ...zone, schedule_overrides: { ...(zone.schedule_overrides || {}), ...overrides[zid] } };
         updates.push(u);
       }
       setZones(prev => prev.map(z => updates.find(u => u.id === z.id) || z));
-      logChange(`일정 최적화: ${year}년 ${month}월 ${movedCount}건 재배치`);
+      moveLogs.forEach(msg => logChange(msg));
       showSuccess(`${year}년 ${month}월 일정 ${movedCount}건을 재배치했습니다. "일정 저장하기"를 눌러야 반영됩니다.`);
       setOptimizePopup(false);
     } finally {
@@ -695,7 +722,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     if (dragData.isFirst) {
       const updated = { ...zone, schedule_start: dateStr, schedule_overrides: {} };
       setZones(prev => prev.map(z => z.id === zone.id ? updated : z));
-      logChange(`시작일 변경: ${zone.name}[${zone.grade}] → ${dateStr} (이후 일정 재배치)`);
+      logChange(`시작일 변경: ${zone.name}[${zone.grade}] ${zone.schedule_start || '?'} → ${dateStr} (이후 일정 재배치)`);
       showSuccess('시작일을 옮기고 이후 일정을 재배치했습니다. "일정 저장하기"를 눌러야 반영됩니다.');
       return;
     }
@@ -776,10 +803,12 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
       updates.push({ ...zone, schedule_overrides: ov });
     });
     if (!updates.length) return;
+    // 실제로 setZones를 반영하기 전에 이동 전 날짜를 먼저 조회해둔다 (currentDateOf는 이전 zones 기준).
+    const fromDates = moves.map(mv => currentDateOf(mv.zoneId, mv.num));
     setZones(prev => prev.map(z => updates.find(u => u.id === z.id) || z));
-    moves.forEach(mv => {
+    moves.forEach((mv, i) => {
       const zone = zones.find(z => String(z.id) === String(mv.zoneId));
-      if (zone) logChange(`${zone.name}[${zone.grade}] ${mv.num}회차 → ${mv.date}`);
+      if (zone) logChange(`${zone.name}[${zone.grade}] ${mv.num}회차: ${fromDates[i] || '?'} → ${mv.date}`);
     });
   }
 
@@ -814,13 +843,17 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     if (checked) {
       // 해당일에 override로 고정된 측정을 해제 → scheduleAvoid에 의해 자동으로 다른 날로 재배치
       const updates = [];
+      const unpinnedLogs = [];
       zones.forEach(zone => {
         const ov = zone.schedule_overrides;
         if (!ov) return;
         const pinned = Object.entries(ov).filter(([, v]) => v === dateStr);
         if (!pinned.length) return;
         const nextOv = { ...ov };
-        pinned.forEach(([k]) => { delete nextOv[k]; });
+        pinned.forEach(([k]) => {
+          delete nextOv[k];
+          unpinnedLogs.push(`${zone.name}[${zone.grade}] ${k}회차: ${dateStr} → 자동 재배치`);
+        });
         updates.push({ ...zone, schedule_overrides: nextOv });
       });
       if (updates.length) {
@@ -829,6 +862,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
           return u || z;
         }));
       }
+      unpinnedLogs.forEach(msg => logChange(msg));
     }
     logChange(`${dateStr} 일정비우기 ${checked ? '설정' : '해제'}`);
     showSuccess(`일정비우기를 ${checked ? '설정' : '해제'}했습니다. "일정 저장하기"를 눌러야 반영됩니다.`);
@@ -884,7 +918,9 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
 
       savedSnapshotRef.current = { zones, blockedDates: new Set(blockedDates), tempSchedules: finalTemp };
       window.electronAPI?.notifyDataChanged?.();
-      setChangeSummary(changeLog.map(c => c.msg));
+      const msgs = changeLog.map(c => c.msg);
+      setChangeSummary(msgs);
+      recordChangeHistory(msgs);
       setChangeLog([]);
     } catch (e) {
       showError('저장 실패: ' + e.message);
@@ -938,6 +974,53 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
             <div className="px-5 py-3 border-t border-gray-100">
               <button onClick={() => setChangeSummary(null)}
                 className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">확인</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 일정변경 알람 내역 (이 PC에 저장된 지난 저장 이력) */}
+      {showChangeHistory && (
+        <div className="fixed inset-0 z-[250] flex items-center justify-center bg-black/40" onClick={() => setShowChangeHistory(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[460px] max-w-[92vw] max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2">
+              <span className="text-lg">🔔</span>
+              <h3 className="text-base font-bold text-gray-900">일정변경 알람 내역</h3>
+              <span className="text-xs text-gray-400">(이 PC · 최근 {CHANGE_HISTORY_MAX}건)</span>
+            </div>
+            <div className="px-5 py-3 overflow-y-auto flex-1">
+              {changeHistory.length === 0 ? (
+                <p className="text-sm text-gray-400 py-4 text-center">저장된 일정변경 내역이 없습니다.</p>
+              ) : (
+                <ul className="space-y-3">
+                  {changeHistory.map((h, i) => (
+                    <li key={i} className="border border-gray-100 rounded-lg overflow-hidden">
+                      <div className="px-3 py-1.5 bg-gray-50 text-xs font-semibold text-gray-600 flex items-center justify-between">
+                        <span>{new Date(h.ts).toLocaleString('ko-KR', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                        <span className="text-gray-400 font-normal">{h.changes.length}건</span>
+                      </div>
+                      <ul className="divide-y divide-gray-50">
+                        {h.changes.map((msg, j) => (
+                          <li key={j} className="px-3 py-1.5 text-sm text-gray-700">{msg}</li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-gray-100 flex gap-2">
+              {changeHistory.length > 0 && (
+                <button
+                  onClick={() => {
+                    setChangeHistory([]);
+                    try { localStorage.removeItem(CHANGE_HISTORY_KEY); } catch { /* ignore */ }
+                  }}
+                  className="px-4 py-2 border border-gray-300 text-gray-500 rounded-lg text-sm hover:bg-gray-50"
+                >내역 지우기</button>
+              )}
+              <button onClick={() => setShowChangeHistory(false)}
+                className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">닫기</button>
             </div>
           </div>
         </div>
@@ -1519,6 +1602,13 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
               </button>
             </>
           )}
+          <button
+            onClick={() => setShowChangeHistory(true)}
+            title="지난 일정변경 알람 내역 확인"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-xl border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            🔔 알람 내역
+          </button>
           <div className="flex rounded-xl border border-gray-200 overflow-hidden bg-white text-sm">
             <button onClick={() => setViewMode('calendar')} className={`px-3 py-1.5 font-medium ${viewMode === 'calendar' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>📅 달력</button>
             <button onClick={() => setViewMode('table')} className={`px-3 py-1.5 font-medium ${viewMode === 'table' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>☰ 표</button>
