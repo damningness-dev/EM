@@ -35,4 +35,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('todo:alarm', handler);
     return () => ipcRenderer.removeListener('todo:alarm', handler);
   },
+
+  // 관리자 잠금 상태 변경 수신 (창 간 동기화)
+  onAdminUnlockChanged: (callback) => {
+    const handler = (_event, unlocked) => callback(unlocked);
+    ipcRenderer.on('admin:unlockChanged', handler);
+    return () => ipcRenderer.removeListener('admin:unlockChanged', handler);
+  },
 });

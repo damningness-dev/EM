@@ -130,7 +130,7 @@ function SettingsModal({ cfg, onClose, onStatus }) {
           placeholder={cfg?.hasToken ? '변경 시에만 입력' : 'ghp_... (업로드하려면 필요)'}
           className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mb-1 focus:outline-none focus:ring-1 focus:ring-blue-500" />
         {cfg?.hasToken && <button onClick={clearToken} className="text-[11px] text-red-500 hover:underline mb-3">토큰 삭제</button>}
-        <p className="text-[11px] text-gray-400 mb-3">역할(관리자/멤버)은 로그인 계정으로 결정됩니다. 관리자는 사이드바 "사용자 관리"에서 설정하세요.</p>
+        <p className="text-[11px] text-gray-400 mb-3">일정 편집 권한은 사이드바의 "관리자 잠금 해제"에서 비밀번호로 관리합니다.</p>
 
         <div className="flex items-center gap-3 mt-2 mb-4">
           <label className="flex items-center gap-1.5 text-sm">

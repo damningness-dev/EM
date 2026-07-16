@@ -218,7 +218,7 @@ function getDataPath() {
 function loadData() {
   const p = getDataPath();
   if (!fs.existsSync(p)) {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], todos: [] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [] };
   }
   try {
     const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
@@ -227,20 +227,59 @@ function loadData() {
     if (!data.completions) data.completions = [];
     if (!data.tempSchedules) data.tempSchedules = [];
     if (!data.blockedDates) data.blockedDates = [];
-    if (!data.todos) data.todos = [];
-    if (!data.users) data.users = [];
     return data;
   } catch {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], todos: [], users: [] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [] };
   }
 }
 
+// 할일(오늘의 할일)은 설치본 간 공유되는 em-data.json이 아니라 각 PC의
+// 로컬 파일에서 독립적으로 관리한다 (공유 동기화로 다른 PC 목록이 덮어쓰지 않도록).
+function todosPath() {
+  return path.join(app.getPath('userData'), 'todos-local.json');
+}
+function loadTodos() {
+  try {
+    if (!fs.existsSync(todosPath())) return [];
+    return JSON.parse(fs.readFileSync(todosPath(), 'utf-8')) || [];
+  } catch { return []; }
+}
+function saveTodos(todos) {
+  fs.writeFileSync(todosPath(), JSON.stringify(todos, null, 2), 'utf-8');
+}
+// 구버전 호환: em-data.json에 저장되어 있던 할일을 로컬 파일로 최초 1회 이관.
+// saveData()가 todos 필드를 지워버리기 전에, 앱 시작 직후(IPC 등록 전) 반드시 먼저 실행해야 한다.
+function migrateLegacyTodosOnce() {
+  if (fs.existsSync(todosPath())) return;
+  let legacy = [];
+  try {
+    const p = getDataPath();
+    if (fs.existsSync(p)) legacy = JSON.parse(fs.readFileSync(p, 'utf-8')).todos || [];
+  } catch { /* ignore */ }
+  saveTodos(legacy);
+}
+
 function saveData(data) {
-  fs.writeFileSync(getDataPath(), JSON.stringify(data, null, 2), 'utf-8');
+  const clean = { ...data };
+  delete clean.todos; // 할일은 todos-local.json에서 별도 관리
+  delete clean.users; // 사용자 명부(구 기능) — 관리자 비밀번호로 대체됨
+  fs.writeFileSync(getDataPath(), JSON.stringify(clean, null, 2), 'utf-8');
 }
 
 function newId() {
   return crypto.randomUUID();
+}
+
+// ─── 관리자 잠금 (일정 편집 권한) ──────────────────────────────────────────────
+// 사용자 명부 대신 단일 관리자 비밀번호로 일정 편집 권한을 게이트한다.
+// 비밀번호 해시는 공유 데이터(em-data.json)에 저장되어 여러 PC가 같은 비밀번호를 쓴다.
+// 잠금 해제 상태(adminUnlocked)는 프로세스 메모리에만 있어 앱을 새로 시작하면 항상 잠김.
+let adminUnlocked = false;
+function hashPassword(pw) {
+  return crypto.createHash('sha256').update(String(pw || '')).digest('hex');
+}
+function broadcastAdminUnlocked() {
+  BrowserWindow.getAllWindows().forEach(w => { if (!w.isDestroyed()) w.webContents.send('admin:unlockChanged', adminUnlocked); });
 }
 
 // ─── 앱 환경설정 / 부팅 시 자동 시작 ──────────────────────────────────────────
@@ -414,48 +453,6 @@ function restartSyncTimer() {
   }
 }
 
-// ─── 편집 요청 (Gist 댓글 기반) ───────────────────────────────────────────────
-// 멤버(관리자 아님)가 일정 이동을 '요청'하면 공유 Gist에 댓글로 남긴다.
-// 관리자는 댓글을 읽어 달력에 표시하고, 적용/삭제할 수 있다.
-const REQ_MARKER = 'EM-EDIT-REQ:';
-
-async function submitEditRequest(req) {
-  const cfg = loadSyncConfig();
-  if (!cfg.gistId) return { ok: false, error: 'Gist가 설정되지 않았습니다' };
-  if (!cfg.token) return { ok: false, error: '편집 요청하려면 GitHub 토큰이 필요합니다' };
-  const payload = { ...req, requester: req.requester || cfg.requesterName || '익명', ts: new Date().toISOString() };
-  try {
-    const c = await ghRequest('POST', `https://api.github.com/gists/${cfg.gistId}/comments`, {
-      token: cfg.token, body: { body: REQ_MARKER + JSON.stringify(payload) },
-    });
-    return { ok: true, id: c.id };
-  } catch (err) { return { ok: false, error: err.message }; }
-}
-
-async function getEditRequests() {
-  const cfg = loadSyncConfig();
-  if (!cfg.gistId) return [];
-  try {
-    const comments = await ghRequest('GET', `https://api.github.com/gists/${cfg.gistId}/comments?per_page=100`, { token: cfg.token || undefined });
-    const out = [];
-    (comments || []).forEach(c => {
-      const b = (c.body || '').trim();
-      if (!b.startsWith(REQ_MARKER)) return;
-      try { out.push({ commentId: c.id, ...JSON.parse(b.slice(REQ_MARKER.length)) }); } catch { /* ignore */ }
-    });
-    return out;
-  } catch { return []; }
-}
-
-async function resolveEditRequest(commentId) {
-  const cfg = loadSyncConfig();
-  if (!cfg.gistId || !cfg.token) return { ok: false, error: '권한이 없습니다 (토큰 필요)' };
-  try {
-    await ghRequest('DELETE', `https://api.github.com/gists/${cfg.gistId}/comments/${commentId}`, { token: cfg.token });
-    return { ok: true };
-  } catch (err) { return { ok: false, error: err.message }; }
-}
-
 // ─── 할일(반복 일정) 알람 ──────────────────────────────────────────────────────
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -622,9 +619,8 @@ const firedAlarms = new Set(); // `${id}_${yyyy-MM-dd}` — 하루 1회 발사 �
 let alarmTimer = null;
 let alarmBlockerId = null;
 function checkAlarms() {
-  let data;
-  try { data = loadData(); } catch { return; }
-  const todos = data.todos || [];
+  let todos;
+  try { todos = loadTodos(); } catch { return; }
   if (!todos.length) return;
   const now = new Date();
   todos.forEach(t => {
@@ -755,6 +751,7 @@ if (applyUpdateArg) {
 } else {
   // Normal startup
   app.whenReady().then(() => {
+    migrateLegacyTodosOnce();
     registerHandlers();
     createWindow();
     createTray();
@@ -850,65 +847,73 @@ function registerHandlers() {
     return { ok: true, enabled: !!enabled };
   });
 
-  // ── 사용자 명부(권한) ──
-  ipcMain.handle('users:getAll', () => loadData().users || []);
-  ipcMain.handle('users:upsert', (_e, user) => {
+  // ── 관리자 잠금 (일정 편집 권한) ──
+  ipcMain.handle('admin:hasPassword', () => !!loadData().adminPasswordHash);
+  ipcMain.handle('admin:isUnlocked', () => adminUnlocked);
+  ipcMain.handle('admin:setPassword', (_e, password) => {
+    if (!password) return { ok: false, error: '비밀번호를 입력하세요' };
     const data = loadData();
-    if (!data.users) data.users = [];
-    const empNo = String(user.empNo || '').trim();
-    if (!empNo) return { ok: false, error: '사번이 필요합니다' };
-    const i = data.users.findIndex(u => String(u.empNo) === empNo);
-    const rec = { empNo, name: String(user.name || '').trim(), role: user.role === 'admin' ? 'admin' : 'member' };
-    if (i >= 0) data.users[i] = rec; else data.users.push(rec);
+    data.adminPasswordHash = hashPassword(password);
     saveData(data);
-    return { ok: true, user: rec };
+    adminUnlocked = true;
+    broadcastAdminUnlocked();
+    return { ok: true };
   });
-  ipcMain.handle('users:delete', (_e, empNo) => {
+  ipcMain.handle('admin:unlock', (_e, password) => {
     const data = loadData();
-    data.users = (data.users || []).filter(u => String(u.empNo) !== String(empNo));
+    if (!data.adminPasswordHash) return { ok: false, error: '설정된 관리자 비밀번호가 없습니다' };
+    if (hashPassword(password) !== data.adminPasswordHash) return { ok: false, error: '비밀번호가 올바르지 않습니다' };
+    adminUnlocked = true;
+    broadcastAdminUnlocked();
+    return { ok: true };
+  });
+  ipcMain.handle('admin:lock', () => {
+    adminUnlocked = false;
+    broadcastAdminUnlocked();
+    return { ok: true };
+  });
+  ipcMain.handle('admin:changePassword', (_e, { oldPassword, newPassword } = {}) => {
+    if (!newPassword) return { ok: false, error: '새 비밀번호를 입력하세요' };
+    const data = loadData();
+    if (data.adminPasswordHash && hashPassword(oldPassword) !== data.adminPasswordHash) {
+      return { ok: false, error: '현재 비밀번호가 올바르지 않습니다' };
+    }
+    data.adminPasswordHash = hashPassword(newPassword);
     saveData(data);
     return { ok: true };
   });
 
-  // ── 편집 요청 ──
-  ipcMain.handle('sync:submitEditRequest', (_e, req) => submitEditRequest(req));
-  ipcMain.handle('sync:getEditRequests', () => getEditRequests());
-  ipcMain.handle('sync:resolveEditRequest', (_e, commentId) => resolveEditRequest(commentId));
-
-  // ── 할일(반복 일정) ──
-  ipcMain.handle('todos:getAll', () => loadData().todos || []);
+  // ── 할일(반복 일정) — 설치본 공유 데이터가 아닌 이 PC 로컬 파일에서 관리 ──
+  ipcMain.handle('todos:getAll', () => loadTodos());
   ipcMain.handle('todos:upsert', (_e, todo) => {
-    const data = loadData();
-    if (!data.todos) data.todos = [];
+    const todos = loadTodos();
     if (todo.id) {
-      const i = data.todos.findIndex(t => t.id === todo.id);
-      if (i >= 0) data.todos[i] = todo; else data.todos.push(todo);
+      const i = todos.findIndex(t => t.id === todo.id);
+      if (i >= 0) todos[i] = todo; else todos.push(todo);
       // 알람 시간을 수정했으면 오늘자 발사 기록을 지워 새 시간에 다시 울리게 한다
       firedAlarms.forEach(k => { if (k.startsWith(todo.id + '_')) firedAlarms.delete(k); });
     } else {
       todo.id = newId();
       if (!todo.completedDates) todo.completedDates = [];
-      data.todos.push(todo);
+      todos.push(todo);
     }
-    saveData(data);
+    saveTodos(todos);
     // 방금 저장한 알람이 이미 지난 시각이면 바로 표시
     setTimeout(() => { try { checkAlarms(); } catch { /* ignore */ } }, 500);
     return todo;
   });
   ipcMain.handle('todos:delete', (_e, id) => {
-    const data = loadData();
-    data.todos = (data.todos || []).filter(t => t.id !== id);
-    saveData(data);
+    saveTodos(loadTodos().filter(t => t.id !== id));
     return true;
   });
   ipcMain.handle('todos:toggleDone', (_e, id, dateStr) => {
-    const data = loadData();
-    const t = (data.todos || []).find(x => x.id === id);
+    const todos = loadTodos();
+    const t = todos.find(x => x.id === id);
     if (t) {
       if (!t.completedDates) t.completedDates = [];
       const i = t.completedDates.indexOf(dateStr);
       if (i >= 0) t.completedDates.splice(i, 1); else t.completedDates.push(dateStr);
-      saveData(data);
+      saveTodos(todos);
     }
     return t;
   });

@@ -186,16 +186,25 @@ export async function setAutoStart(enabled) {
   return api.invoke('app:setAutoStart', enabled);
 }
 
-// ─── 사용자 명부(권한) ────────────────────────────────────────────────────────
+// ─── 관리자 잠금 (일정 편집 권한) ──────────────────────────────────────────────
 
-export async function fetchUsers() {
-  return api.invoke('users:getAll');
+export async function adminHasPassword() {
+  return api.invoke('admin:hasPassword');
 }
-export async function upsertUser(user) {
-  return api.invoke('users:upsert', user);
+export async function adminIsUnlocked() {
+  return api.invoke('admin:isUnlocked');
 }
-export async function deleteUser(empNo) {
-  return api.invoke('users:delete', empNo);
+export async function adminSetPassword(password) {
+  return api.invoke('admin:setPassword', password);
+}
+export async function adminUnlock(password) {
+  return api.invoke('admin:unlock', password);
+}
+export async function adminLock() {
+  return api.invoke('admin:lock');
+}
+export async function adminChangePassword(oldPassword, newPassword) {
+  return api.invoke('admin:changePassword', { oldPassword, newPassword });
 }
 
 // ─── 공유 동기화 (Gist) ───────────────────────────────────────────────────────
@@ -211,15 +220,6 @@ export async function syncUpload() {
 }
 export async function syncPull() {
   return api.invoke('sync:pull');
-}
-export async function submitEditRequest(req) {
-  return api.invoke('sync:submitEditRequest', req);
-}
-export async function fetchEditRequests() {
-  return api.invoke('sync:getEditRequests');
-}
-export async function resolveEditRequest(commentId) {
-  return api.invoke('sync:resolveEditRequest', commentId);
 }
 
 // ─── 임시 일정 ────────────────────────────────────────────────────────────────
