@@ -152,7 +152,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
 
   function recordChangeHistory(changes) {
     setChangeHistory(prev => {
-      const next = [{ ts: new Date().toISOString(), changes }, ...prev].slice(0, CHANGE_HISTORY_MAX);
+      const next = [{ ts: new Date().toISOString(), changes, source: 'local' }, ...prev].slice(0, CHANGE_HISTORY_MAX);
       try { localStorage.setItem(CHANGE_HISTORY_KEY, JSON.stringify(next)); } catch { /* ignore */ }
       return next;
     });
@@ -1015,9 +1015,12 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                 <ul className="space-y-3">
                   {changeHistory.map((h, i) => (
                     <li key={i} className="border border-gray-100 rounded-lg overflow-hidden">
-                      <div className="px-3 py-1.5 bg-gray-50 text-xs font-semibold text-gray-600 flex items-center justify-between">
+                      <div className="px-3 py-1.5 bg-gray-50 text-xs font-semibold text-gray-600 flex items-center gap-1.5">
                         <span>{new Date(h.ts).toLocaleString('ko-KR', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-                        <span className="text-gray-400 font-normal">{h.changes.length}건</span>
+                        {h.source === 'sync' && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-600 font-medium">동기화 수신</span>
+                        )}
+                        <span className="text-gray-400 font-normal ml-auto">{h.changes.length}건</span>
                       </div>
                       <ul className="divide-y divide-gray-50">
                         {h.changes.map((msg, j) => (
@@ -1623,7 +1626,11 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
             </>
           )}
           <button
-            onClick={() => setShowChangeHistory(true)}
+            onClick={() => {
+              // 다른 곳(동기화 알람 등)에서 기록된 내역까지 최신으로 보기 위해 다시 읽어온다.
+              try { setChangeHistory(JSON.parse(localStorage.getItem(CHANGE_HISTORY_KEY)) || []); } catch { /* ignore */ }
+              setShowChangeHistory(true);
+            }}
             title="지난 일정변경 알람 내역 확인"
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-xl border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition-colors"
           >

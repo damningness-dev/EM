@@ -7,6 +7,7 @@ import ZoneGantt from './components/ZoneGantt';
 import TodoToday from './components/TodoToday';
 import CalendarView from './components/CalendarView';
 import UpdateNotifier from './components/UpdateNotifier';
+import SyncChangeNotifier from './components/SyncChangeNotifier';
 import SyncControl from './components/SyncControl';
 import AdminLock from './components/AdminLock';
 import { seedInitialData, fetchScheduleConfig, getAutoStart, setAutoStart, adminIsUnlocked, adminLock } from './lib/api';
@@ -100,6 +101,7 @@ export default function App() {
         </nav>
 
         <UpdateNotifier />
+        <SyncChangeNotifier />
 
         {/* 관리자 잠금 — 비밀번호를 입력해야 일정 변경/일정 관리가 가능 */}
         <div className="px-4 py-3 border-t border-gray-700">

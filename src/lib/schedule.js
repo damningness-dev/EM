@@ -309,6 +309,30 @@ export function totalCount(zone) {
   return spec.reduce((sum, p) => sum + p.count, 0);
 }
 
+// 두 zones 스냅샷을 비교해 사람이 읽을 수 있는 일정 변경 내역을 만든다.
+// (공유 동기화로 다른 PC의 변경사항을 받았을 때 "무엇이 바뀌었는지" 표시하기 위함)
+export function diffZoneSchedules(oldZones, newZones) {
+  const msgs = [];
+  const oldById = new Map((oldZones || []).map(z => [String(z.id), z]));
+  (newZones || []).forEach(nz => {
+    const oz = oldById.get(String(nz.id));
+    if (!oz) return; // 새로 생긴 구역은 비교 대상에서 제외
+    const label = `${nz.name}[${nz.grade}]`;
+    if ((oz.schedule_start || '') !== (nz.schedule_start || '')) {
+      msgs.push(`시작일 변경: ${label} ${oz.schedule_start || '?'} → ${nz.schedule_start || '?'} (이후 일정 재배치)`);
+    }
+    const oOv = oz.schedule_overrides || {};
+    const nOv = nz.schedule_overrides || {};
+    const keys = new Set([...Object.keys(oOv), ...Object.keys(nOv)]);
+    keys.forEach(k => {
+      if (oOv[k] === nOv[k]) return;
+      if (nOv[k] === undefined) msgs.push(`${label} ${k}회차: ${oOv[k]} → 자동 재배치`);
+      else msgs.push(`${label} ${k}회차: ${oOv[k] || '?'} → ${nOv[k]}`);
+    });
+  });
+  return msgs;
+}
+
 // P1(일간) 이동 제한 창의 기준 작업일 수 — 주말/공휴일은 세지 않고, 그만큼 창을 늘린다.
 const DAILY_BOUND_WORKDAYS = 7;
 
