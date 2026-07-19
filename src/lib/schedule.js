@@ -660,6 +660,49 @@ export function optimizeMonthSchedule({ zones, tempSchedules = [], completions =
     });
   }
 
+  // 빈 날짜 채우기 — 주말·공휴일·일정비우기를 제외한 이 달의 근무일 중 측정(또는
+  // 임시일정)이 하나도 없는 날이 남지 않도록, 여러 건이 몰린 날에서 이동 가능한
+  // 측정을 하나씩 당겨온다. 각 측정 고유의 이동 가능 창(win) 안에서만 옮긴다.
+  {
+    const monthDays = [];
+    const first = new Date(year, month - 1, 1);
+    const last = new Date(year, month, 0);
+    for (let d = new Date(first); d <= last; d = addDays(d, 1)) {
+      if (isWorkingDay(d, holidayMap)) monthDays.push(format(d, 'yyyy-MM-dd'));
+    }
+
+    const dayCount = {};
+    events.forEach(e => { if (e.ds.startsWith(prefix)) dayCount[e.ds] = (dayCount[e.ds] || 0) + 1; });
+    tempSchedules.forEach(t => { if (t.date && t.date.startsWith(prefix)) dayCount[t.date] = (dayCount[t.date] || 0) + 1; });
+
+    const emptyDays = monthDays.filter(ds => !dayCount[ds]);
+    emptyDays.forEach(emptyDs => {
+      // 후보: 원래 날짜에 2건 이상 있어 하나를 옮겨도 그 날이 비지 않고, 이 빈 날짜가
+      // 이동 가능 창(win) 안에 있는 이동 가능 측정. 가장 몰려있는 날에서 우선 당겨온다.
+      const candidates = movable
+        .filter(e => (dayCount[e.ds] || 0) > 1 && e.win.includes(emptyDs))
+        .sort((a, b) => (dayCount[b.ds] || 0) - (dayCount[a.ds] || 0));
+      const e = candidates[0];
+      if (!e) return; // 채울 수 있는 이동 가능 측정이 없음 (그대로 빈 날로 남음)
+
+      const from = e.ds;
+      dayCount[from] -= 1;
+      dayCount[emptyDs] = (dayCount[emptyDs] || 0) + 1;
+
+      const fromCl = catLoad[e.category]?.[from];
+      if (fromCl) TYPES.forEach(t => { fromCl[t] -= e.pts[t]; });
+      if (!catLoad[e.category]) catLoad[e.category] = {};
+      if (!catLoad[e.category][emptyDs]) catLoad[e.category][emptyDs] = { surface: 0, float: 0, fall: 0, particle: 0 };
+      TYPES.forEach(t => { catLoad[e.category][emptyDs][t] += e.pts[t]; });
+      if (COMBINED_CATS.includes(e.category)) {
+        combinedLoad[from] = (combinedLoad[from] || 0) - e.ptTotal;
+        combinedLoad[emptyDs] = (combinedLoad[emptyDs] || 0) + e.ptTotal;
+      }
+      e.ds = emptyDs;
+      overrides[e.zoneId] = { ...(overrides[e.zoneId] || {}), [e.num]: emptyDs };
+    });
+  }
+
   return overrides;
 }
 

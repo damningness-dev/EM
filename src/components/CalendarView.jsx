@@ -612,8 +612,6 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
       particle: parseInt(optimizeCapacities.particle) || 0,
       combined: parseInt(optimizeCapacities.combined) || 0,
     };
-    const anySet = Object.values(caps).some(v => v > 0);
-    if (!anySet) { showError('최소 하나의 포인트 최대값을 설정해주세요.'); return; }
     try { localStorage.setItem('em-daily-capacities', JSON.stringify(optimizeCapacities)); } catch {}
     setOptimizing(true);
     try {
@@ -1260,6 +1258,8 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
               <p className="text-xs text-gray-400 mb-4 leading-relaxed">
                 {year}년 {MONTH_KR[month - 1]}의 하루 포인트가 설정값 초과 시 측정주기 내 여유일로 이동합니다.
                 공조·질소가스·압축공기는 <b>각각 따로</b> 계산되며, 질소+압축공기는 합산도 확인합니다. (완료·임시 고정)
+                주말·공휴일·일정비우기로 설정된 날은 제외하고, 일정이 하나도 없는 날이 남지 않도록
+                이동 가능한 측정을 채워 넣습니다. (최대값을 비워둬도 빈 날 채우기는 동작합니다)
               </p>
 
               <div className="space-y-2 mb-4">
