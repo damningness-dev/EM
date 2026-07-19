@@ -109,10 +109,10 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   const [loading, setLoading] = useState(true);
   const [showOrderManager, setShowOrderManager] = useState(false);
   const [dragOverDay, setDragOverDay] = useState(null);
-  const [toast, setToast] = useState(null);
-  const toastTimer = useRef(null);
-  const [successToast, setSuccessToast] = useState(null);
-  const successToastTimer = useRef(null);
+  // 오류/성공 알림을 각각 하나만 유지하던 방식(toast/successToast)은 긴 오류 메시지가
+  // 뒤에 뜨는 성공 알림(예: 일정 변경 알람)에 가려지는 문제가 있었다. 여러 개를
+  // 겹치지 않게 세로로 쌓아 각자 독립적으로 표시/소멸되도록 큐 형태로 관리한다.
+  const [toasts, setToasts] = useState([]); // [{ id, type:'error'|'success', message }]
   const [groups, setGroups] = useState([]);
   const [phasePrompt, setPhasePrompt] = useState(null); // { zoneId, zoneName, nextGrade, dateStr }
   const [newGroupName, setNewGroupName] = useState('');
@@ -576,16 +576,19 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     } catch { return ''; }
   }
 
+  function pushToast(type, message, durationMs) {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setToasts(prev => [...prev, { id, type, message }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), durationMs);
+  }
+
+  // 오류 알림은 다른 알림에 가려지지 않도록 성공 알림보다 오래(더 눈에 띄게) 유지된다.
   function showError(message) {
-    setToast(message);
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), 3500);
+    pushToast('error', message, 5000);
   }
 
   function showSuccess(message) {
-    setSuccessToast(message);
-    if (successToastTimer.current) clearTimeout(successToastTimer.current);
-    successToastTimer.current = setTimeout(() => setSuccessToast(null), 3000);
+    pushToast('success', message, 3000);
   }
 
   function getChipStyle(category, grade) {
@@ -952,21 +955,22 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   return (
     <div className="p-6 space-y-5">
 
-      {/* Error toast */}
-      {toast && (
-        <div className="fixed top-4 right-4 z-[200] bg-red-500 text-white px-4 py-3 rounded-xl shadow-xl flex items-start gap-3 max-w-sm">
-          <span className="text-base shrink-0 mt-0.5">⚠</span>
-          <span className="text-sm font-medium flex-1 leading-snug">{toast}</span>
-          <button onClick={() => setToast(null)} className="text-red-200 hover:text-white text-lg leading-none shrink-0">✕</button>
-        </div>
-      )}
-
-      {/* Success toast */}
-      {successToast && (
-        <div className="fixed top-16 right-4 z-[200] bg-green-600 text-white px-4 py-3 rounded-xl shadow-xl flex items-start gap-3 max-w-sm">
-          <span className="text-base shrink-0 mt-0.5">✓</span>
-          <span className="text-sm font-medium flex-1 leading-snug">{successToast}</span>
-          <button onClick={() => setSuccessToast(null)} className="text-green-200 hover:text-white text-lg leading-none shrink-0">✕</button>
+      {/* 오류/성공 알림 스택 — 서로 겹쳐서 가려지지 않도록 세로로 쌓아 각각 독립적으로 표시 */}
+      {toasts.length > 0 && (
+        <div className="fixed top-4 right-4 z-[200] flex flex-col gap-2 max-w-sm">
+          {toasts.map(t => (
+            <div
+              key={t.id}
+              className={`px-4 py-3 rounded-xl shadow-xl flex items-start gap-3 ${t.type === 'error' ? 'bg-red-500 text-white' : 'bg-green-600 text-white'}`}
+            >
+              <span className="text-base shrink-0 mt-0.5">{t.type === 'error' ? '⚠' : '✓'}</span>
+              <span className="text-sm font-medium flex-1 leading-snug">{t.message}</span>
+              <button
+                onClick={() => setToasts(prev => prev.filter(x => x.id !== t.id))}
+                className={`text-lg leading-none shrink-0 ${t.type === 'error' ? 'text-red-200 hover:text-white' : 'text-green-200 hover:text-white'}`}
+              >✕</button>
+            </div>
+          ))}
         </div>
       )}
 
