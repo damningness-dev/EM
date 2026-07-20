@@ -296,15 +296,15 @@ export default function Calibration() {
                       </td>
                       {editingId === item.id ? (
                         <>
-                          <td className="px-4 py-2 text-gray-400">{idx + 1}</td>
-                          <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm" value={form.no || ''} onChange={e => setForm(f => ({ ...f, no: e.target.value }))} /></td>
-                          <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm" value={form.sn || ''} onChange={e => setForm(f => ({ ...f, sn: e.target.value }))} /></td>
-                          <td className="px-4 py-2 text-gray-400 text-xs">{(item.eff || item).cert_no || '—'}</td>
-                          <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm" value={form.name || ''} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></td>
-                          <td className="px-4 py-2 text-gray-400 text-xs">{formatDate((item.eff || item).calib_date)}</td>
-                          <td className="px-4 py-2 text-gray-400 text-xs">{formatDate((item.eff || item).next_calib_date)}</td>
+                          <td className="px-4 py-2 text-center text-gray-400">{idx + 1}</td>
+                          <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm text-center" value={form.no || ''} onChange={e => setForm(f => ({ ...f, no: e.target.value }))} /></td>
+                          <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm text-center" value={form.sn || ''} onChange={e => setForm(f => ({ ...f, sn: e.target.value }))} /></td>
+                          <td className="px-4 py-2 text-center text-gray-400 text-xs">{(item.eff || item).cert_no || '—'}</td>
+                          <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm text-center" value={form.name || ''} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></td>
+                          <td className="px-4 py-2 text-center text-gray-400 text-xs">{formatDate((item.eff || item).calib_date)}</td>
+                          <td className="px-4 py-2 text-center text-gray-400 text-xs">{formatDate((item.eff || item).next_calib_date)}</td>
                           <td className="px-4 py-2 text-center text-gray-300">—</td>
-                          <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm" placeholder="비고" value={form.note || ''} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} /></td>
+                          <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm text-center" placeholder="비고" value={form.note || ''} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} /></td>
                           <td className="px-4 py-2 text-center whitespace-nowrap">
                             <button onClick={saveEdit} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs mr-1 disabled:opacity-50">저장</button>
                             <button onClick={() => setEditingId(null)} className="px-2 py-1 bg-gray-200 rounded text-xs">취소</button>
@@ -312,13 +312,13 @@ export default function Calibration() {
                         </>
                       ) : (
                         <>
-                          <td className="px-4 py-3 text-gray-400">{idx + 1}</td>
-                          <td className="px-4 py-3 font-medium text-gray-800">{item.no}</td>
-                          <td className="px-4 py-3 text-gray-600">{item.sn}</td>
-                          <td className="px-4 py-3 text-gray-500 text-xs">{(item.eff || item).cert_no}</td>
-                          <td className="px-4 py-3 text-gray-600">{item.name}</td>
-                          <td className="px-4 py-3 text-gray-500 text-xs">{formatDate((item.eff || item).calib_date)}</td>
-                          <td className="px-4 py-3 text-gray-500 text-xs">{(item.eff || item).next_calib_date === '미사용' ? '미사용' : formatDate((item.eff || item).next_calib_date)}</td>
+                          <td className="px-4 py-3 text-center text-gray-400">{idx + 1}</td>
+                          <td className="px-4 py-3 text-center font-medium text-gray-800">{item.no}</td>
+                          <td className="px-4 py-3 text-center text-gray-600">{item.sn}</td>
+                          <td className="px-4 py-3 text-center text-gray-500 text-xs">{(item.eff || item).cert_no}</td>
+                          <td className="px-4 py-3 text-center text-gray-600">{item.name}</td>
+                          <td className="px-4 py-3 text-center text-gray-500 text-xs">{formatDate((item.eff || item).calib_date)}</td>
+                          <td className="px-4 py-3 text-center text-gray-500 text-xs">{(item.eff || item).next_calib_date === '미사용' ? '미사용' : formatDate((item.eff || item).next_calib_date)}</td>
                           <td className={`px-4 py-3 text-center font-semibold text-sm ${getDDayColor(item.dday)}`}>{getDDayLabel(item.dday)}</td>
                           <td className="px-4 py-3 text-center text-xs text-gray-400">{item.note}</td>
                           <td className="px-4 py-3 text-center whitespace-nowrap">
