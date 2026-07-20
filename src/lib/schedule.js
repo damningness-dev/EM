@@ -487,73 +487,9 @@ export function optimizeMonthSchedule({ zones, tempSchedules = [], completions =
   const overrides = {};
   const maxIter = movable.length * 10 + 50;
 
-  for (let iter = 0; iter < maxIter; iter++) {
-    // Find worst violation: (kind='type', cat, ds, type) or (kind='combined', ds)
-    let worst = null, worstExcess = 0;
-
-    for (const cat in catLoad) {
-      for (const ds in catLoad[cat]) {
-        const cl = catLoad[cat][ds];
-        for (const t of TYPES) {
-          const cap = capacities[t];
-          if (cap > 0 && cl[t] > cap) {
-            const ex = cl[t] - cap;
-            if (ex > worstExcess) { worstExcess = ex; worst = { kind: 'type', cat, ds, type: t }; }
-          }
-        }
-      }
-    }
-    for (const ds in combinedLoad) {
-      const eff = effCombined(ds);
-      const cap = capacities.combined;
-      if (cap > 0 && eff > cap) {
-        const ex = eff - cap;
-        if (ex > worstExcess) { worstExcess = ex; worst = { kind: 'combined', ds }; }
-      }
-    }
-    if (!worst) break;
-
-    let best = null;
-    if (worst.kind === 'type') {
-      for (const e of movable) {
-        if (e.category !== worst.cat || e.ds !== worst.ds || e.win.length < 2 || e.pts[worst.type] <= 0) continue;
-        for (const target of e.win) {
-          if (target === e.ds) continue;
-          const targetCl = catLoad[e.category]?.[target] || { surface:0, float:0, fall:0, particle:0 };
-          const newVal = targetCl[worst.type] + e.pts[worst.type];
-          if (newVal < catLoad[worst.cat][worst.ds][worst.type] && (!best || newVal < best.metric)) {
-            best = { e, target, metric: newVal };
-          }
-        }
-      }
-    } else {
-      for (const e of movable) {
-        if (!COMBINED_CATS.includes(e.category) || e.ds !== worst.ds || e.win.length < 2) continue;
-        for (const target of e.win) {
-          if (target === e.ds) continue;
-          const newCombined = effCombined(target) + e.ptTotal;
-          if (newCombined < effCombined(worst.ds) && (!best || newCombined < best.metric)) {
-            best = { e, target, metric: newCombined };
-          }
-        }
-      }
-    }
-    if (!best) break;
-
-    const { e, target } = best;
-    const fromCl = catLoad[e.category][e.ds];
-    TYPES.forEach(t => { fromCl[t] -= e.pts[t]; });
-    if (!catLoad[e.category][target]) catLoad[e.category][target] = { surface:0, float:0, fall:0, particle:0 };
-    TYPES.forEach(t => { catLoad[e.category][target][t] += e.pts[t]; });
-    if (COMBINED_CATS.includes(e.category)) {
-      combinedLoad[e.ds] = (combinedLoad[e.ds] || 0) - e.ptTotal;
-      combinedLoad[target] = (combinedLoad[target] || 0) + e.ptTotal;
-    }
-    e.ds = target;
-    overrides[e.zoneId] = { ...(overrides[e.zoneId] || {}), [e.num]: target };
-  }
-
-  // Post-optimization: consolidate same-group measurements to the same day within each period.
+  // 1) 그룹 우선 배정 — 같은 그룹(폴더)의 측정은 측정주기 창이 겹치면 먼저
+  // 같은 날로 모은다. 그 다음(2)에서 이 배치를 기준으로 측정주기(유형별) 용량을
+  // 맞추고, 그래도 빈 날이 남으면(3)에서 채운다.
   // Capacity constraints are respected; if a day can't fit all group members, skip that cluster.
   if (namedGroups.length > 0) {
     const zoneToGroup = new Map();
@@ -660,7 +596,75 @@ export function optimizeMonthSchedule({ zones, tempSchedules = [], completions =
     });
   }
 
-  // 빈 날짜 채우기 — 주말·공휴일·일정비우기를 제외한 이 달의 근무일 중 측정(또는
+  // 2) 측정주기(유형별) 용량 배정 — 1)의 그룹 배치를 그대로 둔 채, 하루 포인트가
+  // 설정값을 넘는 날의 측정을 측정주기 창 안에서 여유 있는 날로 옮겨 맞춘다.
+  for (let iter = 0; iter < maxIter; iter++) {
+    // Find worst violation: (kind='type', cat, ds, type) or (kind='combined', ds)
+    let worst = null, worstExcess = 0;
+
+    for (const cat in catLoad) {
+      for (const ds in catLoad[cat]) {
+        const cl = catLoad[cat][ds];
+        for (const t of TYPES) {
+          const cap = capacities[t];
+          if (cap > 0 && cl[t] > cap) {
+            const ex = cl[t] - cap;
+            if (ex > worstExcess) { worstExcess = ex; worst = { kind: 'type', cat, ds, type: t }; }
+          }
+        }
+      }
+    }
+    for (const ds in combinedLoad) {
+      const eff = effCombined(ds);
+      const cap = capacities.combined;
+      if (cap > 0 && eff > cap) {
+        const ex = eff - cap;
+        if (ex > worstExcess) { worstExcess = ex; worst = { kind: 'combined', ds }; }
+      }
+    }
+    if (!worst) break;
+
+    let best = null;
+    if (worst.kind === 'type') {
+      for (const e of movable) {
+        if (e.category !== worst.cat || e.ds !== worst.ds || e.win.length < 2 || e.pts[worst.type] <= 0) continue;
+        for (const target of e.win) {
+          if (target === e.ds) continue;
+          const targetCl = catLoad[e.category]?.[target] || { surface:0, float:0, fall:0, particle:0 };
+          const newVal = targetCl[worst.type] + e.pts[worst.type];
+          if (newVal < catLoad[worst.cat][worst.ds][worst.type] && (!best || newVal < best.metric)) {
+            best = { e, target, metric: newVal };
+          }
+        }
+      }
+    } else {
+      for (const e of movable) {
+        if (!COMBINED_CATS.includes(e.category) || e.ds !== worst.ds || e.win.length < 2) continue;
+        for (const target of e.win) {
+          if (target === e.ds) continue;
+          const newCombined = effCombined(target) + e.ptTotal;
+          if (newCombined < effCombined(worst.ds) && (!best || newCombined < best.metric)) {
+            best = { e, target, metric: newCombined };
+          }
+        }
+      }
+    }
+    if (!best) break;
+
+    const { e, target } = best;
+    const fromCl = catLoad[e.category][e.ds];
+    TYPES.forEach(t => { fromCl[t] -= e.pts[t]; });
+    if (!catLoad[e.category][target]) catLoad[e.category][target] = { surface:0, float:0, fall:0, particle:0 };
+    TYPES.forEach(t => { catLoad[e.category][target][t] += e.pts[t]; });
+    if (COMBINED_CATS.includes(e.category)) {
+      combinedLoad[e.ds] = (combinedLoad[e.ds] || 0) - e.ptTotal;
+      combinedLoad[target] = (combinedLoad[target] || 0) + e.ptTotal;
+    }
+    e.ds = target;
+    overrides[e.zoneId] = { ...(overrides[e.zoneId] || {}), [e.num]: target };
+  }
+
+  // 3) 빈 날짜 채우기 — 주말·공휴일·일정비우기를 제외한 이 달의 근무일 중 측정(또는
   // 임시일정)이 하나도 없는 날이 남지 않도록, 여러 건이 몰린 날에서 이동 가능한
   // 측정을 하나씩 당겨온다. 각 측정 고유의 이동 가능 창(win) 안에서만 옮긴다.
   {

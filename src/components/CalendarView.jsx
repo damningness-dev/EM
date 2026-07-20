@@ -1266,10 +1266,11 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
             <div className="bg-white rounded-2xl shadow-2xl w-[420px] p-6" onClick={e => e.stopPropagation()}>
               <h3 className="text-base font-bold text-gray-900 mb-1">⚖ 일정 최적화</h3>
               <p className="text-xs text-gray-400 mb-4 leading-relaxed">
-                {year}년 {MONTH_KR[month - 1]}의 하루 포인트가 설정값 초과 시 측정주기 내 여유일로 이동합니다.
+                {year}년 {MONTH_KR[month - 1]} 일정을 <b>①그룹 → ②측정주기(유형별 용량) → ③빈 날 채우기</b> 순서로 배정합니다.
+                같은 그룹 측정을 먼저 같은 날로 모으고, 그 다음 하루 포인트가 설정값을 넘는 날을 측정주기 내
+                여유일로 옮기며, 그래도 일정이 하나도 없는 날이 남으면 이동 가능한 측정을 채워 넣습니다.
                 공조·질소가스·압축공기는 <b>각각 따로</b> 계산되며, 질소+압축공기는 합산도 확인합니다. (완료·임시 고정)
-                주말·공휴일·일정비우기로 설정된 날은 제외하고, 일정이 하나도 없는 날이 남지 않도록
-                이동 가능한 측정을 채워 넣습니다. (최대값을 비워둬도 빈 날 채우기는 동작합니다)
+                주말·공휴일·일정비우기로 설정된 날은 제외합니다. (최대값을 비워둬도 ①③은 동작합니다)
               </p>
 
               <div className="space-y-2 mb-4">
