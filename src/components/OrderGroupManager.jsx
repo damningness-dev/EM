@@ -1,5 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
-import { upsertZone, deleteZone, upsertGroup, fetchScheduleConfig, saveScheduleConfig } from '../lib/api';
+import { upsertZone, deleteZone, upsertGroup, deleteGroup, fetchScheduleConfig, saveScheduleConfig } from '../lib/api';
 import { GRADE_PRIORITY, DEFAULT_SCHEDULE_SPECS, setScheduleConfig, getScheduleConfig, buildHolidayMap, computeCascadeSchedules, calcMeasurements, calcEndDate, computePhaseCount, totalCount, UNIT_DAYS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
 import { GRADE_COLORS, CLEAN_GRADES, CLEAN_GRADE_COLORS } from '../data/initialData';
 
@@ -105,7 +105,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     }))
   );
   const [modalNamedGroups, setModalNamedGroups] = useState(() =>
-    groups.map(g => ({ ...g, zoneIds: [...(g.zoneIds || [])] }))
+    groups.map((g, i) => ({ ...g, zoneIds: [...(g.zoneIds || [])], sort_order: g.sort_order ?? i }))
   );
   const [modalSelectedIdx, setModalSelectedIdx] = useState(null);
   const [expandedRows, setExpandedRows] = useState(new Set());
@@ -149,6 +149,10 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
   const [contextMenu, setContextMenu] = useState(null); // { x, y, groupIdx }
   const contextMenuRef = useRef(null);
   const [contextMenuStyle, setContextMenuStyle] = useState(null); // 화면을 벗어나지 않도록 보정된 위치
+  // 폴더(일정그룹) 이름 우클릭 메뉴 — 이름 변경/삭제/순서 이동
+  const [folderContextMenu, setFolderContextMenu] = useState(null); // { x, y, groupId }
+  const folderContextMenuRef = useRef(null);
+  const [folderContextMenuStyle, setFolderContextMenuStyle] = useState(null);
   // 측정주기 설정 (대분류 → 소분류 2단계)
   const [cycleConfig, setCycleConfig] = useState(() => getScheduleConfig());
   const [cycleMajorTab, setCycleMajorTab] = useState('공조'); // 선택된 대분류
@@ -233,6 +237,34 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     setContextMenuStyle({ left, top, maxHeight: window.innerHeight - margin * 2 });
   }, [contextMenu]);
 
+  // 폴더 이름 우클릭 메뉴 click-outside 닫기
+  useEffect(() => {
+    if (!folderContextMenu) return;
+    function onDown(e) {
+      if (folderContextMenuRef.current && !folderContextMenuRef.current.contains(e.target)) {
+        setFolderContextMenu(null);
+      }
+    }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [folderContextMenu]);
+
+  // 폴더 이름 우클릭 메뉴 위치 보정 (그룹 배정 메뉴와 동일한 방식)
+  useLayoutEffect(() => {
+    if (!folderContextMenu || !folderContextMenuRef.current) { setFolderContextMenuStyle(null); return; }
+    const margin = 8;
+    const rect = folderContextMenuRef.current.getBoundingClientRect();
+    let top = folderContextMenu.y;
+    let left = folderContextMenu.x;
+    if (top + rect.height > window.innerHeight - margin) {
+      top = Math.max(margin, folderContextMenu.y - rect.height);
+    }
+    if (left + rect.width > window.innerWidth - margin) {
+      left = Math.max(margin, window.innerWidth - margin - rect.width);
+    }
+    setFolderContextMenuStyle({ left, top, maxHeight: window.innerHeight - margin * 2 });
+  }, [folderContextMenu]);
+
   // 폴더 필터링된 그룹 목록
   const filteredGroups = useMemo(() => {
     if (folderFilter === null) return modalGroups;
@@ -311,7 +343,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     const name = newFolderName.trim();
     if (!name) return;
     try {
-      const saved = await upsertGroup({ name, zoneIds: [] });
+      const saved = await upsertGroup({ name, zoneIds: [], sort_order: modalNamedGroups.length });
       setModalNamedGroups(prev => [...prev, saved]);
       setNewFolderName('');
       setShowNewFolder(false);
@@ -328,6 +360,31 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
       const saved = await upsertGroup({ ...g, name });
       setModalNamedGroups(prev => prev.map(mg => String(mg.id) === String(id) ? { ...mg, name: saved?.name || name } : mg));
     } catch (e) { setError('이름 변경 실패: ' + e.message); }
+  }
+
+  // 폴더 순서 이동 (dir: -1 위로, +1 아래로) — sort_order를 배열 순서에 맞춰 다시 매겨 저장
+  async function moveFolder(id, dir) {
+    const idx = modalNamedGroups.findIndex(g => String(g.id) === String(id));
+    if (idx < 0) return;
+    const swapIdx = idx + dir;
+    if (swapIdx < 0 || swapIdx >= modalNamedGroups.length) return;
+    const next = [...modalNamedGroups];
+    [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
+    const reordered = next.map((g, i) => ({ ...g, sort_order: i }));
+    setModalNamedGroups(reordered);
+    try { await Promise.all(reordered.map(g => upsertGroup(g))); }
+    catch (e) { setError('순서 변경 실패: ' + e.message); }
+  }
+
+  async function deleteFolder(id) {
+    const g = modalNamedGroups.find(mg => String(mg.id) === String(id));
+    if (!g) return;
+    if (!window.confirm(`"${g.name}" 그룹을 삭제할까요?\n그룹에 속한 구역은 삭제되지 않고 그룹 배정만 해제됩니다.`)) return;
+    try {
+      await deleteGroup(id);
+      setModalNamedGroups(prev => prev.filter(mg => String(mg.id) !== String(id)));
+      setFolderFilter(prev => (String(prev) === String(id) ? null : prev));
+    } catch (e) { setError('그룹 삭제 실패: ' + e.message); }
   }
 
   function reverseCalcStartDate(category, grade, currentCount) {
@@ -1292,10 +1349,12 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                     <div
                       key={g.id}
                       onClick={() => { if (editingFolderId !== String(g.id)) setFolderFilter(String(g.id)); }}
+                      onContextMenu={e => { e.preventDefault(); setFolderContextMenu({ x: e.clientX, y: e.clientY, groupId: g.id }); }}
                       onDragOver={e => { e.preventDefault(); setDragOverFolder(String(g.id)); }}
                       onDragLeave={() => setDragOverFolder(null)}
                       onDrop={e => handleFolderDrop(e, String(g.id))}
                       className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs border transition-colors ${folderFilter === String(g.id) ? 'bg-blue-600 text-white border-blue-600' : dragOverFolder === String(g.id) ? 'bg-blue-100 border-blue-400 text-blue-700' : 'bg-white border-gray-200 text-gray-700 hover:bg-blue-50 hover:border-blue-200'} ${editingFolderId === String(g.id) ? 'cursor-default' : 'cursor-pointer'}`}
+                      title="우클릭: 이름 변경 · 삭제 · 순서 이동"
                     >
                       <span>📁</span>
                       {editingFolderId === String(g.id) ? (
@@ -1546,6 +1605,46 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
           ))}
         </div>
       )}
+
+      {/* 폴더(일정그룹) 이름 우클릭 메뉴 — 이름 변경 / 삭제 / 순서 이동 */}
+      {folderContextMenu && (() => {
+        const idx = modalNamedGroups.findIndex(g => String(g.id) === String(folderContextMenu.groupId));
+        const g = modalNamedGroups[idx];
+        if (!g) return null;
+        return (
+          <div
+            ref={folderContextMenuRef}
+            className="fixed bg-white rounded-xl shadow-2xl border border-gray-200 py-1 z-[600] min-w-36 overflow-y-auto"
+            style={{
+              left: folderContextMenuStyle?.left ?? folderContextMenu.x,
+              top: folderContextMenuStyle?.top ?? folderContextMenu.y,
+              maxHeight: folderContextMenuStyle?.maxHeight,
+              pointerEvents: 'auto',
+            }}
+          >
+            <div className="px-3 py-1.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100 truncate">📁 {g.name}</div>
+            <button
+              onClick={() => { setEditingFolderId(String(g.id)); setEditingFolderName(g.name); setFolderContextMenu(null); }}
+              className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-blue-50 hover:text-blue-700"
+            >✏ 이름 변경</button>
+            <button
+              onClick={() => { moveFolder(g.id, -1); setFolderContextMenu(null); }}
+              disabled={idx === 0}
+              className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-blue-50 hover:text-blue-700 disabled:text-gray-300 disabled:hover:bg-transparent"
+            >🔼 위로 이동</button>
+            <button
+              onClick={() => { moveFolder(g.id, 1); setFolderContextMenu(null); }}
+              disabled={idx === modalNamedGroups.length - 1}
+              className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-blue-50 hover:text-blue-700 disabled:text-gray-300 disabled:hover:bg-transparent"
+            >🔽 아래로 이동</button>
+            <div className="border-t border-gray-100 my-1" />
+            <button
+              onClick={() => { deleteFolder(g.id); setFolderContextMenu(null); }}
+              className="w-full text-left px-3 py-1.5 text-xs text-red-500 hover:bg-red-50"
+            >🗑 삭제</button>
+          </div>
+        );
+      })()}
     </div>
   );
 }
