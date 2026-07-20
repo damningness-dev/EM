@@ -713,6 +713,9 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     const zone = zones.find(z => z.id === dragData.zoneId);
     if (!zone) return;
 
+    // 같은 날짜에 다시 내려놓은 경우는 실제 변경이 아니므로 조용히 무시 (저장/알람 없음)
+    if (dragData.fromDateStr && dragData.fromDateStr === dateStr) return;
+
     if (blockedDates.has(dateStr)) {
       showError('일정비우기가 체크되어있습니다');
       return;
@@ -721,8 +724,11 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     // 각 단계의 '첫 측정'을 옮기면 시작일 자체를 재설정 → 이후 일정 전부가
     // 새 시작일 기준 주기로 재배치된다. (기존 수동 이동은 초기화)
     // 일정관리의 시작일·종료예정일도 자동으로 갱신됨.
+    // 첫 측정 번호에 override를 함께 남겨, P2/P3/유지관리처럼 주말이 기본적으로
+    // 회피되는 등급도 요청한 날짜(주말 포함)에 그대로 고정되도록 한다.
+    // (override가 없으면 자동 배치 로직이 평일로 다시 보정해버려 주말 지정이 무시됨)
     if (dragData.isFirst) {
-      const updated = { ...zone, schedule_start: dateStr, schedule_overrides: {} };
+      const updated = { ...zone, schedule_start: dateStr, schedule_overrides: { [String(dragData.num)]: dateStr } };
       setZones(prev => prev.map(z => z.id === zone.id ? updated : z));
       logChange(`시작일 변경: ${zone.name}[${zone.grade}] ${zone.schedule_start || '?'} → ${dateStr} (이후 일정 재배치)`);
       showSuccess('시작일을 옮기고 이후 일정을 재배치했습니다. "일정 저장하기"를 눌러야 반영됩니다.');

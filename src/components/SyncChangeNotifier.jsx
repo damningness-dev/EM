@@ -61,8 +61,10 @@ export default function SyncChangeNotifier() {
 
   if (!note) return null;
 
+  // fixed 위치로 화면 위에 떠서, 사이드바의 다른 항목(자동 시작 체크박스, 동기화
+  // 카드 등)을 밀어내며 레이아웃/창 크기가 흔들리는 일이 없도록 한다.
   return (
-    <div className="mx-3 mb-3 rounded-lg text-xs overflow-hidden bg-indigo-600">
+    <div className="fixed left-3 bottom-3 z-[300] w-56 rounded-lg text-xs overflow-hidden bg-indigo-600 shadow-2xl">
       <div className="p-3">
         <div className="font-semibold text-white mb-1.5">🔔 일정이 동기화되었습니다</div>
         <ul className="text-white/90 space-y-1 mb-2 max-h-40 overflow-y-auto leading-snug">
