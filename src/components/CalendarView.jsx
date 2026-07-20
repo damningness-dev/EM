@@ -345,7 +345,8 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
 
   // 측정 일정을 그 날의 할일(알람)로 추가/해제 토글
   async function toggleMeasTodo(zone, m, dateStr) {
-    if (!requireAdmin()) return;
+    // 할일 알람 추가/해제는 개인 로컬 할일일 뿐 공유 일정을 바꾸지 않으므로
+    // 관리자 잠금 해제 없이도 사용할 수 있게 한다.
     const key = measTodoKey(zone, m, dateStr);
     const existing = todos.find(t => t.srcKey === key);
     if (existing) {
@@ -365,7 +366,6 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
 
   // 해당 날짜의 모든 측정을 한 번에 할일(알람)로 추가
   async function addAllMeasTodos(dateStr) {
-    if (!requireAdmin()) return;
     const evts = scheduleByDate[dateStr] || [];
     const toAdd = evts.filter(({ zone, measurement }) => !hasMeasTodo(zone, measurement, dateStr));
     if (toAdd.length === 0) { showSuccess('이미 모든 일정이 할일에 추가되어 있습니다.'); return; }
