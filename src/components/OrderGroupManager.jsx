@@ -48,7 +48,7 @@ function cellBorder(sel) {
 // 컬럼 정의 — 헤더 드래그로 순서 변경, 우측 핸들로 너비 조절
 const COL_DEFS = {
   num:         { label: '#',        width: 36 },
-  name:        { label: '구역명',    flex: true, minWidth: 120 },
+  name:        { label: '구역명',    width: 200 },
   category:    { label: '분류',      width: 60 },
   clean_grade: { label: '청정등급',  width: 70 },
   start:       { label: '시작일',    width: 92 },
@@ -821,9 +821,11 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
   }
 
   // 헤더 셀 렌더링 (드래그 순서 변경 + 너비 조절)
+  // 모든 컬럼을 독립적으로 크기 고정(shrink-0)해, 한 컬럼을 조절할 때 다른(특히
+  // 구역명처럼 남는 공간을 채우던) 컬럼이 함께 밀리며 반대쪽 구분선이 움직이는
+  // 문제가 없도록 한다. 폭 합이 넘치면 목록 영역이 가로 스크롤된다.
   function renderHeaderCell(key) {
     const def = COL_DEFS[key];
-    const isFlex = !!def.flex;
     const isDrop = colDropKey === key && colDragKey && colDragKey !== key;
     return (
       <div
@@ -831,8 +833,8 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
         onDragOver={e => { if (colDragKey) { e.preventDefault(); setColDropKey(key); } }}
         onDragLeave={() => setColDropKey(c => (c === key ? null : c))}
         onDrop={e => { const fk = e.dataTransfer.getData('colDragKey'); if (fk) { e.preventDefault(); reorderCol(fk, key); } setColDragKey(null); setColDropKey(null); }}
-        className={`relative flex items-center justify-center text-center border-r border-gray-200 ${isFlex ? 'flex-1 min-w-0' : 'shrink-0'} ${isDrop ? 'bg-blue-200' : ''}`}
-        style={isFlex ? { minWidth: def.minWidth } : { width: colWidth(key) }}
+        className={`relative flex items-center justify-center text-center border-r border-gray-200 shrink-0 ${isDrop ? 'bg-blue-200' : ''}`}
+        style={{ width: colWidth(key) }}
       >
         <span
           draggable
@@ -841,17 +843,15 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
           className={`truncate px-1 cursor-move ${colDragKey === key ? 'opacity-40' : ''}`}
           title="드래그하여 컬럼 순서 변경"
         >{def.label}</span>
-        {!isFlex && (
-          <div
-            onMouseDown={e => startColResize(e, key)}
-            onClick={e => e.stopPropagation()}
-            draggable={false}
-            onDragStart={e => e.preventDefault()}
-            className="absolute top-0 h-full cursor-col-resize hover:bg-blue-400/50"
-            style={{ right: 0, width: 6, transform: 'translateX(50%)', zIndex: 2 }}
-            title="드래그하여 너비 조절"
-          />
-        )}
+        <div
+          onMouseDown={e => startColResize(e, key)}
+          onClick={e => e.stopPropagation()}
+          draggable={false}
+          onDragStart={e => e.preventDefault()}
+          className="absolute top-0 h-full cursor-col-resize hover:bg-blue-400/50"
+          style={{ right: 0, width: 6, transform: 'translateX(50%)', zIndex: 2 }}
+          title="드래그하여 너비 조절"
+        />
       </div>
     );
   }
@@ -1020,7 +1020,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
               {/* 왼쪽: 구역 목록 */}
               <div className="flex flex-col flex-1 min-w-0">
                   {/* 목록 (헤더 포함 — sticky로 스크롤바 폭 자동 보정) */}
-                <div ref={listRef} className="flex-1 overflow-y-auto">
+                <div ref={listRef} className="flex-1 overflow-auto">
                 {/* sticky 컬럼 헤더 */}
                 <div className="sticky top-0 z-20 flex items-stretch bg-gray-100 border-b border-gray-300 text-xs font-semibold text-gray-600 select-none" style={{ height: 30 }}>
                   <div className="shrink-0 flex items-center justify-center text-center text-gray-300 border-r border-gray-200" style={{ width: HANDLE_W }}>≡</div>
@@ -1062,15 +1062,12 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                             title="드래그하여 순서 변경"
                           >≡</div>
                           {colOrder.map(key => {
-                            const def = COL_DEFS[key];
-                            const isFlex = !!def.flex;
-                            const wStyle = isFlex ? { minWidth: def.minWidth } : { width: colWidth(key) };
-                            const wClass = isFlex ? 'flex-1 min-w-0' : 'shrink-0';
-                            const base = `flex items-center justify-center text-center h-full ${wClass} ${cellBorder(sel)}`;
+                            const wStyle = { width: colWidth(key) };
+                            const base = `flex items-center justify-center text-center h-full shrink-0 ${cellBorder(sel)}`;
                             const dim = sel ? 'text-blue-100' : 'text-gray-400';
                             if (key === 'name') {
                               return (
-                                <div key={key} className={`flex items-center gap-1 min-w-0 px-1 h-full flex-1 ${cellBorder(sel)}`} style={{ minWidth: def.minWidth }}>
+                                <div key={key} className={`flex items-center gap-1 min-w-0 shrink-0 px-1 h-full ${cellBorder(sel)}`} style={wStyle}>
                                   <button
                                     onClick={e => { e.stopPropagation(); setExpandedRows(prev => { const s = new Set(prev); s.has(group.key) ? s.delete(group.key) : s.add(group.key); return s; }); }}
                                     className={`shrink-0 text-[10px] transition-transform ${isExpanded ? 'rotate-90' : ''} ${sel ? 'text-blue-200' : 'text-gray-400'}`}
@@ -1149,12 +1146,9 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                             >
                               <div className="shrink-0" style={{ width: HANDLE_W }} />
                               {colOrder.map(key => {
-                                const def = COL_DEFS[key];
-                                const isFlex = !!def.flex;
-                                const wStyle = isFlex ? { minWidth: def.minWidth } : { width: colWidth(key) };
-                                const wClass = isFlex ? 'flex-1 min-w-0' : 'shrink-0';
-                                const cell = `flex items-center justify-center h-full ${wClass} border-r border-blue-100`;
-                                if (key === 'name') return <div key={key} className={`flex items-center flex-1 min-w-0 px-1 text-gray-500 text-[10px] truncate border-r border-blue-100`} style={{ minWidth: def.minWidth }}>{zone.name}</div>;
+                                const wStyle = { width: colWidth(key) };
+                                const cell = `flex items-center justify-center h-full shrink-0 border-r border-blue-100`;
+                                if (key === 'name') return <div key={key} className={`flex items-center shrink-0 min-w-0 px-1 text-gray-500 text-[10px] truncate border-r border-blue-100`} style={wStyle}>{zone.name}</div>;
                                 if (key === 'num') return <div key={key} className={cell} style={wStyle}><span className={`text-[9px] px-1 py-px rounded font-bold ${GRADE_COLORS[zone.grade] || 'bg-gray-100 text-gray-600'}`}>{zone.grade}</span></div>;
                                 if (key === 'category') return (
                                   <div key={key} className={cell} style={wStyle}>
