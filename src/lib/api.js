@@ -235,3 +235,7 @@ export async function addTempSchedule(entry) {
 export async function deleteTempSchedule(id) {
   return api.invoke('tempSchedules:delete', id);
 }
+
+export async function updateTempSchedule(entry) {
+  return api.invoke('tempSchedules:update', entry);
+}

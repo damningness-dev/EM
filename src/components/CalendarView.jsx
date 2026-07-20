@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
-import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload } from '../lib/api';
+import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, updateTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
@@ -168,6 +168,8 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   const [addSchedPopup, setAddSchedPopup] = useState(null); // { date }
   const [addSchedName, setAddSchedName] = useState('');
   const [addSchedPts, setAddSchedPts] = useState({ surface: '', float: '', fall: '', particle: '' });
+  const [editingTempId, setEditingTempId] = useState(null); // 임시일정 이름 수정 중인 id
+  const [editingTempName, setEditingTempName] = useState('');
   const [chipColors, setChipColors] = useState(() => {
     try {
       const saved = localStorage.getItem('em-chip-colors');
@@ -876,6 +878,17 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     showSuccess(`일정비우기를 ${checked ? '설정' : '해제'}했습니다. "일정 저장하기"를 눌러야 반영됩니다.`);
   }
 
+  // 임시일정 이름 수정 (초안 — 저장하기 전까지는 로컬 상태만 변경)
+  function renameTempSchedule(t, newName) {
+    const name = newName.trim();
+    setEditingTempId(null);
+    if (!name || name === t.name) return;
+    if (!requireAdmin()) return;
+    setTempSchedules(prev => prev.map(x => x.id === t.id ? { ...x, name } : x));
+    logChange(`임시일정 이름 변경: ${t.name} → ${name}`);
+    showSuccess('임시 일정 이름을 변경했습니다. "일정 저장하기"를 눌러야 반영됩니다.');
+  }
+
   // 되돌리기 — 마지막 저장 시점 상태로 전체 복원 (측정일 이동/시작일 변경/일정비우기/임시일정/최적화 초안 전체 취소)
   function handleRevertDraft() {
     if (!requireAdmin()) return;
@@ -915,6 +928,11 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
       }));
       const toDelete = pendingTempDeletesRef.current;
       await Promise.all(toDelete.map(id => deleteTempSchedule(id)));
+
+      // 이미 저장된 임시일정 중 이름 등이 수정된 것만 업데이트 (초안 스냅샷과 참조가 달라진 것)
+      const snapTempById = new Map(snap.tempSchedules.map(t => [t.id, t]));
+      const changedTemp = tempSchedules.filter(t => !t._draftNew && snapTempById.get(t.id) && snapTempById.get(t.id) !== t);
+      await Promise.all(changedTemp.map(t => updateTempSchedule(t)));
 
       const finalTemp = tempSchedules.map(t => {
         if (!t._draftNew) return t;
@@ -1850,6 +1868,15 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                           title={`${c.name} (${dDayText(c.next_calib_date)})`}
                         >{c.name}</div>
                       ))}
+                      {/* 임시일정은 항상 정규 일정보다 위에 표시 */}
+                      {tempEvts.map((t, i) => (
+                        <div
+                          key={`t${i}`}
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-xs px-1 py-0.5 rounded truncate bg-orange-50 border border-orange-200 text-orange-600"
+                          title={`${t.name}[임시]`}
+                        >{t.name}[임시]</div>
+                      ))}
                       {schedEvts.map(({ zone, measurement }, i) => {
                         const bounds = getDragBounds(measurement, scheduleAvoid);
                         const label = `${zone.name}[${zone.grade}]-${measurement.num}`;
@@ -1884,14 +1911,6 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                           </div>
                         );
                       })}
-                      {tempEvts.map((t, i) => (
-                        <div
-                          key={`t${i}`}
-                          onClick={(e) => e.stopPropagation()}
-                          className="text-xs px-1 py-0.5 rounded truncate bg-orange-50 border border-orange-200 text-orange-600"
-                          title={`${t.name}[임시]`}
-                        >{t.name}[임시]</div>
-                      ))}
                     </div>
                   </div>
                 );
@@ -2001,6 +2020,60 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                 </>
               )}
 
+              {/* 임시일정은 항상 정규 측정 일정보다 위에 표시 */}
+              {selectedTempEvents.length > 0 && (
+                <>
+                  <div className="px-4 py-1.5 bg-orange-50 border-b border-orange-100">
+                    <span className="text-xs font-semibold text-orange-600">임시 일정 ({selectedTempEvents.length}건)</span>
+                  </div>
+                  <div className="divide-y divide-gray-50">
+                    {selectedTempEvents.map(t => (
+                      <div key={t.id} className="px-4 py-2.5">
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-orange-50 border border-orange-200 text-orange-600">임시</span>
+                          <button
+                            onClick={() => {
+                              if (!requireAdmin()) return;
+                              // 이미 저장된 임시일정이면 삭제를 "저장하기" 때까지 예약, 초안(_draftNew)이면 바로 제거
+                              if (!t._draftNew) pendingTempDeletesRef.current = [...pendingTempDeletesRef.current, t.id];
+                              setTempSchedules(prev => prev.filter(x => x.id !== t.id));
+                              logChange(`임시일정 삭제: ${t.name} (${t.date})`);
+                              showSuccess('임시 일정을 삭제 예약했습니다. "일정 저장하기"를 눌러야 반영됩니다.');
+                            }}
+                            className="text-xs text-gray-400 hover:text-red-500 leading-none"
+                          >✕</button>
+                        </div>
+                        {editingTempId === t.id ? (
+                          <input
+                            autoFocus
+                            className="text-sm font-medium text-gray-800 border border-blue-400 rounded px-1.5 py-0.5 w-full focus:outline-none"
+                            value={editingTempName}
+                            onChange={e => setEditingTempName(e.target.value)}
+                            onClick={e => e.stopPropagation()}
+                            onKeyDown={e => { if (e.key === 'Enter') renameTempSchedule(t, editingTempName); if (e.key === 'Escape') setEditingTempId(null); }}
+                            onBlur={() => renameTempSchedule(t, editingTempName)}
+                          />
+                        ) : (
+                          <p
+                            className="text-sm font-medium text-gray-800 cursor-text"
+                            title="더블클릭하여 이름 수정"
+                            onDoubleClick={() => { if (requireAdmin()) { setEditingTempId(t.id); setEditingTempName(t.name); } }}
+                          >{t.name}</p>
+                        )}
+                        {(t.points_surface || t.points_float || t.points_fall || t.points_particle) ? (
+                          <div className="flex gap-1 mt-1 flex-wrap">
+                            {t.points_surface > 0 && <span className="text-[10px] bg-green-50 text-green-600 px-1 py-0.5 rounded">표면균 {t.points_surface}pt</span>}
+                            {t.points_float > 0 && <span className="text-[10px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">부유균 {t.points_float}pt</span>}
+                            {t.points_fall > 0 && <span className="text-[10px] bg-orange-50 text-orange-600 px-1 py-0.5 rounded">낙하균 {t.points_fall}pt</span>}
+                            {t.points_particle > 0 && <span className="text-[10px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">부유입자 {t.points_particle}pt</span>}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
               {selectedDay && (selectedScheduleEvents.length > 0 || blockedDates.has(selectedDay)) && (
                 <div className="px-4 py-1.5 bg-blue-50 border-b border-blue-100 flex items-center justify-between gap-2">
                   <span className="text-xs font-semibold text-blue-600">측정 일정 ({selectedScheduleEvents.length}건)</span>
@@ -2086,43 +2159,6 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                         </div>
                       );
                     })}
-                  </div>
-                </>
-              )}
-
-              {selectedTempEvents.length > 0 && (
-                <>
-                  <div className="px-4 py-1.5 bg-orange-50 border-b border-orange-100 border-t border-t-gray-100">
-                    <span className="text-xs font-semibold text-orange-600">임시 일정 ({selectedTempEvents.length}건)</span>
-                  </div>
-                  <div className="divide-y divide-gray-50">
-                    {selectedTempEvents.map(t => (
-                      <div key={t.id} className="px-4 py-2.5">
-                        <div className="flex items-center justify-between gap-1 mb-1">
-                          <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-orange-50 border border-orange-200 text-orange-600">임시</span>
-                          <button
-                            onClick={() => {
-                              if (!requireAdmin()) return;
-                              // 이미 저장된 임시일정이면 삭제를 "저장하기" 때까지 예약, 초안(_draftNew)이면 바로 제거
-                              if (!t._draftNew) pendingTempDeletesRef.current = [...pendingTempDeletesRef.current, t.id];
-                              setTempSchedules(prev => prev.filter(x => x.id !== t.id));
-                              logChange(`임시일정 삭제: ${t.name} (${t.date})`);
-                              showSuccess('임시 일정을 삭제 예약했습니다. "일정 저장하기"를 눌러야 반영됩니다.');
-                            }}
-                            className="text-xs text-gray-400 hover:text-red-500 leading-none"
-                          >✕</button>
-                        </div>
-                        <p className="text-sm font-medium text-gray-800">{t.name}</p>
-                        {(t.points_surface || t.points_float || t.points_fall || t.points_particle) ? (
-                          <div className="flex gap-1 mt-1 flex-wrap">
-                            {t.points_surface > 0 && <span className="text-[10px] bg-green-50 text-green-600 px-1 py-0.5 rounded">표면균 {t.points_surface}pt</span>}
-                            {t.points_float > 0 && <span className="text-[10px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">부유균 {t.points_float}pt</span>}
-                            {t.points_fall > 0 && <span className="text-[10px] bg-orange-50 text-orange-600 px-1 py-0.5 rounded">낙하균 {t.points_fall}pt</span>}
-                            {t.points_particle > 0 && <span className="text-[10px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">부유입자 {t.points_particle}pt</span>}
-                          </div>
-                        ) : null}
-                      </div>
-                    ))}
                   </div>
                 </>
               )}

@@ -1228,4 +1228,10 @@ function registerHandlers() {
     data.tempSchedules = data.tempSchedules.filter(t => t.id !== id);
     saveData(data);
   });
+  ipcMain.handle('tempSchedules:update', (_e, entry) => {
+    const data = loadData();
+    const i = data.tempSchedules.findIndex(t => t.id === entry.id);
+    if (i >= 0) { data.tempSchedules[i] = { ...data.tempSchedules[i], ...entry }; saveData(data); return data.tempSchedules[i]; }
+    return null;
+  });
 }
