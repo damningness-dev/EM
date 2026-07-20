@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { upsertZone, deleteZone, upsertGroup, fetchScheduleConfig, saveScheduleConfig } from '../lib/api';
 import { GRADE_PRIORITY, DEFAULT_SCHEDULE_SPECS, setScheduleConfig, getScheduleConfig, buildHolidayMap, computeCascadeSchedules, calcMeasurements, calcEndDate, computePhaseCount, totalCount, UNIT_DAYS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
 import { GRADE_COLORS, CLEAN_GRADES, CLEAN_GRADE_COLORS } from '../data/initialData';
@@ -148,6 +148,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
   // 우클릭 컨텍스트 메뉴
   const [contextMenu, setContextMenu] = useState(null); // { x, y, groupIdx }
   const contextMenuRef = useRef(null);
+  const [contextMenuStyle, setContextMenuStyle] = useState(null); // 화면을 벗어나지 않도록 보정된 위치
   // 측정주기 설정 (대분류 → 소분류 2단계)
   const [cycleConfig, setCycleConfig] = useState(() => getScheduleConfig());
   const [cycleMajorTab, setCycleMajorTab] = useState('공조'); // 선택된 대분류
@@ -212,6 +213,24 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     }
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
+  }, [contextMenu]);
+
+  // 우클릭 메뉴 위치 보정 — 클릭 지점 아래로 펼쳤을 때 화면(특히 하단) 밖으로
+  // 나가면 위쪽으로 펼치고, 그래도 다 안 들어가면 최대 높이를 제한해 스크롤되게 한다.
+  useLayoutEffect(() => {
+    if (!contextMenu || !contextMenuRef.current) { setContextMenuStyle(null); return; }
+    const margin = 8;
+    const rect = contextMenuRef.current.getBoundingClientRect();
+    let top = contextMenu.y;
+    let left = contextMenu.x;
+    if (top + rect.height > window.innerHeight - margin) {
+      // 아래쪽에 다 펼칠 공간이 없으면 위쪽으로 펼친다 (클릭 지점을 메뉴 하단에 맞춤)
+      top = Math.max(margin, contextMenu.y - rect.height);
+    }
+    if (left + rect.width > window.innerWidth - margin) {
+      left = Math.max(margin, window.innerWidth - margin - rect.width);
+    }
+    setContextMenuStyle({ left, top, maxHeight: window.innerHeight - margin * 2 });
   }, [contextMenu]);
 
   // 폴더 필터링된 그룹 목록
@@ -1505,12 +1524,17 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
         )}
       </div>
 
-      {/* 우클릭 컨텍스트 메뉴 */}
+      {/* 우클릭 컨텍스트 메뉴 — 하단 공간이 부족하면 위쪽으로 펼치고, 그래도 넘치면 스크롤 */}
       {contextMenu && (
         <div
           ref={contextMenuRef}
-          className="fixed bg-white rounded-xl shadow-2xl border border-gray-200 py-1 z-[600] min-w-36"
-          style={{ left: contextMenu.x, top: contextMenu.y, pointerEvents: 'auto' }}
+          className="fixed bg-white rounded-xl shadow-2xl border border-gray-200 py-1 z-[600] min-w-36 overflow-y-auto"
+          style={{
+            left: contextMenuStyle?.left ?? contextMenu.x,
+            top: contextMenuStyle?.top ?? contextMenu.y,
+            maxHeight: contextMenuStyle?.maxHeight,
+            pointerEvents: 'auto',
+          }}
         >
           <div className="px-3 py-1.5 text-[10px] font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100">📁 그룹 배정</div>
           <button
