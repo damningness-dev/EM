@@ -667,7 +667,12 @@ export function optimizeMonthSchedule({ zones, tempSchedules = [], completions =
   // 3) 빈 날짜 채우기 — 주말·공휴일·일정비우기를 제외한 이 달의 근무일 중 측정(또는
   // 임시일정)이 하나도 없는 날이 남지 않도록, 여러 건이 몰린 날에서 이동 가능한
   // 측정을 하나씩 당겨온다. 각 측정 고유의 이동 가능 창(win) 안에서만 옮긴다.
+  // 그룹(1단계)에서 모아둔 배치는 항상 그룹·측정주기 배정이 우선이므로, 그룹에
+  // 속한 구역의 측정은 빈 날 채우기의 이동 후보에서 제외해 흩어지지 않게 한다.
   {
+    const groupedZoneIds = new Set();
+    namedGroups.forEach(g => { (g.zoneIds || []).forEach(zid => groupedZoneIds.add(String(zid))); });
+
     const monthDays = [];
     const first = new Date(year, month - 1, 1);
     const last = new Date(year, month, 0);
@@ -682,9 +687,10 @@ export function optimizeMonthSchedule({ zones, tempSchedules = [], completions =
     const emptyDays = monthDays.filter(ds => !dayCount[ds]);
     emptyDays.forEach(emptyDs => {
       // 후보: 원래 날짜에 2건 이상 있어 하나를 옮겨도 그 날이 비지 않고, 이 빈 날짜가
-      // 이동 가능 창(win) 안에 있는 이동 가능 측정. 가장 몰려있는 날에서 우선 당겨온다.
+      // 이동 가능 창(win) 안에 있는 이동 가능 측정. 그룹 소속 구역은 제외. 가장
+      // 몰려있는 날에서 우선 당겨온다.
       const candidates = movable
-        .filter(e => (dayCount[e.ds] || 0) > 1 && e.win.includes(emptyDs))
+        .filter(e => (dayCount[e.ds] || 0) > 1 && e.win.includes(emptyDs) && !groupedZoneIds.has(String(e.zoneId)))
         .sort((a, b) => (dayCount[b.ds] || 0) - (dayCount[a.ds] || 0));
       const e = candidates[0];
       if (!e) return; // 채울 수 있는 이동 가능 측정이 없음 (그대로 빈 날로 남음)
