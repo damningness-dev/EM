@@ -222,7 +222,7 @@ export default function Calibration() {
     { key: 'name', label: '장비명', sortable: true },
     { key: 'calib_date', label: '교정일', sortable: true },
     { key: 'next_calib_date', label: '차기교정일', sortable: true },
-    { key: 'dday', label: 'D-Day', sortable: true, center: true },
+    { key: 'dday', label: 'D-Day', sortable: true },
   ];
 
   return (
@@ -260,7 +260,7 @@ export default function Calibration() {
                 {COLS.map(c => {
                   const wKey = c.key || 'idx';
                   return (
-                    <th key={c.label} className={`relative px-4 py-3 text-gray-500 font-medium truncate ${c.center ? 'text-center' : 'text-left'} ${c.sortable ? 'cursor-pointer select-none hover:text-gray-800' : ''}`}
+                    <th key={c.label} className={`relative px-4 py-3 text-gray-500 font-medium truncate text-center ${c.sortable ? 'cursor-pointer select-none hover:text-gray-800' : ''}`}
                       onClick={c.sortable ? () => toggleSort(c.key) : undefined}>
                       {c.label} {c.sortable && sortArrow(c.key)}
                       <span onMouseDown={e => startColResize(e, wKey)} draggable={false} onDragStart={e => e.preventDefault()}
