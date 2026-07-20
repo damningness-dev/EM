@@ -80,10 +80,25 @@ function SettingsModal({ cfg, onClose, onStatus }) {
   const [msg, setMsg] = useState(null);
 
   async function save() {
+    // 최초로 Gist ID를 설정하는 경우(이전엔 없었는데 새로 입력) 저장 직후
+    // 바로 한 번 동기화(내려받기)까지 자동으로 진행해, 별도로 "지금 동기화"를
+    // 다시 누르지 않아도 바로 일정이 반영되게 한다.
+    const isFirstSetup = !cfg?.gistId && !!gistId;
     setBusy(true);
     try {
       await syncSetConfig({ gistId, token: token || undefined, autoSync, intervalMin });
-      setMsg({ ok: true, text: '저장되었습니다.' });
+      if (!isFirstSetup) {
+        setMsg({ ok: true, text: '저장되었습니다.' });
+        return;
+      }
+      setMsg({ ok: true, text: '저장되었습니다. 동기화하는 중...' });
+      const r = await syncPull();
+      if (r?.ok) {
+        onStatus?.({ type: r.updated ? 'updated' : 'idle', lastSyncedAt: r.updatedAt || cfg?.lastSyncedAt });
+        setMsg({ ok: true, text: r.updated ? '저장 및 동기화 완료. 일정이 반영되었습니다.' : '저장 및 동기화 완료.' });
+      } else {
+        setMsg({ ok: false, text: '저장은 되었지만 동기화 실패: ' + (r?.error || '') + ' — "지금 동기화"로 다시 시도하세요.' });
+      }
     } catch (e) { setMsg({ ok: false, text: '저장 실패: ' + e.message }); }
     finally { setBusy(false); }
   }
