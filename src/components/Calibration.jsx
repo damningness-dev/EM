@@ -6,6 +6,14 @@ const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
 let hid = 0;
 function newHistoryId() { return `h${Date.now()}_${hid++}`; }
 
+// 컬럼 순서(고정) + 기본 너비(px) — 헤더 사이 구분선을 드래그해 너비 조절
+const CALIB_COL_ORDER = ['expand', 'idx', 'no', 'sn', 'cert_no', 'name', 'calib_date', 'next_calib_date', 'dday', 'note', 'manage'];
+const CALIB_COL_DEFAULT_W = {
+  expand: 28, idx: 40, no: 110, sn: 100, cert_no: 110, name: 140,
+  calib_date: 100, next_calib_date: 100, dday: 70, note: 140, manage: 140,
+};
+const CALIB_COL_STORE_KEY = 'em-calib-table-cols';
+
 function pad2(n) { return String(n).padStart(2, '0'); }
 // 차기교정일 = 교정일 +1년 -1일 (예: 2026-05-10 → 2027-05-09)
 function nextCalibDate(calibStr) {
@@ -53,6 +61,19 @@ export default function Calibration() {
   const [sortDir, setSortDir] = useState('asc');
   const [dragIdx, setDragIdx] = useState(null);
   const [dropIdx, setDropIdx] = useState(null);
+  const [colW, setColW] = useState(() => {
+    try { const s = JSON.parse(localStorage.getItem(CALIB_COL_STORE_KEY)); if (s && typeof s === 'object') return s; } catch { /* ignore */ }
+    return {};
+  });
+  useEffect(() => { try { localStorage.setItem(CALIB_COL_STORE_KEY, JSON.stringify(colW)); } catch { /* ignore */ } }, [colW]);
+  const colWidth = k => colW[k] ?? CALIB_COL_DEFAULT_W[k];
+  function startColResize(e, key) {
+    e.preventDefault(); e.stopPropagation();
+    const startX = e.clientX, startW = colWidth(key);
+    const onMove = ev => setColW(prev => ({ ...prev, [key]: Math.max(28, startW + ev.clientX - startX) }));
+    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
+  }
 
   useEffect(() => {
     fetchCalibration().then(async d => {
@@ -194,7 +215,7 @@ export default function Calibration() {
 
   const canDrag = !sortKey && !search && filter === 'all';
   const COLS = [
-    { key: null, label: 'No.', w: 'w-8', sortable: false },
+    { key: null, label: 'No.', sortable: false },
     { key: 'no', label: '관리번호', sortable: true },
     { key: 'sn', label: 'S/N', sortable: true },
     { key: 'cert_no', label: '성적서번호', sortable: true },
@@ -225,23 +246,34 @@ export default function Calibration() {
       </div>
 
       <p className="text-xs text-gray-400">
-        {canDrag ? '행을 드래그해 순서를 바꾸거나, ' : ''}헤더를 클릭해 정렬 · ▶ 를 눌러 연도별 교정내역·첨부파일을 관리하세요.
+        {canDrag ? '행을 드래그해 순서를 바꾸거나, ' : ''}헤더를 클릭해 정렬 · 헤더 사이 경계를 드래그해 너비 조절 · ▶ 를 눌러 연도별 교정내역·첨부파일을 관리하세요.
         {sortKey && <button onClick={() => setSortKey(null)} className="ml-2 text-blue-500 hover:underline">수동 순서로</button>}
       </p>
 
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="text-sm" style={{ tableLayout: 'fixed', width: CALIB_COL_ORDER.reduce((s, k) => s + colWidth(k), 0) }}>
+            <colgroup>{CALIB_COL_ORDER.map(k => <col key={k} style={{ width: colWidth(k) }} />)}</colgroup>
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="w-6" />
-                {COLS.map(c => (
-                  <th key={c.label} className={`px-4 py-3 text-gray-500 font-medium ${c.center ? 'text-center' : 'text-left'} ${c.w || ''} ${c.sortable ? 'cursor-pointer select-none hover:text-gray-800' : ''}`}
-                    onClick={c.sortable ? () => toggleSort(c.key) : undefined}>
-                    {c.label} {c.sortable && sortArrow(c.key)}
-                  </th>
-                ))}
-                <th className="text-center px-4 py-3 text-gray-500 font-medium">비고</th>
+                <th className="relative" />
+                {COLS.map(c => {
+                  const wKey = c.key || 'idx';
+                  return (
+                    <th key={c.label} className={`relative px-4 py-3 text-gray-500 font-medium truncate ${c.center ? 'text-center' : 'text-left'} ${c.sortable ? 'cursor-pointer select-none hover:text-gray-800' : ''}`}
+                      onClick={c.sortable ? () => toggleSort(c.key) : undefined}>
+                      {c.label} {c.sortable && sortArrow(c.key)}
+                      <span onMouseDown={e => startColResize(e, wKey)} draggable={false} onDragStart={e => e.preventDefault()}
+                        className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }}
+                        onClick={e => e.stopPropagation()} title="드래그하여 너비 조절" />
+                    </th>
+                  );
+                })}
+                <th className="relative text-center px-4 py-3 text-gray-500 font-medium">
+                  비고
+                  <span onMouseDown={e => startColResize(e, 'note')} draggable={false} onDragStart={e => e.preventDefault()}
+                    className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                </th>
                 <th className="text-center px-4 py-3 text-gray-500 font-medium">관리</th>
               </tr>
             </thead>
