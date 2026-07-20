@@ -79,9 +79,11 @@ async function fetchJSON(url) {
   const res = await httpGet(url);
   if (res.statusCode !== 200) { res.resume(); throw new Error(`HTTP ${res.statusCode}`); }
   return new Promise((resolve, reject) => {
-    let body = '';
-    res.on('data', chunk => { body += chunk; });
-    res.on('end', () => { try { resolve(JSON.parse(body)); } catch (e) { reject(e); } });
+    // 청크를 문자열로 바로 이어붙이면(body += chunk) 멀티바이트 문자(한글 등)가
+    // 청크 경계에서 잘려 깨질 수 있다. Buffer로 모았다가 한 번에 디코딩한다.
+    const chunks = [];
+    res.on('data', chunk => { chunks.push(chunk); });
+    res.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf-8'))); } catch (e) { reject(e); } });
     res.on('error', reject);
   });
 }
@@ -355,9 +357,13 @@ function ghRequest(method, apiUrl, { token, body } = {}) {
     if (token) headers['Authorization'] = 'token ' + token;
     if (data) { headers['Content-Type'] = 'application/json'; headers['Content-Length'] = data.length; }
     const req = https.request({ hostname: u.hostname, path: u.pathname + u.search, method, headers }, (res) => {
-      let out = '';
-      res.on('data', c => { out += c; });
+      // 청크를 문자열로 바로 이어붙이면(out += chunk) 한글 등 멀티바이트 문자가
+      // 청크 경계에서 잘려 깨질 수 있다(예: 구역 이름 일부만 깨짐). Buffer로 모았다가
+      // 한 번에 UTF-8로 디코딩해야 안전하다.
+      const chunks = [];
+      res.on('data', c => { chunks.push(c); });
       res.on('end', () => {
+        const out = Buffer.concat(chunks).toString('utf-8');
         if (res.statusCode >= 200 && res.statusCode < 300) {
           try { resolve(JSON.parse(out || '{}')); } catch (e) { reject(e); }
         } else {
@@ -381,7 +387,11 @@ async function gistFetchData(gistId, token) {
     const res = await httpGet(file.raw_url);
     if (res.statusCode !== 200) { res.resume(); throw new Error(`raw HTTP ${res.statusCode}`); }
     content = await new Promise((resolve, reject) => {
-      let b = ''; res.on('data', c => { b += c; }); res.on('end', () => resolve(b)); res.on('error', reject);
+      // Buffer로 모았다가 한 번에 디코딩 (청크 경계에서 멀티바이트 문자가 깨지는 것 방지)
+      const chunks = [];
+      res.on('data', c => { chunks.push(c); });
+      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+      res.on('error', reject);
     });
   }
   return { updatedAt: g.updated_at, content };
