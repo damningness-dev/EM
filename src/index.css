@@ -13,8 +13,12 @@ body {
 }
 
 /* 인쇄 시 .print-area로 표시한 영역만 보이게 하고, 스크롤/높이 제한을 풀어
-   전체 내용이 여러 페이지에 걸쳐 그대로 인쇄되도록 한다. */
+   전체 내용이 그대로 인쇄되도록 한다. 기본 용지 방향은 가로로 지정. */
 @media print {
+  @page {
+    size: landscape;
+    margin: 10mm;
+  }
   body * {
     visibility: hidden;
   }
@@ -27,6 +31,10 @@ body {
     left: 0;
     top: 0;
     width: 100%;
+    /* 화면에 보이는 그대로 축소해 한 페이지에 들어오도록 한다.
+       --print-scale은 인쇄 직전 JS에서 실제 내용 크기를 재서 계산해 넣는다. */
+    transform: scale(var(--print-scale, 1));
+    transform-origin: top left;
   }
   .print-area,
   .print-area * {

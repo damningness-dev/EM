@@ -178,6 +178,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   });
   const [colorPicker, setColorPicker] = useState(null); // { key, label, type:'cat'|'grade', x, y }
   const colorPickerRef = useRef(null);
+  const printAreaRef = useRef(null); // 인쇄 영역 — 인쇄 직전 크기를 재서 한 페이지에 맞게 축소
   const [optimizePopup, setOptimizePopup] = useState(false);
   const [viewMode, setViewMode] = useState('calendar'); // 'calendar' | 'table'
   const [optimizeCapacities, setOptimizeCapacities] = useState(() => {
@@ -529,8 +530,18 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     });
   }
 
-  // 인쇄 — 현재 보고 있는 화면(달력보기/표보기) 그대로 인쇄한다.
+  // 인쇄 — 현재 보고 있는 화면(달력보기/표보기) 그대로, 기본 가로 용지 한 페이지에
+  // 맞춰 축소해서 인쇄한다. 실제 내용 크기를 재서 축소 비율을 CSS 변수로 넘긴다.
   function handlePrint() {
+    const el = printAreaRef.current;
+    if (el) {
+      el.style.removeProperty('--print-scale');
+      const rect = el.getBoundingClientRect();
+      // 가로 용지(A4/Letter 공통) 여백(10mm) 제외 인쇄 가능 영역 대략치(96dpi 기준, px)
+      const pageW = 980, pageH = 720;
+      const scale = Math.min(pageW / rect.width, pageH / rect.height, 1);
+      el.style.setProperty('--print-scale', scale.toFixed(3));
+    }
     window.print();
   }
 
@@ -1775,7 +1786,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
 
       <div className="flex gap-5">
         {/* Calendar */}
-        <div className="flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden min-w-0 print-area">
+        <div ref={printAreaRef} className="flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden min-w-0 print-area">
           {/* 년/월 표시 + 이전/다음 (달력 테두리 안, 인쇄 시에도 표시) */}
           <div className="flex items-center justify-center gap-4 px-4 py-3 border-b border-gray-100">
             <button onClick={prevMonth} className="print:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-xl leading-none">‹</button>
@@ -1793,7 +1804,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
           <div className="grid grid-cols-7 border-b border-gray-100">
             {dowOrder.map(d => (
               <div key={d} className={`py-2.5 text-center text-xs font-semibold ${
-                d === 0 ? 'text-red-500' : d === 6 ? 'text-blue-500' : 'text-gray-500'
+                d === 0 ? 'bg-red-50 text-red-600' : d === 6 ? 'bg-blue-50 text-blue-600' : 'bg-gray-50 text-gray-600'
               }`}>{DOW_LABELS[d]}</div>
             ))}
           </div>
