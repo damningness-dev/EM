@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
-import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, updateTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload, exportFile } from '../lib/api';
+import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, updateTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload, exportScheduleExcelTable } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
@@ -499,28 +499,31 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   }, [scheduleByDate, year, month, zoneOrderRank]);
 
   // 엑셀(CSV)로 내보내기 — 이번 달 표 보기와 동일한 컬럼 구성
-  function handleExportCsv() {
+  function handleExportExcel() {
     const DOW = ['일', '월', '화', '수', '목', '금', '토'];
-    const header = ['날짜', '요일', '구분', '회차', '부유균', '낙하균', '표면균', '부유입자', '질소', '압축', '완료여부'];
-    const escCsv = v => {
-      const s = String(v ?? '');
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
-    const lines = [header];
-    monthTableRows.forEach(({ ds, zone, measurement }) => {
+    const columns = [
+      { label: '날짜', width: 12 }, { label: '요일', width: 6 }, { label: '구분', width: 22 }, { label: '회차', width: 8 },
+      { label: '부유균', width: 9 }, { label: '낙하균', width: 9 }, { label: '표면균', width: 9 }, { label: '부유입자', width: 9 },
+      { label: '질소', width: 8 }, { label: '압축', width: 8 }, { label: '완료여부', width: 10 },
+    ];
+    const rows = monthTableRows.map(({ ds, zone, measurement }) => {
       const d = new Date(ds + 'T00:00:00');
       const done = completions.has(`${zone.id}_${measurement.num}`);
-      lines.push([
+      return [
         ds, DOW[d.getDay()], `${zone.name}[${zone.grade}]`, measurement.num,
         ptValue(zone, 'float') || '', ptValue(zone, 'fall') || '', ptValue(zone, 'surface') || '', ptValue(zone, 'particle') || '',
         ptValue(zone, 'nitro') || '', ptValue(zone, 'comp') || '',
         done ? '완료' : '예정',
-      ]);
+      ];
     });
-    // 엑셀에서 한글이 깨지지 않도록 UTF-8 BOM을 앞에 붙인다.
-    const csv = '﻿' + lines.map(row => row.map(escCsv).join(',')).join('\r\n');
-    const filename = `모니터링일정_${year}${String(month).padStart(2, '0')}.csv`;
-    exportFile(filename, csv, [{ name: 'CSV (Excel)', extensions: ['csv'] }]).then(r => {
+    const filename = `모니터링일정_${year}${String(month).padStart(2, '0')}.xlsx`;
+    // "표 스타일 보통 16"(TableStyleMedium16) 서식이 적용된 엑셀 표로 내보낸다.
+    exportScheduleExcelTable({
+      defaultName: filename,
+      sheetName: `${year}년 ${month}월`,
+      tableStyle: 'TableStyleMedium16',
+      columns, rows,
+    }).then(r => {
       if (r?.ok) showSuccess(`엑셀 파일로 내보냈습니다: ${r.filePath}`);
       else if (!r?.canceled) showError('내보내기 실패: ' + (r?.error || ''));
     });
@@ -1712,8 +1715,8 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
             🖨 인쇄
           </button>
           <button
-            onClick={handleExportCsv}
-            title="이번 달 일정을 엑셀(CSV)로 저장"
+            onClick={handleExportExcel}
+            title="이번 달 일정을 엑셀 표 서식(표 스타일 보통 16)으로 저장"
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-xl border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition-colors"
           >
             📊 엑셀로 내보내기

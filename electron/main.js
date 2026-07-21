@@ -811,16 +811,32 @@ function registerHandlers() {
   ipcMain.handle('sync:upload', () => syncUpload());
   ipcMain.handle('sync:pull', () => syncPull(true));
 
-  // ── 내보내기 (엑셀/CSV 등 저장 대화상자) ──
-  ipcMain.handle('export:saveFile', async (_e, { defaultName, content, filters } = {}) => {
+  // ── 내보내기 ──
+  // 일정을 엑셀 표 서식(예: "표 스타일 보통 16")이 적용된 진짜 .xlsx 표로 내보내기.
+  // exceljs는 렌더러(Vite) 번들링 없이 메인 프로세스(Node)에서만 사용해 안전하게 처리한다.
+  ipcMain.handle('export:scheduleExcelTable', async (_e, { defaultName, sheetName, tableStyle, columns, rows } = {}) => {
     try {
+      const ExcelJS = require('exceljs');
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet((sheetName || 'Sheet1').slice(0, 31));
+      ws.addTable({
+        name: 'ScheduleTable',
+        ref: 'A1',
+        headerRow: true,
+        totalsRow: false,
+        style: { theme: tableStyle || 'TableStyleMedium16', showRowStripes: true },
+        columns: (columns || []).map(c => ({ name: c.label })),
+        rows: rows || [],
+      });
+      (columns || []).forEach((c, i) => { ws.getColumn(i + 1).width = c.width || 14; });
+
       const win = BrowserWindow.getFocusedWindow() || mainWin;
       const { canceled, filePath } = await dialog.showSaveDialog(win, {
-        defaultPath: defaultName || 'export.csv',
-        filters: filters && filters.length ? filters : [{ name: 'CSV', extensions: ['csv'] }],
+        defaultPath: defaultName || 'export.xlsx',
+        filters: [{ name: 'Excel Workbook', extensions: ['xlsx'] }],
       });
       if (canceled || !filePath) return { ok: false, canceled: true };
-      fs.writeFileSync(filePath, content, 'utf-8');
+      await wb.xlsx.writeFile(filePath);
       return { ok: true, filePath };
     } catch (e) { return { ok: false, error: e.message }; }
   });

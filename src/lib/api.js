@@ -242,6 +242,6 @@ export async function updateTempSchedule(entry) {
 
 // ─── 내보내기 (엑셀/CSV 저장 대화상자) ──────────────────────────────────────────
 
-export async function exportFile(defaultName, content, filters) {
-  return api.invoke('export:saveFile', { defaultName, content, filters });
+export async function exportScheduleExcelTable({ defaultName, sheetName, tableStyle, columns, rows }) {
+  return api.invoke('export:scheduleExcelTable', { defaultName, sheetName, tableStyle, columns, rows });
 }
