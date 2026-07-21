@@ -811,22 +811,26 @@ function registerHandlers() {
   ipcMain.handle('sync:upload', () => syncUpload());
   ipcMain.handle('sync:pull', () => syncPull(true));
 
-  // ── 인쇄 (가로 방향·배경색 강제) ──
-  // 브라우저 window.print()는 용지 방향을 강제하기 어렵다. Electron 인쇄 API로
-  // landscape/배경색을 강제해 항상 가로로, 색상(요일 헤더·칩)까지 인쇄되게 한다.
-  ipcMain.handle('print:doc', (_e, options = {}) => {
-    return new Promise((resolve) => {
+  // ── 인쇄 (가로 방향 강제) ──
+  // Windows Electron 인쇄 대화상자는 landscape 옵션을 무시하고 프린터 기본(세로)을
+  // 따르는 문제가 있다. 그래서 가로·배경색이 확정된 A4 PDF로 렌더링한 뒤 기본
+  // 뷰어로 열어준다 — 뷰어에서 그대로 인쇄하면 항상 가로로 출력된다.
+  ipcMain.handle('print:doc', async (_e, options = {}) => {
+    try {
       const win = BrowserWindow.getFocusedWindow() || mainWin;
-      if (!win || win.isDestroyed()) { resolve({ success: false, failureReason: 'no-window' }); return; }
-      try {
-        win.webContents.print({
-          silent: options.silent === true,
-          printBackground: true,
-          landscape: options.landscape !== false,
-          pageSize: options.pageSize || 'A4',
-        }, (success, failureReason) => resolve({ success, failureReason }));
-      } catch (e) { resolve({ success: false, failureReason: e.message }); }
-    });
+      if (!win || win.isDestroyed()) return { ok: false, error: 'no-window' };
+      const data = await win.webContents.printToPDF({
+        landscape: options.landscape !== false,
+        printBackground: true,
+        pageSize: options.pageSize || 'A4',
+        margins: { top: 0, bottom: 0, left: 0, right: 0 },
+      });
+      const file = path.join(app.getPath('temp'), `모니터링일정_${Date.now()}.pdf`);
+      fs.writeFileSync(file, data);
+      const err = await shell.openPath(file);
+      if (err) return { ok: false, error: err };
+      return { ok: true, file };
+    } catch (e) { return { ok: false, error: e.message }; }
   });
 
   // ── 내보내기 ──

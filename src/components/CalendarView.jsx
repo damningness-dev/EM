@@ -533,7 +533,8 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   // 인쇄 — 현재 보고 있는 화면(달력보기/표보기) 그대로 가로 한 페이지에 인쇄한다.
   // 달력/표 카드만 body 최상단에 복제해두고 원본 앱(#root)은 인쇄 시 숨겨,
   // 안 보이는 사이드바 등이 빈 페이지를 만들지 않게 한다(2장 출력 방지).
-  // Electron에서는 인쇄 API로 가로 방향·배경색을 강제한다(용지 방향 확실히 가로).
+  // Windows 인쇄 대화상자가 가로 방향을 무시하는 문제 때문에, Electron에서는
+  // 가로·배경색이 확정된 A4 PDF로 만들어 기본 뷰어로 연다(항상 가로 출력).
   // 인쇄 레이아웃(고정 폭·셀 클리핑)은 index.css의 @media print에서 처리.
   async function handlePrint() {
     const src = printAreaRef.current;
@@ -554,18 +555,13 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
       window.removeEventListener('afterprint', cleanup);
     };
     if (window.electronAPI) {
-      // 렌더 안정화를 위해 한 프레임 뒤 인쇄
+      // 렌더 안정화를 위해 한 프레임 뒤 PDF 생성
       await new Promise(r => requestAnimationFrame(() => r()));
       try {
         const res = await printDoc({ landscape: true, pageSize: 'A4' });
-        // 인쇄 API 실패(사용자 취소 제외) 시 브라우저 인쇄로 폴백
-        if (res && res.success === false && res.failureReason && res.failureReason !== 'cancelled') {
-          window.addEventListener('afterprint', cleanup);
-          window.print();
-          setTimeout(cleanup, 3000);
-          return;
-        }
-      } catch { /* ignore */ }
+        if (res && res.ok) showSuccess('가로 PDF로 열었습니다. 뷰어에서 인쇄(Ctrl+P)하면 가로로 출력됩니다.');
+        else showError('인쇄 준비 실패: ' + (res?.error || ''));
+      } catch (e) { showError('인쇄 준비 실패: ' + e.message); }
       cleanup();
     } else {
       window.addEventListener('afterprint', cleanup);
@@ -1748,10 +1744,10 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
           </div>
           <button
             onClick={handlePrint}
-            title="이번 달 일정 인쇄 (현재 보기 그대로 인쇄됩니다)"
+            title="이번 달 일정을 가로 PDF로 열기 (뷰어에서 인쇄하면 항상 가로로 출력)"
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-xl border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition-colors"
           >
-            🖨 인쇄
+            🖨 인쇄(가로 PDF)
           </button>
           <button
             onClick={handleExportExcel}
