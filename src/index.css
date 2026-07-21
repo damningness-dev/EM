@@ -12,32 +12,43 @@ body {
   min-height: 100vh;
 }
 
-/* 인쇄 시 .print-area로 표시한 영역만 보이게 하고, 스크롤/높이 제한을 풀어
-   전체 내용이 그대로 인쇄되도록 한다. 기본 용지 방향은 가로로 지정. */
+/* 인쇄 — handlePrint()가 달력/표 카드를 body 최상단의 .print-portal로 복제하고
+   body에 is-printing 클래스를 붙인다. 인쇄 시에는 원본 앱(#root)을 숨기고 이
+   복제본만 가로 한 페이지에 출력한다(안 보이는 사이드바가 빈 페이지를 만들지 않음). */
+.print-portal {
+  display: none;
+}
+
 @media print {
   @page {
-    size: landscape;
-    margin: 10mm;
+    size: A4 landscape;
+    margin: 8mm;
   }
-  body * {
-    visibility: hidden;
+  body.is-printing > #root {
+    display: none !important;
   }
-  .print-area,
-  .print-area * {
-    visibility: visible;
+  .print-portal {
+    display: block !important;
   }
-  .print-area {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    /* 화면에 보이는 그대로 축소해 한 페이지에 들어오도록 한다.
-       --print-scale은 인쇄 직전 JS에서 실제 내용 크기를 재서 계산해 넣는다. */
-    transform: scale(var(--print-scale, 1));
-    transform-origin: top left;
+  /* 가로 A4·Letter 인쇄영역에 공통으로 들어오는 고정 폭 */
+  .print-portal .print-area {
+    width: 980px;
+    border: 1px solid #d1d5db;
+    border-radius: 0;
+    box-shadow: none;
   }
-  .print-area,
-  .print-area * {
+  /* 달력 날짜 칸: 화면처럼 고정 높이로 클리핑 — 내용이 칸 밖으로 나가지 않게 하고
+     넘치는 텍스트는 각 칩의 truncate로 '…' 처리된다. */
+  .print-portal .cal-day {
+    height: 96px !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+  .print-portal .cal-events {
+    overflow: hidden !important;
+  }
+  /* 표 보기: 스크롤 영역 제한을 풀어 전체 표가 인쇄되게 한다. */
+  .print-portal .print-unlock {
     max-height: none !important;
     overflow: visible !important;
   }

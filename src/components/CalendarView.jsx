@@ -530,19 +530,30 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     });
   }
 
-  // 인쇄 — 현재 보고 있는 화면(달력보기/표보기) 그대로, 기본 가로 용지 한 페이지에
-  // 맞춰 축소해서 인쇄한다. 실제 내용 크기를 재서 축소 비율을 CSS 변수로 넘긴다.
+  // 인쇄 — 현재 보고 있는 화면(달력보기/표보기) 그대로 가로 한 페이지에 인쇄한다.
+  // 달력/표 카드만 body 최상단에 복제해두고 원본 앱(#root)은 인쇄 시 숨겨,
+  // 안 보이는 사이드바 등이 빈 페이지를 만들지 않게 한다(2장 출력 방지).
+  // 인쇄 레이아웃(고정 폭·셀 클리핑)은 index.css의 @media print에서 처리.
   function handlePrint() {
-    const el = printAreaRef.current;
-    if (el) {
-      el.style.removeProperty('--print-scale');
-      const rect = el.getBoundingClientRect();
-      // 가로 용지(A4/Letter 공통) 여백(10mm) 제외 인쇄 가능 영역 대략치(96dpi 기준, px)
-      const pageW = 980, pageH = 720;
-      const scale = Math.min(pageW / rect.width, pageH / rect.height, 1);
-      el.style.setProperty('--print-scale', scale.toFixed(3));
-    }
-    window.print();
+    const src = printAreaRef.current;
+    if (!src) { window.print(); return; }
+    const portal = document.createElement('div');
+    portal.className = 'print-portal';
+    const clone = src.cloneNode(true);
+    clone.style.transform = 'none';
+    portal.appendChild(clone);
+    document.body.appendChild(portal);
+    document.body.classList.add('is-printing');
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      document.body.classList.remove('is-printing');
+      portal.remove();
+      window.removeEventListener('afterprint', cleanup);
+    };
+    window.addEventListener('afterprint', cleanup);
+    try { window.print(); } finally { setTimeout(cleanup, 2000); }
   }
 
   const tempByDate = useMemo(() => {
@@ -1866,7 +1877,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                         if (data.zoneId !== undefined) handleDropOnDay(dateStr, data);
                       } catch {}
                     }}
-                    className={`min-h-28 p-1.5 cursor-pointer transition-colors
+                    className={`cal-day min-h-28 p-1.5 cursor-pointer transition-colors
                       ${boundaryRight ? 'border-r-2 border-r-gray-400' : 'border-r border-r-gray-100'}
                       ${boundaryBottom ? 'border-b-2 border-b-gray-400' : 'border-b border-b-gray-100'}
                       ${isDragOver ? 'bg-blue-100 ring-2 ring-inset ring-blue-400' :
@@ -1922,7 +1933,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                       );
                     })()}
 
-                    <div className={`flex flex-col gap-0.5 ${isOther ? 'opacity-50' : ''}`}>
+                    <div className={`cal-events flex flex-col gap-0.5 ${isOther ? 'opacity-50' : ''}`}>
                       {calibEvts.map((c, i) => (
                         <div
                           key={`c${i}`}
@@ -2403,7 +2414,7 @@ function ScheduleTable({ rows, completions, year, month, getChipStyle, onToggleD
   }
 
   return (
-    <div className="overflow-auto max-h-[calc(100vh-220px)]">
+    <div className="print-unlock overflow-auto max-h-[calc(100vh-220px)]">
       <table className="text-sm border-collapse" style={{ tableLayout: 'fixed', width: colOrder.reduce((s, k) => s + width(k), 0) }}>
         <colgroup>{colOrder.map(k => <col key={k} style={{ width: width(k) }} />)}</colgroup>
         <thead className="sticky top-0 z-10">
