@@ -1966,6 +1966,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                       {schedEvts.map(({ zone, measurement }, i) => {
                         const bounds = getDragBounds(measurement, scheduleAvoid);
                         const label = `${zone.name}[${zone.grade}]-${measurement.num}`;
+                        const noPts = !(zone.points_surface || zone.points_float || zone.points_fall || zone.points_particle);
                         const isDone = completions.has(`${zone.id}_${measurement.num}`);
                         return (
                           <div
@@ -1989,10 +1990,12 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                             onClick={(e) => e.stopPropagation()}
                             className={`text-xs rounded overflow-hidden flex items-stretch min-w-0 ${isDone ? 'opacity-60 cursor-default' : 'cursor-grab active:cursor-grabbing'}`}
                             style={getChipStyle(zone.category, zone.grade)}
-                            title={`${label}${isDone ? ' [완료]' : measurement.isFirst ? ' [첫 측정]' : measurement.isLast ? ' [마지막 측정]' : ''}`}
+                            title={`${label}${noPts ? ' [포인트 입력 필요]' : ''}${isDone ? ' [완료]' : measurement.isFirst ? ' [첫 측정]' : measurement.isLast ? ' [마지막 측정]' : ''}`}
                           >
                             {measurement.isFirst && <span className="w-1 shrink-0" style={{ backgroundColor: '#22c55e' }} />}
-                            <span className={`truncate flex-1 px-1 py-0.5 ${isDone ? 'line-through' : ''} ${(measurement.isFirst || measurement.isLast) ? 'font-semibold' : ''}`}>{label}</span>
+                            <span className={`truncate flex-1 px-1 py-0.5 ${isDone ? 'line-through' : ''} ${(measurement.isFirst || measurement.isLast) ? 'font-semibold' : ''}`}>
+                              {noPts && <span className="text-red-600 font-bold">*</span>}{label}
+                            </span>
                             {measurement.isLast && <span className="w-1 shrink-0" style={{ backgroundColor: '#ef4444' }} />}
                           </div>
                         );
@@ -2227,6 +2230,9 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                           <p className="text-xs text-gray-400 mt-0.5">
                             측정주기: {format(bounds.min, 'MM/dd')}~{format(bounds.max, 'MM/dd')}
                           </p>
+                          {!(zone.points_surface || zone.points_float || zone.points_fall || zone.points_particle) && (
+                            <p className="text-xs font-bold text-red-600 mt-0.5">포인트 입력 필요</p>
+                          )}
                           {(zone.points_surface || zone.points_float || zone.points_fall || zone.points_particle) ? (
                             <div className="flex gap-1 mt-1 flex-wrap">
                               {isCombinedCat(zone.category, scheduleConfig) ? (
