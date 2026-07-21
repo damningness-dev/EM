@@ -50,6 +50,9 @@ jobs:
       - name: 프론트엔드 빌드 (Vite)
         run: npm run build
 
+      - name: 엑셀 내보내기 번들 빌드 (exceljs → 단일 cjs)
+        run: npm run build:xlsx
+
       - name: 앱 디렉토리 빌드 (ASAR 추출용)
         run: npx electron-builder --win --dir --publish=never
 

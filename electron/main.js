@@ -813,22 +813,20 @@ function registerHandlers() {
 
   // ── 내보내기 ──
   // 일정을 엑셀 표 서식(예: "표 스타일 보통 16")이 적용된 진짜 .xlsx 표로 내보내기.
-  // exceljs는 렌더러(Vite) 번들링 없이 메인 프로세스(Node)에서만 사용해 안전하게 처리한다.
+  // exceljs(+jszip 등 의존성)는 npm run build:xlsx로 electron/xlsx-export.bundle.cjs
+  // 하나의 파일에 미리 번들링해두고 그것만 불러온다 — 패키징된 설치본에 node_modules가
+  // 그대로 포함되는지 여부에 의존하지 않아, 배포본에서 "Cannot find module" 오류 없이
+  // 항상 동작한다.
   ipcMain.handle('export:scheduleExcelTable', async (_e, { defaultName, sheetName, tableStyle, columns, rows } = {}) => {
     try {
-      const ExcelJS = require('exceljs');
-      const wb = new ExcelJS.Workbook();
-      const ws = wb.addWorksheet((sheetName || 'Sheet1').slice(0, 31));
-      ws.addTable({
-        name: 'ScheduleTable',
-        ref: 'A1',
-        headerRow: true,
-        totalsRow: false,
-        style: { theme: tableStyle || 'TableStyleMedium16', showRowStripes: true },
-        columns: (columns || []).map(c => ({ name: c.label })),
-        rows: rows || [],
-      });
-      (columns || []).forEach((c, i) => { ws.getColumn(i + 1).width = c.width || 14; });
+      // 배포본: 번들 파일 사용. 개발 환경(번들 미생성)에서는 node_modules의 exceljs로 폴백.
+      let buildScheduleExcelBuffer;
+      try {
+        ({ buildScheduleExcelBuffer } = require('./xlsx-export.bundle.cjs'));
+      } catch {
+        ({ buildScheduleExcelBuffer } = require('./xlsx-export.src.js'));
+      }
+      const buffer = await buildScheduleExcelBuffer({ sheetName, tableStyle, columns, rows });
 
       const win = BrowserWindow.getFocusedWindow() || mainWin;
       const { canceled, filePath } = await dialog.showSaveDialog(win, {
@@ -836,7 +834,7 @@ function registerHandlers() {
         filters: [{ name: 'Excel Workbook', extensions: ['xlsx'] }],
       });
       if (canceled || !filePath) return { ok: false, canceled: true };
-      await wb.xlsx.writeFile(filePath);
+      fs.writeFileSync(filePath, buffer);
       return { ok: true, filePath };
     } catch (e) { return { ok: false, error: e.message }; }
   });

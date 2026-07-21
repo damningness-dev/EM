@@ -14,6 +14,9 @@ release
 *.local
 .env
 
+# 빌드 산출물 (CI의 build:xlsx 단계에서 생성)
+electron/xlsx-export.bundle.cjs
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

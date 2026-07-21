@@ -8,13 +8,13 @@
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "build": "vite build",
-    "dist:win": "vite build && electron-builder --win --publish=never",
+    "build:xlsx": "esbuild electron/xlsx-export.src.js --bundle --platform=node --target=node18 --format=cjs --outfile=electron/xlsx-export.bundle.cjs",
+    "dist:win": "vite build && npm run build:xlsx && electron-builder --win --publish=never",
     "lint": "eslint ."
   },
   "dependencies": {
     "@heroicons/react": "^2.2.0",
     "date-fns": "^4.3.0",
-    "exceljs": "^4.4.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },
@@ -27,6 +27,8 @@
     "concurrently": "^10.0.3",
     "electron": "^42.4.1",
     "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.1",
+    "exceljs": "^4.4.0",
     "eslint": "^10.3.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
@@ -48,8 +50,7 @@
     },
     "files": [
       "dist/**/*",
-      "electron/**/*",
-      "node_modules/**/*"
+      "electron/**/*"
     ],
     "directories": {
       "output": "release"
