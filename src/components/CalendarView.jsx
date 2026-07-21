@@ -526,14 +526,9 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     });
   }
 
-  // 인쇄 — 표 보기가 인쇄에 더 적합하므로 달력보기 중이면 먼저 전환한 뒤 인쇄한다.
+  // 인쇄 — 현재 보고 있는 화면(달력보기/표보기) 그대로 인쇄한다.
   function handlePrint() {
-    if (viewMode !== 'table') {
-      setViewMode('table');
-      setTimeout(() => window.print(), 150);
-    } else {
-      window.print();
-    }
+    window.print();
   }
 
   const tempByDate = useMemo(() => {
@@ -1711,7 +1706,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
           </div>
           <button
             onClick={handlePrint}
-            title="이번 달 일정 인쇄 (표 보기로 인쇄됩니다)"
+            title="이번 달 일정 인쇄 (현재 보기 그대로 인쇄됩니다)"
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-xl border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition-colors"
           >
             🖨 인쇄
@@ -1741,11 +1736,6 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
           >
             🗓 달력 설정
           </button>
-          <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-2 py-1">
-            <button onClick={prevMonth} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-lg leading-none">‹</button>
-            <span className="text-base font-semibold text-gray-800 min-w-[96px] text-center">{year}년 {MONTH_KR[month - 1]}</span>
-            <button onClick={nextMonth} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-lg leading-none">›</button>
-          </div>
         </div>
       </div>
 
@@ -1783,10 +1773,12 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
       <div className="flex gap-5">
         {/* Calendar */}
         <div className="flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden min-w-0 print-area">
-          {/* 화면에는 안 보이고 인쇄 시에만 표시되는 제목 */}
-          <p className="hidden print:block px-4 pt-3 pb-1 text-base font-bold text-gray-900">
-            {year}년 {MONTH_KR[month - 1]} 모니터링 일정
-          </p>
+          {/* 년/월 표시 + 이전/다음 (달력 테두리 안, 인쇄 시에도 표시) */}
+          <div className="flex items-center justify-center gap-4 px-4 py-3 border-b border-gray-100">
+            <button onClick={prevMonth} className="print:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-xl leading-none">‹</button>
+            <span className="text-2xl font-bold text-gray-900 min-w-[160px] text-center">{year}년 {MONTH_KR[month - 1]}</span>
+            <button onClick={nextMonth} className="print:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-xl leading-none">›</button>
+          </div>
           {viewMode === 'table' ? (
             <ScheduleTable rows={monthTableRows} completions={completions} year={year} month={month}
               getChipStyle={getChipStyle}
