@@ -811,6 +811,24 @@ function registerHandlers() {
   ipcMain.handle('sync:upload', () => syncUpload());
   ipcMain.handle('sync:pull', () => syncPull(true));
 
+  // ── 인쇄 (가로 방향·배경색 강제) ──
+  // 브라우저 window.print()는 용지 방향을 강제하기 어렵다. Electron 인쇄 API로
+  // landscape/배경색을 강제해 항상 가로로, 색상(요일 헤더·칩)까지 인쇄되게 한다.
+  ipcMain.handle('print:doc', (_e, options = {}) => {
+    return new Promise((resolve) => {
+      const win = BrowserWindow.getFocusedWindow() || mainWin;
+      if (!win || win.isDestroyed()) { resolve({ success: false, failureReason: 'no-window' }); return; }
+      try {
+        win.webContents.print({
+          silent: options.silent === true,
+          printBackground: true,
+          landscape: options.landscape !== false,
+          pageSize: options.pageSize || 'A4',
+        }, (success, failureReason) => resolve({ success, failureReason }));
+      } catch (e) { resolve({ success: false, failureReason: e.message }); }
+    });
+  });
+
   // ── 내보내기 ──
   // 일정을 엑셀 표 서식(예: "표 스타일 보통 16")이 적용된 진짜 .xlsx 표로 내보내기.
   // exceljs(+jszip 등 의존성)는 npm run build:xlsx로 electron/xlsx-export.bundle.cjs

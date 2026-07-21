@@ -33,7 +33,7 @@ body {
   /* 달력 카드를 가로 A4 인쇄영역에 꽉 채운다(가로 100% · 세로 고정). */
   .print-portal .print-area {
     width: 100%;
-    height: 720px;                 /* A4 가로 인쇄영역 높이(≈733px) 안쪽 */
+    height: 690px;                 /* A4 가로 인쇄영역 높이 안쪽(여백 변동 대비 여유) */
     display: flex;
     flex-direction: column;
     border: 1px solid #d1d5db;

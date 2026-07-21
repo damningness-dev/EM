@@ -245,3 +245,9 @@ export async function updateTempSchedule(entry) {
 export async function exportScheduleExcelTable({ defaultName, sheetName, tableStyle, columns, rows }) {
   return api.invoke('export:scheduleExcelTable', { defaultName, sheetName, tableStyle, columns, rows });
 }
+
+// ─── 인쇄 (Electron 가로 방향·배경색 강제) ──────────────────────────────────────
+
+export async function printDoc(options = {}) {
+  return api.invoke('print:doc', options);
+}

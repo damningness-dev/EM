@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
-import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, updateTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload, exportScheduleExcelTable } from '../lib/api';
+import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, updateTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload, exportScheduleExcelTable, printDoc } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
@@ -533,8 +533,9 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   // 인쇄 — 현재 보고 있는 화면(달력보기/표보기) 그대로 가로 한 페이지에 인쇄한다.
   // 달력/표 카드만 body 최상단에 복제해두고 원본 앱(#root)은 인쇄 시 숨겨,
   // 안 보이는 사이드바 등이 빈 페이지를 만들지 않게 한다(2장 출력 방지).
+  // Electron에서는 인쇄 API로 가로 방향·배경색을 강제한다(용지 방향 확실히 가로).
   // 인쇄 레이아웃(고정 폭·셀 클리핑)은 index.css의 @media print에서 처리.
-  function handlePrint() {
+  async function handlePrint() {
     const src = printAreaRef.current;
     if (!src) { window.print(); return; }
     const portal = document.createElement('div');
@@ -552,8 +553,24 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
       portal.remove();
       window.removeEventListener('afterprint', cleanup);
     };
-    window.addEventListener('afterprint', cleanup);
-    try { window.print(); } finally { setTimeout(cleanup, 2000); }
+    if (window.electronAPI) {
+      // 렌더 안정화를 위해 한 프레임 뒤 인쇄
+      await new Promise(r => requestAnimationFrame(() => r()));
+      try {
+        const res = await printDoc({ landscape: true, pageSize: 'A4' });
+        // 인쇄 API 실패(사용자 취소 제외) 시 브라우저 인쇄로 폴백
+        if (res && res.success === false && res.failureReason && res.failureReason !== 'cancelled') {
+          window.addEventListener('afterprint', cleanup);
+          window.print();
+          setTimeout(cleanup, 3000);
+          return;
+        }
+      } catch { /* ignore */ }
+      cleanup();
+    } else {
+      window.addEventListener('afterprint', cleanup);
+      try { window.print(); } finally { setTimeout(cleanup, 3000); }
+    }
   }
 
   const tempByDate = useMemo(() => {
