@@ -1799,7 +1799,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
         {/* Calendar */}
         <div ref={printAreaRef} className="flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden min-w-0 print-area">
           {/* 년/월 표시 + 이전/다음 (달력 테두리 안, 인쇄 시에도 표시) */}
-          <div className="flex items-center justify-center gap-4 px-4 py-3 border-b border-gray-100">
+          <div className="cal-monthbar flex items-center justify-center gap-4 px-4 py-3 border-b border-gray-100">
             <button onClick={prevMonth} className="print:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-xl leading-none">‹</button>
             <span className="text-2xl font-bold text-gray-900 min-w-[160px] text-center">{year}년 {MONTH_KR[month - 1]}</span>
             <button onClick={nextMonth} className="print:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-xl leading-none">›</button>
@@ -1812,7 +1812,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
           ) : (
           <>
           {/* Day-of-week header */}
-          <div className="grid grid-cols-7 border-b border-gray-100">
+          <div className="cal-dow grid grid-cols-7 border-b border-gray-100">
             {dowOrder.map(d => (
               <div key={d} className={`py-2.5 text-center text-xs font-semibold ${
                 d === 0 ? 'bg-red-50 text-red-600' : d === 6 ? 'bg-blue-50 text-blue-600' : 'bg-gray-50 text-gray-600'
@@ -1825,7 +1825,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
               <div className="w-6 h-6 border-3 border-blue-500 border-t-transparent rounded-full animate-spin" />
             </div>
           ) : (
-            <div className="grid grid-cols-7">
+            <div className="cal-grid grid grid-cols-7">
               {grid.map((cell, idx) => {
                 const { day, isOther } = cell;
                 const dateStr = `${cell.year}-${String(cell.month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;

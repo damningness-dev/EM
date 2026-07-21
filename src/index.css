@@ -30,22 +30,56 @@ body {
   .print-portal {
     display: block !important;
   }
-  /* 가로 A4·Letter 인쇄영역에 공통으로 들어오는 고정 폭 */
+  /* 달력 카드를 가로 A4 인쇄영역에 꽉 채운다(가로 100% · 세로 고정). */
   .print-portal .print-area {
-    width: 980px;
+    width: 100%;
+    height: 720px;                 /* A4 가로 인쇄영역 높이(≈733px) 안쪽 */
+    display: flex;
+    flex-direction: column;
     border: 1px solid #d1d5db;
     border-radius: 0;
     box-shadow: none;
+    overflow: hidden;
   }
-  /* 달력 날짜 칸: 화면처럼 고정 높이로 클리핑 — 내용이 칸 밖으로 나가지 않게 하고
-     넘치는 텍스트는 각 칩의 truncate로 '…' 처리된다. */
+  /* 상단 월 표시 · 요일 헤더 — 인쇄용으로 컴팩트하게 */
+  .print-portal .cal-monthbar {
+    flex: 0 0 auto;
+    padding: 2px 0 !important;
+  }
+  .print-portal .cal-monthbar span {
+    font-size: 15px !important;
+  }
+  .print-portal .cal-dow {
+    flex: 0 0 auto;
+  }
+  .print-portal .cal-dow > div {
+    padding: 2px 0 !important;
+    font-size: 10px !important;
+  }
+  /* 달력 본문: 남은 높이를 각 주(5·6주)가 균등하게 채워 잘리는 줄이 없게 한다. */
+  .print-portal .cal-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    grid-auto-rows: 1fr;
+  }
   .print-portal .cal-day {
-    height: 96px !important;
     min-height: 0 !important;
+    height: auto !important;
+    padding: 2px !important;
     overflow: hidden !important;
   }
   .print-portal .cal-events {
     overflow: hidden !important;
+  }
+  /* 셀 안 글씨 전체 축소 (넘치는 텍스트는 각 칩의 truncate로 '…' 처리) */
+  .print-portal .cal-day,
+  .print-portal .cal-day * {
+    font-size: 8.5px !important;
+    line-height: 1.2 !important;
+  }
+  .print-portal .cal-day .rounded-full {
+    width: 15px !important;
+    height: 15px !important;
   }
   /* 표 보기: 스크롤 영역 제한을 풀어 전체 표가 인쇄되게 한다. */
   .print-portal .print-unlock {
