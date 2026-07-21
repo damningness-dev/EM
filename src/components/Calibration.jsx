@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { calcDDay, getDDayLabel, getDDayColor, formatDate } from '../utils/dateUtils';
-import { fetchCalibration, upsertCalibration, deleteCalibration, saveCalibFile, openCalibFile, revealCalibFile } from '../lib/api';
+import { fetchCalibration, upsertCalibration, deleteCalibration, saveCalibFile, openCalibFile, revealCalibFile, syncGetConfig, syncUpload } from '../lib/api';
 
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
 let hid = 0;
@@ -55,6 +55,8 @@ export default function Calibration() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({});
   const [showAdd, setShowAdd] = useState(false);
+  const [syncNote, setSyncNote] = useState(null); // 공유 동기화 업로드 안내 토스트
+  const syncNoteTimer = useRef(null);
   const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState(new Set());
   const [sortKey, setSortKey] = useState(null);   // null = 수동(드래그) 순서
@@ -159,10 +161,29 @@ export default function Calibration() {
     const updates = arr.map((it, i) => ({ ...it, sort_order: i }));
     setData(prev => prev.map(d => updates.find(u => u.id === d.id) || d));
     setDragIdx(null); setDropIdx(null);
-    try { for (const u of updates) await upsertCalibration(stripDday(u)); window.electronAPI?.notifyDataChanged?.(); } catch { /* ignore */ }
+    try { for (const u of updates) await upsertCalibration(stripDday(u)); window.electronAPI?.notifyDataChanged?.(); syncAfterChange(); } catch { /* ignore */ }
   }
 
   function stripDday(item) { const { dday, ...rest } = item; return rest; }
+
+  // 교정 데이터가 바뀌면(추가·수정·삭제·이력·순서) em-data.json에 저장된 뒤,
+  // 공유 설정(Gist ID + 토큰)이 있으면 자동으로 Gist에 업로드해 다른 PC와 공유한다.
+  async function syncAfterChange() {
+    try {
+      const cfg = await syncGetConfig();
+      if (!cfg?.gistId || !cfg?.hasToken) return; // 공유 설정 없으면 조용히 건너뜀
+      const r = await syncUpload();
+      showSyncNote(r?.ok ? '🔄 교정 이력을 다른 PC와 공유했습니다.'
+        : `⚠ 공유 업로드 실패: ${r?.error || ''}`, !r?.ok);
+    } catch (e) {
+      showSyncNote('⚠ 공유 업로드 중 오류: ' + e.message, true);
+    }
+  }
+  function showSyncNote(text, isError) {
+    setSyncNote({ text, isError });
+    if (syncNoteTimer.current) clearTimeout(syncNoteTimer.current);
+    syncNoteTimer.current = setTimeout(() => setSyncNote(null), 3500);
+  }
 
   async function saveEdit() {
     setSaving(true);
@@ -174,6 +195,7 @@ export default function Calibration() {
       setData(prev => prev.map(d => d.id === editingId ? saved : d));
       setEditingId(null);
       window.electronAPI?.notifyDataChanged?.();
+      syncAfterChange();
     } catch (e) { alert('저장 실패: ' + e.message); }
     setSaving(false);
   }
@@ -183,6 +205,7 @@ export default function Calibration() {
     await deleteCalibration(id);
     setData(prev => prev.filter(d => d.id !== id));
     window.electronAPI?.notifyDataChanged?.();
+    syncAfterChange();
   }
 
   async function addItem() {
@@ -197,6 +220,7 @@ export default function Calibration() {
       setData(prev => [...prev, saved]);
       setShowAdd(false); setForm({});
       window.electronAPI?.notifyDataChanged?.();
+      syncAfterChange();
     } catch (e) { alert('추가 실패: ' + e.message); }
     setSaving(false);
   }
@@ -206,6 +230,7 @@ export default function Calibration() {
     const saved = await upsertCalibration(stripDday({ ...item, history }));
     setData(prev => prev.map(d => d.id === item.id ? saved : d));
     window.electronAPI?.notifyDataChanged?.();
+    syncAfterChange();
   }
 
   const expiredCount = enriched.filter(i => i.dday !== null && i.dday < 0).length;
@@ -371,6 +396,15 @@ export default function Calibration() {
               <button onClick={addItem} disabled={saving} className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">추가</button>
               <button onClick={() => setShowAdd(false)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">취소</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {syncNote && (
+        <div className="fixed top-4 right-4 z-[200] flex flex-col gap-2 max-w-sm">
+          <div className={`px-4 py-3 rounded-xl shadow-xl flex items-start gap-3 ${syncNote.isError ? 'bg-red-500 text-white' : 'bg-green-600 text-white'}`}>
+            <span className="text-sm font-medium flex-1 leading-snug">{syncNote.text}</span>
+            <button onClick={() => setSyncNote(null)} className={`text-lg leading-none shrink-0 ${syncNote.isError ? 'text-red-200 hover:text-white' : 'text-green-200 hover:text-white'}`}>✕</button>
           </div>
         </div>
       )}
