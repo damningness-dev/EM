@@ -2054,11 +2054,21 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
           {/* Selected day events */}
           {selectedDay && (
             <div className="bg-white rounded-xl border border-gray-200 flex flex-col flex-1 min-h-0">
-              <div className={`px-4 py-3 ${hdBg} text-white shrink-0`}>
-                <p className={`text-xs ${hdSub}`}>{selectedDay.slice(0,4)}년 {MONTH_KR[parseInt(selectedDay.slice(5,7)) - 1]} · {DOW_LABELS[selDow]}요일</p>
-                <p className="text-lg font-bold">{parseInt(selectedDay.slice(8,10))}일 일정</p>
-                {isSelHol && (
-                  <p className={`text-xs mt-0.5 ${hdSub}`}>🎌 {holidays[selectedDay]}</p>
+              <div className={`px-4 py-3 ${hdBg} text-white shrink-0 flex items-start justify-between gap-2`}>
+                <div>
+                  <p className={`text-xs ${hdSub}`}>{selectedDay.slice(0,4)}년 {MONTH_KR[parseInt(selectedDay.slice(5,7)) - 1]} · {DOW_LABELS[selDow]}요일</p>
+                  <p className="text-lg font-bold">{parseInt(selectedDay.slice(8,10))}일 일정</p>
+                  {isSelHol && (
+                    <p className={`text-xs mt-0.5 ${hdSub}`}>🎌 {holidays[selectedDay]}</p>
+                  )}
+                </div>
+                {(selectedScheduleEvents.length > 0 || blockedDates.has(selectedDay)) && (
+                  <label className="flex items-center gap-1 text-xs text-white/90 cursor-pointer select-none shrink-0 whitespace-nowrap"
+                    title="체크 시 이 날의 모든 일정을 다른 날로 옮기고, 이 날에는 어떤 일정도 배치되지 않습니다">
+                    <input type="checkbox" checked={blockedDates.has(selectedDay)}
+                      onChange={e => handleToggleBlockDay(selectedDay, e.target.checked)} className="rounded" />
+                    일정비우기
+                  </label>
                 )}
               </div>
               <div className="flex-1 overflow-y-auto min-h-0">
@@ -2138,22 +2148,14 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
 
               {selectedDay && (selectedScheduleEvents.length > 0 || blockedDates.has(selectedDay)) && (
                 <div className="px-4 py-1.5 bg-blue-50 border-b border-blue-100 flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-blue-600">측정 일정 ({selectedScheduleEvents.length}건)</span>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {selectedScheduleEvents.length > 0 && (
-                      <button onClick={() => addAllMeasTodos(selectedDay)}
-                        className="flex items-center gap-1 text-xs text-orange-600 hover:text-orange-700"
-                        title="이 날의 모든 측정을 할일 알람으로 한 번에 추가">
-                        🔔 전체알람 추가
-                      </button>
-                    )}
-                    <label className="flex items-center gap-1 text-xs text-gray-500 cursor-pointer select-none"
-                      title="체크 시 이 날의 모든 일정을 다른 날로 옮기고, 이 날에는 어떤 일정도 배치되지 않습니다">
-                      <input type="checkbox" checked={blockedDates.has(selectedDay)}
-                        onChange={e => handleToggleBlockDay(selectedDay, e.target.checked)} className="rounded" />
-                      일정비우기
-                    </label>
-                  </div>
+                  <span className="text-xs font-semibold text-blue-600 whitespace-nowrap">측정일정({selectedScheduleEvents.length}건)</span>
+                  {selectedScheduleEvents.length > 0 && (
+                    <button onClick={() => addAllMeasTodos(selectedDay)}
+                      className="flex items-center gap-1 text-xs text-orange-600 hover:text-orange-700 shrink-0"
+                      title="이 날의 모든 측정을 할일 알람으로 한 번에 추가">
+                      🔔 전체알람 추가
+                    </button>
+                  )}
                 </div>
               )}
 
