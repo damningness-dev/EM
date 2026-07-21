@@ -11,3 +11,26 @@ body {
   width: 100%;
   min-height: 100vh;
 }
+
+/* 인쇄 시 .print-area로 표시한 영역만 보이게 하고, 스크롤/높이 제한을 풀어
+   전체 내용이 여러 페이지에 걸쳐 그대로 인쇄되도록 한다. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+  .print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+  .print-area,
+  .print-area * {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+}

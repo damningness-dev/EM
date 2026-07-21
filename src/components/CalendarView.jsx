@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
-import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, updateTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload } from '../lib/api';
+import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, updateTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload, exportFile } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
@@ -497,6 +497,44 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
       || (zoneOrderRank[a.zone.id] ?? 1e9) - (zoneOrderRank[b.zone.id] ?? 1e9));
     return rows;
   }, [scheduleByDate, year, month, zoneOrderRank]);
+
+  // 엑셀(CSV)로 내보내기 — 이번 달 표 보기와 동일한 컬럼 구성
+  function handleExportCsv() {
+    const DOW = ['일', '월', '화', '수', '목', '금', '토'];
+    const header = ['날짜', '요일', '구분', '회차', '부유균', '낙하균', '표면균', '부유입자', '질소', '압축', '완료여부'];
+    const escCsv = v => {
+      const s = String(v ?? '');
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [header];
+    monthTableRows.forEach(({ ds, zone, measurement }) => {
+      const d = new Date(ds + 'T00:00:00');
+      const done = completions.has(`${zone.id}_${measurement.num}`);
+      lines.push([
+        ds, DOW[d.getDay()], `${zone.name}[${zone.grade}]`, measurement.num,
+        ptValue(zone, 'float') || '', ptValue(zone, 'fall') || '', ptValue(zone, 'surface') || '', ptValue(zone, 'particle') || '',
+        ptValue(zone, 'nitro') || '', ptValue(zone, 'comp') || '',
+        done ? '완료' : '예정',
+      ]);
+    });
+    // 엑셀에서 한글이 깨지지 않도록 UTF-8 BOM을 앞에 붙인다.
+    const csv = '﻿' + lines.map(row => row.map(escCsv).join(',')).join('\r\n');
+    const filename = `모니터링일정_${year}${String(month).padStart(2, '0')}.csv`;
+    exportFile(filename, csv, [{ name: 'CSV (Excel)', extensions: ['csv'] }]).then(r => {
+      if (r?.ok) showSuccess(`엑셀 파일로 내보냈습니다: ${r.filePath}`);
+      else if (!r?.canceled) showError('내보내기 실패: ' + (r?.error || ''));
+    });
+  }
+
+  // 인쇄 — 표 보기가 인쇄에 더 적합하므로 달력보기 중이면 먼저 전환한 뒤 인쇄한다.
+  function handlePrint() {
+    if (viewMode !== 'table') {
+      setViewMode('table');
+      setTimeout(() => window.print(), 150);
+    } else {
+      window.print();
+    }
+  }
 
   const tempByDate = useMemo(() => {
     const map = {};
@@ -1672,6 +1710,20 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
             <button onClick={() => setViewMode('table')} className={`px-3 py-1.5 font-medium ${viewMode === 'table' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>☰ 표</button>
           </div>
           <button
+            onClick={handlePrint}
+            title="이번 달 일정 인쇄 (표 보기로 인쇄됩니다)"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-xl border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            🖨 인쇄
+          </button>
+          <button
+            onClick={handleExportCsv}
+            title="이번 달 일정을 엑셀(CSV)로 저장"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-xl border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            📊 엑셀로 내보내기
+          </button>
+          <button
             onClick={() => { if (requireAdmin()) setOptimizePopup(true); }}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-xl border transition-colors ${adminUnlocked ? 'text-indigo-600 bg-indigo-50 border-indigo-200 hover:bg-indigo-100' : 'text-gray-400 bg-gray-50 border-gray-200 cursor-not-allowed'}`}
           >
@@ -1730,7 +1782,11 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
 
       <div className="flex gap-5">
         {/* Calendar */}
-        <div className="flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden min-w-0">
+        <div className="flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden min-w-0 print-area">
+          {/* 화면에는 안 보이고 인쇄 시에만 표시되는 제목 */}
+          <p className="hidden print:block px-4 pt-3 pb-1 text-base font-bold text-gray-900">
+            {year}년 {MONTH_KR[month - 1]} 모니터링 일정
+          </p>
           {viewMode === 'table' ? (
             <ScheduleTable rows={monthTableRows} completions={completions} year={year} month={month}
               getChipStyle={getChipStyle}

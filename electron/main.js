@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Notification, screen, Tray, Menu, nativeImage, powerSaveBlocker, powerMonitor, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, Notification, screen, Tray, Menu, nativeImage, powerSaveBlocker, powerMonitor, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -810,6 +810,20 @@ function registerHandlers() {
   });
   ipcMain.handle('sync:upload', () => syncUpload());
   ipcMain.handle('sync:pull', () => syncPull(true));
+
+  // ── 내보내기 (엑셀/CSV 등 저장 대화상자) ──
+  ipcMain.handle('export:saveFile', async (_e, { defaultName, content, filters } = {}) => {
+    try {
+      const win = BrowserWindow.getFocusedWindow() || mainWin;
+      const { canceled, filePath } = await dialog.showSaveDialog(win, {
+        defaultPath: defaultName || 'export.csv',
+        filters: filters && filters.length ? filters : [{ name: 'CSV', extensions: ['csv'] }],
+      });
+      if (canceled || !filePath) return { ok: false, canceled: true };
+      fs.writeFileSync(filePath, content, 'utf-8');
+      return { ok: true, filePath };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
 
   // ── 교정 첨부파일 ──
   const calibFilesDir = () => {

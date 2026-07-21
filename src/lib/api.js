@@ -239,3 +239,9 @@ export async function deleteTempSchedule(id) {
 export async function updateTempSchedule(entry) {
   return api.invoke('tempSchedules:update', entry);
 }
+
+// ─── 내보내기 (엑셀/CSV 저장 대화상자) ──────────────────────────────────────────
+
+export async function exportFile(defaultName, content, filters) {
+  return api.invoke('export:saveFile', { defaultName, content, filters });
+}
