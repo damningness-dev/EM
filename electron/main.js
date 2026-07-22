@@ -156,7 +156,6 @@ async function downloadAsar(url, dest) {
 // 주기적 확인 상태 — 다운로드 완료/진행 중 상태를 이후 확인이 덮어쓰지 않게 한다
 let downloadingUpdate = false;
 let downloadedVersion = null;
-let balloonVersion = null;
 
 async function checkForUpdate() {
   if (downloadingUpdate) return; // 다운로드 중엔 상태를 건드리지 않음
@@ -169,16 +168,9 @@ async function checkForUpdate() {
       // 이미 받아둔 버전 — '지금 재시작' 안내 유지
       sendStatus({ type: 'downloaded', version: meta.version });
     } else {
+      // 새 버전 안내는 앱 내부 UpdateNotifier 카드로만 표시한다(윈도우 트레이
+      // 풍선 팝업은 거슬린다는 피드백에 따라 제거).
       sendStatus({ type: 'available', version: meta.version });
-      // 트레이 풍선 알림 (버전당 1회) — 창이 숨겨져 있어도 새 버전을 알 수 있게
-      if (balloonVersion !== meta.version) {
-        balloonVersion = meta.version;
-        try {
-          if (tray && process.platform === 'win32') {
-            tray.displayBalloon({ title: '환경 모니터링 업데이트', content: `새 버전 v${meta.version}이 있습니다. 앱을 열어 다운로드하세요.` });
-          }
-        } catch { /* ignore */ }
-      }
     }
   } catch (err) {
     // 404 = 아직 게시된 릴리즈에 app-meta.json이 없음 (정상, 조용히 무시)

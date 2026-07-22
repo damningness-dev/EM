@@ -102,6 +102,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   const [year, setYear] = useState(initYear || today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [selectedDay, setSelectedDay] = useState(null);
+  const [monTab, setMonTab] = useState('all'); // 모니터링 현황 탭: all | done | pending
 
   const [calibration, setCalibration] = useState([]);
   const [zones, setZones] = useState([]);
@@ -624,6 +625,12 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     .filter(([k]) => k.startsWith(curMonthPrefix))
     .reduce((sum, [, arr]) => sum + arr.length, 0);
   const calibThisMonthCount = Object.keys(calibByDate).filter(k => k.startsWith(curMonthPrefix)).length;
+
+  // 모니터링 현황 패널: 이번 달 측정 일정(회차 단위)을 완료/예정으로 나눠 탭으로 보여준다.
+  const monthDoneRows = monthTableRows.filter(r => completions.has(`${r.zone.id}_${r.measurement.num}`));
+  const monthPendingRows = monthTableRows.filter(r => !completions.has(`${r.zone.id}_${r.measurement.num}`));
+  const monTabRows = monTab === 'done' ? monthDoneRows : monTab === 'pending' ? monthPendingRows : monthTableRows;
+  const monCompleteRate = monthTableRows.length ? Math.round(monthDoneRows.length / monthTableRows.length * 100) : 0;
 
   const grid = buildGrid(year, month, weekStart);
   const dowOrder = weekStart === 'sun' ? [0, 1, 2, 3, 4, 5, 6] : [1, 2, 3, 4, 5, 6, 0];
@@ -2316,18 +2323,52 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
             </div>
           )}
 
-          {/* Monitoring progress */}
-          {zones.length > 0 && (
+          {/* Monitoring progress — 이번 달 측정 일정(회차 단위) 완료 현황 */}
+          {monthTableRows.length > 0 && (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
                 <p className="text-xs font-semibold text-gray-600">📋 모니터링 현황</p>
-                <span className={`text-xs font-bold ${monRate === 100 ? 'text-green-600' : 'text-blue-600'}`}>{monRate}%</span>
+                <span className={`text-xs font-bold ${monCompleteRate === 100 ? 'text-green-600' : 'text-blue-600'}`}>{monCompleteRate}%</span>
               </div>
-              <div className="px-4 py-3">
+              <div className="px-4 pt-3">
                 <div className="w-full bg-gray-100 rounded-full h-2 mb-2 overflow-hidden">
-                  <div className={`h-2 rounded-full ${monRate === 100 ? 'bg-green-500' : 'bg-blue-500'}`} style={{ width: `${monRate}%` }} />
+                  <div className={`h-2 rounded-full ${monCompleteRate === 100 ? 'bg-green-500' : 'bg-blue-500'}`} style={{ width: `${monCompleteRate}%` }} />
                 </div>
-                <p className="text-xs text-gray-500">{completedCount}/{zones.length} 구역 완료</p>
+                <p className="text-xs text-gray-500 mb-2">이번 달 {monthTableRows.length}건 중 {monthDoneRows.length}건 완료</p>
+              </div>
+              <div className="flex border-b border-gray-100">
+                {[
+                  { key: 'all', label: `전체 ${monthTableRows.length}` },
+                  { key: 'done', label: `측정완료 ${monthDoneRows.length}` },
+                  { key: 'pending', label: `예정 ${monthPendingRows.length}` },
+                ].map(t => (
+                  <button
+                    key={t.key}
+                    onClick={() => setMonTab(t.key)}
+                    className={`flex-1 py-1.5 text-[11px] font-medium border-b-2 -mb-px transition-colors ${
+                      monTab === t.key ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'
+                    }`}
+                  >{t.label}</button>
+                ))}
+              </div>
+              <div className="divide-y divide-gray-50 max-h-64 overflow-y-auto">
+                {monTabRows.length === 0 ? (
+                  <p className="px-4 py-4 text-xs text-gray-400 text-center">해당 항목이 없습니다.</p>
+                ) : monTabRows.map((r, i) => {
+                  const isDone = completions.has(`${r.zone.id}_${r.measurement.num}`);
+                  return (
+                    <button
+                      key={`${r.zone.id}-${r.measurement.num}-${i}`}
+                      onClick={() => setSelectedDay(r.ds)}
+                      className="w-full flex items-center gap-2 px-4 py-2 text-left hover:bg-gray-50"
+                    >
+                      <span className={`text-xs shrink-0 ${isDone ? 'text-green-500' : 'text-gray-300'}`}>{isDone ? '✓' : '○'}</span>
+                      <span className="text-[11px] text-gray-400 shrink-0 w-9">{r.ds.slice(5).replace('-', '/')}</span>
+                      <span className={`text-xs flex-1 truncate ${isDone ? 'text-gray-400 line-through' : 'text-gray-700'}`}>{r.zone.name}[{r.zone.grade}]</span>
+                      <span className="text-[11px] text-gray-300 shrink-0">#{r.measurement.num}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
