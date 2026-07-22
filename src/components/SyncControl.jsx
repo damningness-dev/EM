@@ -165,16 +165,21 @@ function SettingsModal({ cfg, onClose, onStatus }) {
         </p>
         <p className="text-[11px] text-gray-400 mb-3">일정 편집 권한은 사이드바의 "관리자 잠금 해제"에서 비밀번호로 관리합니다.</p>
 
-        <div className="flex items-center gap-3 mt-2 mb-4">
+        <div className="flex items-center gap-3 mt-2 mb-1">
           <label className="flex items-center gap-1.5 text-sm">
             <input type="checkbox" checked={autoSync} onChange={e => setAutoSync(e.target.checked)} /> 자동 동기화
           </label>
           <label className="flex items-center gap-1 text-sm text-gray-600">
             주기
-            <input type="number" min="1" max="180" value={intervalMin} onChange={e => setIntervalMin(Math.max(1, parseInt(e.target.value) || 5))}
+            <input type="number" min="3" max="180" value={intervalMin} onChange={e => setIntervalMin(Math.max(3, parseInt(e.target.value) || 5))}
               className="w-14 border border-gray-300 rounded px-1.5 py-1 text-center text-sm" /> 분
           </label>
         </div>
+        <p className="text-[11px] text-gray-400 mb-3">
+          토큰 없이 읽기만 하는 PC는 같은 네트워크(IP)에서 시간당 60회로 GitHub 요청이 제한됩니다.
+          읽는 PC가 여러 대면 주기를 5~10분 이상으로 넉넉히 설정하세요(1분처럼 너무 짧으면 여러 PC 합산 요청이
+          한도를 넘어 "API rate limit exceeded" 오류가 날 수 있습니다).
+        </p>
 
         {msg && <div className={`text-xs mb-3 ${msg.ok ? 'text-green-600' : 'text-red-500'} break-all`}>{msg.text}</div>}
 

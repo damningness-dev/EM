@@ -524,7 +524,11 @@ function restartSyncTimer() {
   if (syncTimer) { clearInterval(syncTimer); syncTimer = null; }
   const cfg = loadSyncConfig();
   if (cfg.autoSync && cfg.gistId) {
-    const ms = Math.max(1, cfg.intervalMin || 5) * 60 * 1000;
+    // 예전 버전에서 1분처럼 너무 짧게 저장된 값도(설정창을 다시 안 열어도) 자동으로
+    // 안전한 값으로 올려준다 — 여러 PC가 비인증 요청 시간당 60회 한도를 공유하기 때문.
+    const safeIntervalMin = Math.max(3, cfg.intervalMin || 5);
+    if (safeIntervalMin !== cfg.intervalMin) { cfg.intervalMin = safeIntervalMin; saveSyncConfig(cfg); }
+    const ms = safeIntervalMin * 60 * 1000;
     syncTimer = setInterval(() => { syncPull(false); }, ms);
   }
 }
@@ -871,7 +875,10 @@ function registerHandlers() {
     if (patch.clearToken) c.token = '';
     else if (patch.token) c.token = String(patch.token).trim(); // 빈 값이면 기존 토큰 유지
     if (patch.autoSync !== undefined) c.autoSync = !!patch.autoSync;
-    if (patch.intervalMin !== undefined) c.intervalMin = Math.max(1, parseInt(patch.intervalMin) || 5);
+    // 토큰 없이 읽기만 하는 PC들은 같은 IP에서 GitHub 비인증 요청 시간당 60회 한도를
+    // 공유한다. 여러 PC가 너무 짧은 주기(예: 1분)로 자동 동기화하면 합산 요청이
+    // 금방 한도를 넘어 "API rate limit exceeded"가 나므로 최소 3분으로 제한한다.
+    if (patch.intervalMin !== undefined) c.intervalMin = Math.max(3, parseInt(patch.intervalMin) || 5);
     if (patch.role !== undefined) c.role = patch.role === 'admin' ? 'admin' : 'member';
     if (patch.requesterName !== undefined) c.requesterName = String(patch.requesterName).trim();
     saveSyncConfig(c);
