@@ -79,14 +79,27 @@ function SettingsModal({ cfg, onClose, onStatus }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
 
+  // 입력칸의 gistId가 비어있는데 이미 저장된 gistId(cfg)가 있다면, 설정창이 cfg
+  // 로딩 완료 전에 열려 입력칸이 빈 채로 초기화된 경우다. 이때 그대로 저장하면
+  // 서버(main 프로세스)가 "gistId 없음"으로 판단해 매번 새 Gist를 만들어 버려
+  // 기존 공유 Gist ID가 계속 바뀌는 문제가 생긴다 — 항상 기존 값을 지켜준다.
+  const safeGistId = gistId || cfg?.gistId || '';
+
+  // cfg가 모달이 열린 뒤 뒤늦게 로딩되면(위 레이스), 입력칸도 빈 채로 남아있지
+  // 않도록 실제 저장된 값을 따라가게 한다. 사용자가 이미 뭔가 입력해 놨다면
+  // (gistId가 비어있지 않으면) 건드리지 않는다.
+  useEffect(() => {
+    if (!gistId && cfg?.gistId) setGistId(cfg.gistId);
+  }, [cfg?.gistId]);
+
   async function save() {
     // 최초로 Gist ID를 설정하는 경우(이전엔 없었는데 새로 입력) 저장 직후
     // 바로 한 번 동기화(내려받기)까지 자동으로 진행해, 별도로 "지금 동기화"를
     // 다시 누르지 않아도 바로 일정이 반영되게 한다.
-    const isFirstSetup = !cfg?.gistId && !!gistId;
+    const isFirstSetup = !cfg?.gistId && !!safeGistId;
     setBusy(true);
     try {
-      await syncSetConfig({ gistId, token: token || undefined, autoSync, intervalMin });
+      await syncSetConfig({ gistId: safeGistId, token: token || undefined, autoSync, intervalMin });
       if (!isFirstSetup) {
         setMsg({ ok: true, text: '저장되었습니다.' });
         return;
@@ -108,7 +121,7 @@ function SettingsModal({ cfg, onClose, onStatus }) {
     setMsg(null);
     try {
       // 업로드 전 최신 설정(토큰/gist) 저장
-      await syncSetConfig({ gistId, token: token || undefined, autoSync, intervalMin });
+      await syncSetConfig({ gistId: safeGistId, token: token || undefined, autoSync, intervalMin });
       const r = await syncUpload();
       if (r?.ok) {
         setGistId(r.gistId);
