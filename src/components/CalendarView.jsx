@@ -664,6 +664,15 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     pushToast('success', message, 3000);
   }
 
+  // 측정완료 표시처럼 "일정 저장하기"를 거치지 않는 즉시 변경을 조용히(알림 없이)
+  // 다른 PC와 공유한다. 공유 설정(Gist ID + 토큰)이 없으면 아무 것도 하지 않는다.
+  async function silentSyncUpload() {
+    try {
+      const cfg = await syncGetConfig();
+      if (cfg?.gistId && cfg?.hasToken) await syncUpload();
+    } catch { /* 조용히 무시 — 사이드바 "지금 동기화"에서 재시도 가능 */ }
+  }
+
   function getChipStyle(category, grade) {
     // 소분류는 소속 대분류의 색상을 따른다
     const major = getMajorCat(category, scheduleConfig);
@@ -1209,6 +1218,9 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                     setCompletions(prev => new Set([...prev, key]));
                   }
                   setCompletionPrompt(null);
+                  // 측정완료는 "일정 저장하기"를 거치지 않으므로 여기서 바로 공유 동기화한다.
+                  // 알림 팝업 없이 조용히 백그라운드로 업로드만 한다.
+                  silentSyncUpload();
                 }}
                 className={`px-4 py-2 text-sm text-white rounded-lg ${completionPrompt.isCompleted ? 'bg-red-500 hover:bg-red-600' : 'bg-green-600 hover:bg-green-700'}`}
               >{completionPrompt.isCompleted ? '완료 취소' : '완료 처리'}</button>
