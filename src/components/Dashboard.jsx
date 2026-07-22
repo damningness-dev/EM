@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { calcDDay, getDDayLabel, getDDayColor } from '../utils/dateUtils';
+import { effectiveCalib } from '../utils/calibUtils';
 import { fetchCalibration, fetchZones, fetchAllMonitoringData, fetchAnnualPlan } from '../lib/api';
 import { GRADE_TARGETS, GRADE_COLORS } from '../data/initialData';
 
@@ -29,8 +30,9 @@ export default function Dashboard({ year }) {
   }, [year]);
 
   const urgentCalib = calibration
-    .filter(c => c.next_calib_date && c.next_calib_date !== '미사용')
-    .map(c => ({ ...c, dday: calcDDay(c.next_calib_date) }))
+    .map(c => ({ ...c, eff: effectiveCalib(c) }))
+    .filter(c => c.eff.next_calib_date && c.eff.next_calib_date !== '미사용')
+    .map(c => ({ ...c, dday: calcDDay(c.eff.next_calib_date) }))
     .filter(c => c.dday !== null && c.dday <= 60)
     .sort((a, b) => a.dday - b.dday);
 
@@ -84,7 +86,7 @@ export default function Dashboard({ year }) {
                 </div>
                 <div className="text-right">
                   <div className={`text-sm font-bold ${getDDayColor(item.dday)}`}>{getDDayLabel(item.dday)}</div>
-                  <div className="text-xs text-gray-400">{item.next_calib_date}</div>
+                  <div className="text-xs text-gray-400">{item.eff.next_calib_date}</div>
                 </div>
               </div>
             ))}

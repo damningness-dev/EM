@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { calcDDay, getDDayLabel, getDDayColor, formatDate } from '../utils/dateUtils';
+import { nextCalibDate, latestCalibHistory as latestHistory, effectiveCalib } from '../utils/calibUtils';
 import { fetchCalibration, upsertCalibration, deleteCalibration, saveCalibFile, openCalibFile, revealCalibFile, syncGetConfig, syncUpload } from '../lib/api';
 
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
@@ -14,32 +15,7 @@ const CALIB_COL_DEFAULT_W = {
 };
 const CALIB_COL_STORE_KEY = 'em-calib-table-cols';
 
-function pad2(n) { return String(n).padStart(2, '0'); }
-// 차기교정일 = 교정일 +1년 -1일 (예: 2026-05-10 → 2027-05-09)
-function nextCalibDate(calibStr) {
-  if (!calibStr) return '';
-  const d = new Date(calibStr + 'T00:00:00');
-  d.setFullYear(d.getFullYear() + 1);
-  d.setDate(d.getDate() - 1);
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
 function dotDate(s) { return s ? s.replaceAll('-', '.') : ''; }
-// 가장 최근 교정내역(교정일 기준) — 일정관리처럼 최근 내역을 대표로 보여주기 위함
-function latestHistory(item) {
-  const h = item.history || [];
-  if (!h.length) return null;
-  return [...h].sort((a, b) => (b.calib_date || '').localeCompare(a.calib_date || '') || (b.year || 0) - (a.year || 0))[0];
-}
-// 대표 표시값: 최근 교정내역이 있으면 그 값, 없으면 항목 자체 값
-function effectiveCalib(item) {
-  const lh = latestHistory(item);
-  if (!lh) return { cert_no: item.cert_no, calib_date: item.calib_date, next_calib_date: item.next_calib_date };
-  return {
-    cert_no: lh.cert_no || item.cert_no,
-    calib_date: lh.calib_date || item.calib_date,
-    next_calib_date: lh.calib_date ? nextCalibDate(lh.calib_date) : (lh.next_calib_date || item.next_calib_date),
-  };
-}
 // 성적서 파일명: "관리번호 교정일(S/N)" + 확장자
 function certFileName(no, calibDate, sn, originalName) {
   const ext = originalName && originalName.includes('.') ? originalName.slice(originalName.lastIndexOf('.')) : '';

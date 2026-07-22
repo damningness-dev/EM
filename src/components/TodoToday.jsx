@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, fetchTodos, upsertTodo, deleteTodo, toggleTodoDone, fetchHolidays } from '../lib/api';
+import { effectiveCalib } from '../utils/calibUtils';
 import { buildHolidayMap } from '../lib/schedule';
 import { parseISO, differenceInDays } from 'date-fns';
 
@@ -296,14 +297,16 @@ export default function TodoToday() {
     );
   }
 
-  // 교정 항목 분류
-  const overdueCalib = calibration
-    .filter(c => c.next_calib_date && dDay(c.next_calib_date) < 0)
-    .sort((a, b) => dDay(a.next_calib_date) - dDay(b.next_calib_date));
+  // 교정 항목 분류 — 연도별 교정내역이 있으면 최신 내역 기준(effectiveCalib)으로 판단
+  const calibEff = calibration.map(c => ({ ...c, eff: effectiveCalib(c) }));
 
-  const soonCalib = calibration
-    .filter(c => c.next_calib_date && dDay(c.next_calib_date) >= 0 && dDay(c.next_calib_date) <= 60)
-    .sort((a, b) => dDay(a.next_calib_date) - dDay(b.next_calib_date));
+  const overdueCalib = calibEff
+    .filter(c => c.eff.next_calib_date && c.eff.next_calib_date !== '미사용' && dDay(c.eff.next_calib_date) < 0)
+    .sort((a, b) => dDay(a.eff.next_calib_date) - dDay(b.eff.next_calib_date));
+
+  const soonCalib = calibEff
+    .filter(c => c.eff.next_calib_date && c.eff.next_calib_date !== '미사용' && dDay(c.eff.next_calib_date) >= 0 && dDay(c.eff.next_calib_date) <= 60)
+    .sort((a, b) => dDay(a.eff.next_calib_date) - dDay(b.eff.next_calib_date));
 
   // 모니터링 현황
   const completedZones = zones.filter(z => monitoring[z.id]);
@@ -585,11 +588,11 @@ export default function TodoToday() {
             <div key={c.id} className="flex items-center px-5 py-3 gap-3 bg-red-50/50">
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-gray-800 truncate">{c.name}</p>
-                <p className="text-xs text-gray-400">S/N: {c.sn || '-'} · 교정번호: {c.cert_no || '-'}</p>
+                <p className="text-xs text-gray-400">S/N: {c.sn || '-'} · 교정번호: {c.eff.cert_no || '-'}</p>
               </div>
               <div className="text-right shrink-0">
-                <DayBadge days={dDay(c.next_calib_date)} />
-                <p className="text-xs text-gray-400 mt-0.5">{c.next_calib_date}</p>
+                <DayBadge days={dDay(c.eff.next_calib_date)} />
+                <p className="text-xs text-gray-400 mt-0.5">{c.eff.next_calib_date}</p>
               </div>
             </div>
           ))}
@@ -606,8 +609,8 @@ export default function TodoToday() {
                 <p className="text-xs text-gray-400">S/N: {c.sn || '-'}</p>
               </div>
               <div className="text-right shrink-0">
-                <DayBadge days={dDay(c.next_calib_date)} />
-                <p className="text-xs text-gray-400 mt-0.5">{c.next_calib_date}</p>
+                <DayBadge days={dDay(c.eff.next_calib_date)} />
+                <p className="text-xs text-gray-400 mt-0.5">{c.eff.next_calib_date}</p>
               </div>
             </div>
           ))}

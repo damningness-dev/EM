@@ -4,6 +4,7 @@ import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
 import { lunarToSolar } from '../lib/lunar';
+import { effectiveCalib } from '../utils/calibUtils';
 import OrderGroupManager from './OrderGroupManager';
 
 const DOW_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
@@ -413,14 +414,16 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     else setMonth(m => m + 1);
   }
 
-  // Calibration events by date string
+  // Calibration events by date string — 연도별 교정내역이 있으면 최신 내역(effectiveCalib)
+  // 기준으로 표시해, 상단 필드만 예전 값으로 남아있는 항목도 항상 최신 차기교정일로 뜨게 한다.
   const calibByDate = {};
   calibration.forEach(c => {
-    if (!c.next_calib_date) return;
+    const eff = effectiveCalib(c);
+    if (!eff.next_calib_date || eff.next_calib_date === '미사용') return;
     try {
-      const key = c.next_calib_date.slice(0, 10);
+      const key = eff.next_calib_date.slice(0, 10);
       if (!calibByDate[key]) calibByDate[key] = [];
-      calibByDate[key].push(c);
+      calibByDate[key].push({ ...c, ...eff });
     } catch {}
   });
 
