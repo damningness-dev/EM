@@ -61,13 +61,28 @@ function getUpdatePath() {
   return path.join(app.getPath('userData'), 'app.asar.update');
 }
 
-function httpGet(url) {
+// _bustCache: 회사/공유망의 캐싱 프록시가 릴리즈 다운로드 URL을 자체적으로
+// 캐싱해 두었다가 우리가 조건부 요청을 보내지도 않았는데 304(Not Modified)로
+// 응답하는 경우가 있다(예: "HTTP 304" 업데이트 확인 오류). 이 요청은 매번 최신
+// 내용을 받아야 하므로 캐시를 쓰지 말라고 명시하고, 그래도 304가 오면 URL에
+// 캐시 무효화용 쿼리를 붙여 한 번 더 시도해 프록시 캐시를 우회한다.
+function httpGet(url, _bustCache) {
   return new Promise((resolve, reject) => {
-    const mod = url.startsWith('https:') ? https : http;
-    mod.get(url, { headers: { 'User-Agent': 'em-updater/1.0' } }, (res) => {
+    const target = _bustCache
+      ? url + (url.includes('?') ? '&' : '?') + '_ts=' + Date.now()
+      : url;
+    const mod = target.startsWith('https:') ? https : http;
+    mod.get(target, { headers: {
+      'User-Agent': 'em-updater/1.0',
+      'Cache-Control': 'no-cache, no-store',
+      'Pragma': 'no-cache',
+    } }, (res) => {
       if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
         res.resume();
         resolve(httpGet(res.headers.location));
+      } else if (res.statusCode === 304 && !_bustCache) {
+        res.resume();
+        resolve(httpGet(url, true));
       } else {
         resolve(res);
       }
