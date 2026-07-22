@@ -145,6 +145,11 @@ function SettingsModal({ cfg, onClose, onStatus }) {
           placeholder={cfg?.hasToken ? '변경 시에만 입력' : 'ghp_... (업로드하려면 필요)'}
           className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mb-1 focus:outline-none focus:ring-1 focus:ring-blue-500" />
         {cfg?.hasToken && <button onClick={clearToken} className="text-[11px] text-red-500 hover:underline mb-3">토큰 삭제</button>}
+        <p className="text-[11px] text-amber-600 mb-1">
+          ⚠ 반드시 <b>Classic 토큰</b>(ghp_로 시작, gist 권한 체크)을 사용하세요.
+          Fine-grained 토큰은 Gist를 지원하지 않아 업로드 시 HTTP 403 오류가 납니다.
+          (github.com → Settings → Developer settings → Personal access tokens → <b>Tokens (classic)</b>)
+        </p>
         <p className="text-[11px] text-gray-400 mb-3">일정 편집 권한은 사이드바의 "관리자 잠금 해제"에서 비밀번호로 관리합니다.</p>
 
         <div className="flex items-center gap-3 mt-2 mb-4">

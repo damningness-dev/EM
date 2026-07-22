@@ -367,7 +367,12 @@ function ghRequest(method, apiUrl, { token, body } = {}) {
         if (res.statusCode >= 200 && res.statusCode < 300) {
           try { resolve(JSON.parse(out || '{}')); } catch (e) { reject(e); }
         } else {
-          reject(new Error(`HTTP ${res.statusCode}`));
+          // GitHub는 오류 본문에 원인을 담아 준다(예: "Bad credentials",
+          // "Resource not accessible by personal access token" 등) — 이 메시지를
+          // 그대로 보여줘야 사용자가 토큰 문제인지, 권한 문제인지 구분할 수 있다.
+          let reason = '';
+          try { reason = JSON.parse(out)?.message || ''; } catch { /* 본문이 JSON이 아니면 무시 */ }
+          reject(new Error(`HTTP ${res.statusCode}${reason ? ': ' + reason : ''}`));
         }
       });
     });
