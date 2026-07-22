@@ -55,8 +55,9 @@ export default function Calibration() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({});
   const [showAdd, setShowAdd] = useState(false);
-  const [syncNote, setSyncNote] = useState(null); // 공유 동기화 업로드 안내 토스트
-  const syncNoteTimer = useRef(null);
+  const [notice, setNotice] = useState(null); // 안내/오류 토스트 (네이티브 alert 대신 사용 — alert는 인쇄/입력 포커스를 먹통으로 만듦)
+  const noticeTimer = useRef(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState(new Set());
   const [sortKey, setSortKey] = useState(null);   // null = 수동(드래그) 순서
@@ -173,16 +174,18 @@ export default function Calibration() {
       const cfg = await syncGetConfig();
       if (!cfg?.gistId || !cfg?.hasToken) return; // 공유 설정 없으면 조용히 건너뜀
       const r = await syncUpload();
-      showSyncNote(r?.ok ? '🔄 교정 이력을 다른 PC와 공유했습니다.'
+      showNotice(r?.ok ? '🔄 교정 이력을 다른 PC와 공유했습니다.'
         : `⚠ 공유 업로드 실패: ${r?.error || ''}`, !r?.ok);
     } catch (e) {
-      showSyncNote('⚠ 공유 업로드 중 오류: ' + e.message, true);
+      showNotice('⚠ 공유 업로드 중 오류: ' + e.message, true);
     }
   }
-  function showSyncNote(text, isError) {
-    setSyncNote({ text, isError });
-    if (syncNoteTimer.current) clearTimeout(syncNoteTimer.current);
-    syncNoteTimer.current = setTimeout(() => setSyncNote(null), 3500);
+  // 네이티브 alert()는 Electron에서 렌더러 입력 포커스를 한동안 먹통으로 만드는 문제가 있어
+  // 항상 이 비차단(non-blocking) 토스트를 사용한다.
+  function showNotice(text, isError) {
+    setNotice({ text, isError });
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(null), 3500);
   }
 
   async function saveEdit() {
@@ -196,12 +199,18 @@ export default function Calibration() {
       setEditingId(null);
       window.electronAPI?.notifyDataChanged?.();
       syncAfterChange();
-    } catch (e) { alert('저장 실패: ' + e.message); }
+    } catch (e) { showNotice('저장 실패: ' + e.message, true); }
     setSaving(false);
   }
 
-  async function handleDelete(id) {
-    if (!confirm('삭제하시겠습니까?')) return;
+  function handleDelete(id) {
+    setConfirmDeleteId(id);
+  }
+
+  async function confirmDelete() {
+    const id = confirmDeleteId;
+    setConfirmDeleteId(null);
+    if (!id) return;
     await deleteCalibration(id);
     setData(prev => prev.filter(d => d.id !== id));
     window.electronAPI?.notifyDataChanged?.();
@@ -221,7 +230,7 @@ export default function Calibration() {
       setShowAdd(false); setForm({});
       window.electronAPI?.notifyDataChanged?.();
       syncAfterChange();
-    } catch (e) { alert('추가 실패: ' + e.message); }
+    } catch (e) { showNotice('추가 실패: ' + e.message, true); }
     setSaving(false);
   }
 
@@ -350,7 +359,7 @@ export default function Calibration() {
                             {(() => {
                               const lf = latestHistory(item);
                               return lf?.filePath ? (
-                                <button onClick={async () => { const r = await openCalibFile(lf.filePath); if (r && !r.ok) alert('열기 실패: ' + (r.error || '')); }}
+                                <button onClick={async () => { const r = await openCalibFile(lf.filePath); if (r && !r.ok) showNotice('열기 실패: ' + (r.error || ''), true); }}
                                   className="px-1.5 py-1 rounded text-sm mr-1 hover:bg-emerald-50" title={`최근 성적서 열기: ${lf.fileName || ''}`}>📄</button>
                               ) : null;
                             })()}
@@ -363,7 +372,7 @@ export default function Calibration() {
                     {isExp && (
                       <tr>
                         <td colSpan={11} className="p-0 bg-gray-50/60">
-                          <HistoryPanel item={item} onSave={history => persistHistory(item, history)} />
+                          <HistoryPanel item={item} onSave={history => persistHistory(item, history)} onNotice={showNotice} />
                         </td>
                       </tr>
                     )}
@@ -400,11 +409,23 @@ export default function Calibration() {
         </div>
       )}
 
-      {syncNote && (
+      {confirmDeleteId !== null && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-xs p-5 space-y-4">
+            <p className="text-sm text-gray-700">삭제하시겠습니까?</p>
+            <div className="flex gap-2">
+              <button onClick={confirmDelete} className="flex-1 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700">삭제</button>
+              <button onClick={() => setConfirmDeleteId(null)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">취소</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {notice && (
         <div className="fixed top-4 right-4 z-[200] flex flex-col gap-2 max-w-sm">
-          <div className={`px-4 py-3 rounded-xl shadow-xl flex items-start gap-3 ${syncNote.isError ? 'bg-red-500 text-white' : 'bg-green-600 text-white'}`}>
-            <span className="text-sm font-medium flex-1 leading-snug">{syncNote.text}</span>
-            <button onClick={() => setSyncNote(null)} className={`text-lg leading-none shrink-0 ${syncNote.isError ? 'text-red-200 hover:text-white' : 'text-green-200 hover:text-white'}`}>✕</button>
+          <div className={`px-4 py-3 rounded-xl shadow-xl flex items-start gap-3 ${notice.isError ? 'bg-red-500 text-white' : 'bg-green-600 text-white'}`}>
+            <span className="text-sm font-medium flex-1 leading-snug">{notice.text}</span>
+            <button onClick={() => setNotice(null)} className={`text-lg leading-none shrink-0 ${notice.isError ? 'text-red-200 hover:text-white' : 'text-green-200 hover:text-white'}`}>✕</button>
           </div>
         </div>
       )}
@@ -414,7 +435,7 @@ export default function Calibration() {
 
 function FragmentRow({ children }) { return <>{children}</>; }
 
-function HistoryPanel({ item, onSave }) {
+function HistoryPanel({ item, onSave, onNotice }) {
   const [rows, setRows] = useState(() => (item.history || []).map(h => ({ ...h })));
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -425,23 +446,23 @@ function HistoryPanel({ item, onSave }) {
 
   async function upload(idx, file) {
     if (!file) return;
-    if (!isElectron) { alert('파일 첨부는 데스크톱 앱에서만 지원됩니다.'); return; }
+    if (!isElectron) { onNotice('파일 첨부는 데스크톱 앱에서만 지원됩니다.', true); return; }
     const row = rows[idx];
-    if (!row.calib_date) { alert('먼저 교정일을 입력하세요. (파일명이 관리번호·교정일 기준으로 저장됩니다)'); return; }
+    if (!row.calib_date) { onNotice('먼저 교정일을 입력하세요. (파일명이 관리번호·교정일 기준으로 저장됩니다)', true); return; }
     const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(file); });
     const desired = certFileName(item.no, row.calib_date, item.sn, file.name);
     const r = await saveCalibFile(desired, b64);
     if (r?.ok) edit(idx, { fileName: r.name, filePath: r.path });
-    else alert('파일 저장 실패: ' + (r?.error || ''));
+    else onNotice('파일 저장 실패: ' + (r?.error || ''), true);
   }
 
   async function save() {
     setBusy(true);
     const toSave = rows.map(r => ({ ...r, next_calib_date: r.calib_date ? nextCalibDate(r.calib_date) : '' }));
-    try { await onSave(toSave); setDirty(false); } catch (e) { alert('저장 실패: ' + e.message); } finally { setBusy(false); }
+    try { await onSave(toSave); setDirty(false); } catch (e) { onNotice('저장 실패: ' + e.message, true); } finally { setBusy(false); }
   }
 
-  async function open(path) { const r = await openCalibFile(path); if (r && !r.ok) alert('열기 실패: ' + (r.error || '')); }
+  async function open(path) { const r = await openCalibFile(path); if (r && !r.ok) onNotice('열기 실패: ' + (r.error || ''), true); }
 
   const view = rows.map((r, i) => ({ r, i })).sort((a, b) => (b.r.year || 0) - (a.r.year || 0));
 
