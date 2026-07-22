@@ -354,7 +354,7 @@ function syncConfigPath() {
   return path.join(app.getPath('userData'), 'sync-config.json');
 }
 function loadSyncConfig() {
-  const def = { gistId: '', token: '', autoSync: true, intervalMin: 5, lastSyncedAt: '', role: 'member', requesterName: '' };
+  const def = { gistId: '', token: '', autoSync: true, intervalMin: 5, lastSyncedAt: '', etag: '', role: 'member', requesterName: '' };
   try {
     const c = JSON.parse(fs.readFileSync(syncConfigPath(), 'utf-8'));
     return { ...def, ...c };
@@ -374,11 +374,11 @@ function broadcastDataChanged() {
 }
 
 // HTTPS 요청 (GET/POST/PATCH + 선택적 인증 + 본문)
-function ghRequest(method, apiUrl, { token, body } = {}) {
+function ghRequest(method, apiUrl, { token, body, extraHeaders } = {}) {
   return new Promise((resolve, reject) => {
     const u = new URL(apiUrl);
     const data = body ? Buffer.from(JSON.stringify(body)) : null;
-    const headers = { 'User-Agent': 'em-sync/1.0', 'Accept': 'application/vnd.github+json' };
+    const headers = { 'User-Agent': 'em-sync/1.0', 'Accept': 'application/vnd.github+json', ...extraHeaders };
     if (token) headers['Authorization'] = 'token ' + token;
     if (data) { headers['Content-Type'] = 'application/json'; headers['Content-Length'] = data.length; }
     const req = https.request({ hostname: u.hostname, path: u.pathname + u.search, method, headers }, (res) => {
@@ -388,13 +388,17 @@ function ghRequest(method, apiUrl, { token, body } = {}) {
       const chunks = [];
       res.on('data', c => { chunks.push(c); });
       res.on('end', () => {
+        const etag = res.headers.etag || '';
+        // 304 Not Modified — If-None-Match 조건부 요청에 대한 응답이며 GitHub API
+        // 사용량 한도(rate limit)에 포함되지 않는다. 본문이 없으므로 별도 처리.
+        if (res.statusCode === 304) { resolve({ notModified: true, etag }); return; }
         const out = Buffer.concat(chunks).toString('utf-8');
         if (res.statusCode >= 200 && res.statusCode < 300) {
-          try { resolve(JSON.parse(out || '{}')); } catch (e) { reject(e); }
+          try { resolve({ json: JSON.parse(out || '{}'), etag }); } catch (e) { reject(e); }
         } else {
           // GitHub는 오류 본문에 원인을 담아 준다(예: "Bad credentials",
-          // "Resource not accessible by personal access token" 등) — 이 메시지를
-          // 그대로 보여줘야 사용자가 토큰 문제인지, 권한 문제인지 구분할 수 있다.
+          // "API rate limit exceeded", "Resource not accessible by personal access
+          // token" 등) — 이 메시지를 그대로 보여줘야 사용자가 원인을 구분할 수 있다.
           let reason = '';
           try { reason = JSON.parse(out)?.message || ''; } catch { /* 본문이 JSON이 아니면 무시 */ }
           reject(new Error(`HTTP ${res.statusCode}${reason ? ': ' + reason : ''}`));
@@ -408,8 +412,17 @@ function ghRequest(method, apiUrl, { token, body } = {}) {
 }
 
 // Gist에서 데이터 파일 내용 + updated_at 조회 (1MB 초과 truncated면 raw_url로 재조회)
-async function gistFetchData(gistId, token) {
-  const g = await ghRequest('GET', `https://api.github.com/gists/${gistId}`, { token: token || undefined });
+// etag를 넘기면 If-None-Match 조건부 요청을 보낸다 — 원격에 변경이 없으면 GitHub가
+// 본문 없이 304만 응답하고, 이 요청은 API 사용량 한도에 포함되지 않는다. 여러 PC가
+// 토큰 없이(비인증) 주기적으로 자동 동기화할 때 시간당 60회 한도를 빨리 소진해
+// "API rate limit exceeded" 오류가 나던 문제를 크게 줄여준다.
+async function gistFetchData(gistId, token, etag) {
+  const r = await ghRequest('GET', `https://api.github.com/gists/${gistId}`, {
+    token: token || undefined,
+    extraHeaders: etag ? { 'If-None-Match': etag } : undefined,
+  });
+  if (r.notModified) return { notModified: true, etag: r.etag };
+  const g = r.json;
   const file = g.files && g.files[GIST_FILE];
   if (!file) throw new Error(`Gist에 ${GIST_FILE} 파일이 없습니다`);
   let content = file.content;
@@ -424,7 +437,7 @@ async function gistFetchData(gistId, token) {
       res.on('error', reject);
     });
   }
-  return { updatedAt: g.updated_at, content };
+  return { updatedAt: g.updated_at, content, etag: r.etag };
 }
 
 // 원격 → 로컬 최신화. force=false면 updated_at이 마지막 동기화와 같으면 건너뜀.
@@ -433,8 +446,15 @@ async function syncPull(force) {
   if (!cfg.gistId) return { ok: false, error: 'Gist ID가 설정되지 않았습니다' };
   sendSyncStatus({ type: 'checking' });
   try {
-    const { updatedAt, content } = await gistFetchData(cfg.gistId, cfg.token);
+    const r = await gistFetchData(cfg.gistId, cfg.token, cfg.etag);
+    if (r.notModified) {
+      if (r.etag && r.etag !== cfg.etag) { cfg.etag = r.etag; saveSyncConfig(cfg); }
+      sendSyncStatus({ type: 'idle', lastSyncedAt: cfg.lastSyncedAt });
+      return { ok: true, updated: false };
+    }
+    const { updatedAt, content, etag } = r;
     if (!force && cfg.lastSyncedAt && updatedAt === cfg.lastSyncedAt) {
+      cfg.etag = etag; saveSyncConfig(cfg);
       sendSyncStatus({ type: 'idle', lastSyncedAt: cfg.lastSyncedAt });
       return { ok: true, updated: false };
     }
@@ -443,6 +463,7 @@ async function syncPull(force) {
     if (!parsed || typeof parsed !== 'object') throw new Error('원격 데이터가 비어있습니다');
     saveData(parsed);
     cfg.lastSyncedAt = updatedAt;
+    cfg.etag = etag;
     saveSyncConfig(cfg);
     broadcastDataChanged();
     sendSyncStatus({ type: 'updated', lastSyncedAt: updatedAt });
@@ -460,20 +481,20 @@ async function syncUpload() {
   sendSyncStatus({ type: 'uploading' });
   try {
     const content = fs.readFileSync(getDataPath(), 'utf-8');
-    let gistId = cfg.gistId, updatedAt;
+    let gistId = cfg.gistId, updatedAt, etag;
     if (gistId) {
-      const g = await ghRequest('PATCH', `https://api.github.com/gists/${gistId}`, {
+      const r = await ghRequest('PATCH', `https://api.github.com/gists/${gistId}`, {
         token: cfg.token, body: { files: { [GIST_FILE]: { content } } },
       });
-      updatedAt = g.updated_at;
+      updatedAt = r.json.updated_at; etag = r.etag;
     } else {
-      const g = await ghRequest('POST', 'https://api.github.com/gists', {
+      const r = await ghRequest('POST', 'https://api.github.com/gists', {
         token: cfg.token,
         body: { description: '환경 모니터링 공유 일정 데이터', public: false, files: { [GIST_FILE]: { content } } },
       });
-      gistId = g.id; updatedAt = g.updated_at;
+      gistId = r.json.id; updatedAt = r.json.updated_at; etag = r.etag;
     }
-    cfg.gistId = gistId; cfg.lastSyncedAt = updatedAt;
+    cfg.gistId = gistId; cfg.lastSyncedAt = updatedAt; cfg.etag = etag || '';
     saveSyncConfig(cfg);
     sendSyncStatus({ type: 'uploaded', lastSyncedAt: updatedAt });
     return { ok: true, gistId, updatedAt };
@@ -827,7 +848,11 @@ function registerHandlers() {
   });
   ipcMain.handle('sync:setConfig', (_e, patch = {}) => {
     const c = loadSyncConfig();
-    if (patch.gistId !== undefined) c.gistId = String(patch.gistId).trim();
+    if (patch.gistId !== undefined) {
+      const next = String(patch.gistId).trim();
+      if (next !== c.gistId) c.etag = ''; // 다른 Gist를 가리키면 이전 ETag는 무의미하므로 초기화
+      c.gistId = next;
+    }
     if (patch.clearToken) c.token = '';
     else if (patch.token) c.token = String(patch.token).trim(); // 빈 값이면 기존 토큰 유지
     if (patch.autoSync !== undefined) c.autoSync = !!patch.autoSync;
