@@ -121,7 +121,16 @@ async function downloadAsar(url, dest) {
       }
     });
 
-    res.on('end', () => { out.end(() => resolve(hash.digest('hex'))); });
+    res.on('end', () => {
+      // 서버가 보낸 크기와 실제 받은 크기가 다르면(연결 중간 끊김 등) 잘린 파일이
+      // 조용히 "정상 다운로드"로 취급되어 체크섬 오류로만 나타나던 문제를 방지 —
+      // 여기서 먼저 걸러서 더 명확한 원인(다운로드 중단)으로 표시한다.
+      if (total > 0 && downloaded !== total) {
+        out.end(() => { try { fs.unlinkSync(dest); } catch {} reject(new Error(`다운로드가 중간에 끊겼습니다 (${downloaded}/${total} bytes)`)); });
+        return;
+      }
+      out.end(() => resolve(hash.digest('hex')));
+    });
 
     const cleanup = (err) => { out.destroy(); try { fs.unlinkSync(dest); } catch {} reject(err); };
     res.on('error', cleanup);
@@ -163,20 +172,36 @@ async function checkForUpdate() {
   }
 }
 
+// 체크섬 불일치/다운로드 중단은 대부분 네트워크 순간 끊김이나 배포 직후 CDN
+// 전파 지연(에지 노드에 새 파일이 아직 안 퍼진 상태) 때문에 생기는 일시적
+// 문제라, 사용자가 매번 직접 "다시 확인"을 누르지 않도록 여기서 자동 재시도한다.
+const DOWNLOAD_RETRIES = 3;
+
 async function downloadUpdate() {
   const dest = getUpdatePath();
   downloadingUpdate = true;
+  let lastErr = null;
   try {
     const meta = await fetchJSON(META_URL);
-    const sha256 = await downloadAsar(ASAR_URL, dest);
-
-    if (meta.sha256 && sha256 !== meta.sha256) {
-      try { fs.unlinkSync(dest); } catch {}
-      throw new Error('파일 검증 실패 (체크섬 불일치)');
+    for (let attempt = 1; attempt <= DOWNLOAD_RETRIES; attempt++) {
+      try {
+        const sha256 = await downloadAsar(ASAR_URL, dest);
+        if (meta.sha256 && sha256 !== meta.sha256) {
+          throw new Error(`파일 검증 실패 (체크섬 불일치)${attempt < DOWNLOAD_RETRIES ? ` — 재시도 중 (${attempt}/${DOWNLOAD_RETRIES})` : ''}`);
+        }
+        downloadedVersion = meta.version;
+        sendStatus({ type: 'downloaded', version: meta.version });
+        return;
+      } catch (err) {
+        lastErr = err;
+        try { fs.unlinkSync(dest); } catch {}
+        if (attempt < DOWNLOAD_RETRIES) {
+          sendStatus({ type: 'checking' }); // 재시도 중임을 알림(스피너 유지)
+          await new Promise(r => setTimeout(r, 1500 * attempt));
+        }
+      }
     }
-
-    downloadedVersion = meta.version;
-    sendStatus({ type: 'downloaded', version: meta.version });
+    throw lastErr;
   } catch (err) {
     try { fs.unlinkSync(dest); } catch {}
     sendStatus({ type: 'error', message: err.message });
