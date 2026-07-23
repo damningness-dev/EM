@@ -1,10 +1,43 @@
 import { useState, useEffect, useMemo } from 'react';
 import { fetchZones, fetchScheduleConfig, fetchHolidays, fetchCompletions } from '../lib/api';
 import { GRADE_COLORS } from '../data/initialData';
-import { calcMeasurements, calcEndDate, buildHolidayMap, setScheduleConfig, GRADE_PRIORITY } from '../lib/schedule';
+import { calcMeasurements, calcEndDate, buildHolidayMap, setScheduleConfig, getScheduleSpec, GRADE_PRIORITY } from '../lib/schedule';
 
 const DOW = ['일', '월', '화', '수', '목', '금', '토'];
-function fmt(d) { return d ? `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}` : '—'; }
+function fmt(d) { return d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '—'; }
+
+// 측정주기 표시("월1회", "분기1회" 등) — 구역의 phase 스펙(신형 unit/interval,
+// 구형 type/intervalDays 모두 지원)을 사람이 읽을 라벨로 변환한다.
+const CYCLE_UNIT_LABEL = { day: '일', week: '주', month: '월', quarter: '분기', half: '반기', year: '년' };
+function phaseLabel(p) {
+  let unit, interval;
+  if (p.unit) { unit = p.unit; interval = p.interval ?? 1; }
+  else {
+    switch (p.type) {
+      case 'daily': unit = 'day'; interval = 1; break;
+      case 'weekly': unit = 'week'; interval = 1; break;
+      case 'biweekly': unit = 'week'; interval = 2; break;
+      case 'monthly': unit = 'month'; interval = 1; break;
+      case 'quarterly': unit = 'month'; interval = 3; break;
+      default:
+        if (p.intervalDays && p.intervalDays % 7 === 0) { unit = 'week'; interval = p.intervalDays / 7; }
+        else { unit = 'day'; interval = p.intervalDays ?? 1; }
+    }
+  }
+  // 월 단위 간격은 3/6/12의 배수면 분기/반기/년으로 승격해서 보여준다.
+  if (unit === 'month' && interval > 0) {
+    if (interval % 12 === 0) { unit = 'year'; interval /= 12; }
+    else if (interval % 6 === 0) { unit = 'half'; interval /= 6; }
+    else if (interval % 3 === 0) { unit = 'quarter'; interval /= 3; }
+  }
+  if (unit === 'day') return interval <= 1 ? '매일' : `${interval}일마다`;
+  return `${CYCLE_UNIT_LABEL[unit] || unit}${interval}회`;
+}
+function zoneCycleLabel(zone) {
+  const spec = getScheduleSpec(zone.category, zone.grade);
+  if (!spec || !spec.length) return null;
+  return spec.map(phaseLabel).join(' → ');
+}
 
 export default function ZoneStatus({ year, onYearChange }) {
   const [zones, setZones] = useState([]);
@@ -111,6 +144,7 @@ export default function ZoneStatus({ year, onYearChange }) {
                       const k = `${m.date.getFullYear()}-${String(m.date.getMonth() + 1).padStart(2, '0')}`;
                       (byMonth[k] || (byMonth[k] = [])).push(m);
                     });
+                    const cycleLabel = zoneCycleLabel(zone);
                     return (
                       <div key={zone.id} className="px-4 py-3">
                         <div className="flex items-center gap-2 mb-2 flex-wrap">
@@ -118,6 +152,7 @@ export default function ZoneStatus({ year, onYearChange }) {
                           {zone.schedule_start ? (
                             <>
                               <span className="text-xs text-gray-500">시작 {zone.schedule_start} · 종료 {fmt(plan.endDate)}</span>
+                              {cycleLabel && <span className="text-xs px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 font-medium">{cycleLabel}</span>}
                               <span className="text-xs font-semibold text-blue-600">총 {plan.total}회</span>
                               <span className="text-xs text-gray-400">(경과 {plan.done}회)</span>
                             </>
