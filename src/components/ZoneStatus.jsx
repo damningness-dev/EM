@@ -133,7 +133,7 @@ export default function ZoneStatus({ year, onYearChange }) {
                                 <span key={m.num}
                                   className={`text-[11px] px-1.5 py-1 rounded border ${done ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-gray-200 text-gray-600'}`}
                                   title={`${m.num}회차`}>
-                                  <b className="text-gray-400 mr-1">{m.num}</b>{m.date.getMonth() + 1}/{m.date.getDate()}({DOW[m.date.getDay()]})
+                                  <b className="text-gray-400 mr-1">{m.num}</b>{String(m.date.getFullYear()).slice(2)}/{m.date.getMonth() + 1}/{m.date.getDate()}({DOW[m.date.getDay()]})
                                 </span>
                               );
                             })}
