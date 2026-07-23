@@ -629,8 +629,38 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   // 모니터링 현황 패널: 이번 달 측정 일정(회차 단위)을 완료/예정으로 나눠 탭으로 보여준다.
   const monthDoneRows = monthTableRows.filter(r => completions.has(`${r.zone.id}_${r.measurement.num}`));
   const monthPendingRows = monthTableRows.filter(r => !completions.has(`${r.zone.id}_${r.measurement.num}`));
-  const monTabRows = monTab === 'done' ? monthDoneRows : monTab === 'pending' ? monthPendingRows : monthTableRows;
   const monCompleteRate = monthTableRows.length ? Math.round(monthDoneRows.length / monthTableRows.length * 100) : 0;
+
+  // 구역별로 묶어서 보여준다 — 같은 구역이 이번 달에 여러 번 측정되면(측정주기가
+  // 짧은 구역) 이번 달 기준 순번/총회차를 "1/2"처럼 표시한다(전체 일정의 회차
+  // 번호가 아니라 이번 달 안에서의 순번).
+  const monthZoneGroups = useMemo(() => {
+    const byZone = new Map();
+    monthTableRows.forEach(r => {
+      if (!byZone.has(r.zone.id)) byZone.set(r.zone.id, { zone: r.zone, occurrences: [] });
+      byZone.get(r.zone.id).occurrences.push(r);
+    });
+    const groups = [...byZone.values()].map(g => {
+      const sorted = [...g.occurrences].sort((a, b) => a.ds.localeCompare(b.ds));
+      return { zone: g.zone, occurrences: sorted.map((occ, i) => ({ ...occ, monthIdx: i + 1, monthTotal: sorted.length })) };
+    });
+    groups.sort((a, b) => (zoneOrderRank[a.zone.id] ?? 1e9) - (zoneOrderRank[b.zone.id] ?? 1e9) || a.zone.name.localeCompare(b.zone.name));
+    return groups;
+  }, [monthTableRows, zoneOrderRank]);
+
+  // 탭(전체/측정완료/예정)에 맞춰 각 구역의 회차만 걸러내고, 걸러진 회차가 하나도
+  // 없는 구역은 목록에서 뺀다.
+  const monTabZoneGroups = monthZoneGroups
+    .map(g => ({
+      zone: g.zone,
+      occurrences: g.occurrences.filter(occ => {
+        const isDone = completions.has(`${g.zone.id}_${occ.measurement.num}`);
+        if (monTab === 'done') return isDone;
+        if (monTab === 'pending') return !isDone;
+        return true;
+      }),
+    }))
+    .filter(g => g.occurrences.length > 0);
 
   const grid = buildGrid(year, month, weekStart);
   const dowOrder = weekStart === 'sun' ? [0, 1, 2, 3, 4, 5, 6] : [1, 2, 3, 4, 5, 6, 0];
@@ -2323,20 +2353,23 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
             </div>
           )}
 
-          {/* Monitoring progress — 이번 달 측정 일정(회차 단위) 완료 현황 */}
+          {/* Monitoring progress — 이번 달 측정 일정을 구역별로 묶어 완료 현황을 보여준다.
+              사이드바(w-64 flex-col)가 달력과 같은 높이로 늘어나 있으므로 이 패널이
+              flex-1로 남은 높이를 모두 차지해 달력과 같은 크기가 되고, 목록도 잘리지
+              않고 스크롤로 모든 구역을 볼 수 있다. */}
           {monthTableRows.length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden flex flex-col flex-1 min-h-[240px]">
+              <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50 flex items-center justify-between shrink-0">
                 <p className="text-xs font-semibold text-gray-600">📋 모니터링 현황</p>
                 <span className={`text-xs font-bold ${monCompleteRate === 100 ? 'text-green-600' : 'text-blue-600'}`}>{monCompleteRate}%</span>
               </div>
-              <div className="px-4 pt-3">
+              <div className="px-4 pt-3 shrink-0">
                 <div className="w-full bg-gray-100 rounded-full h-2 mb-2 overflow-hidden">
                   <div className={`h-2 rounded-full ${monCompleteRate === 100 ? 'bg-green-500' : 'bg-blue-500'}`} style={{ width: `${monCompleteRate}%` }} />
                 </div>
                 <p className="text-xs text-gray-500 mb-2">이번 달 {monthTableRows.length}건 중 {monthDoneRows.length}건 완료</p>
               </div>
-              <div className="flex border-b border-gray-100">
+              <div className="flex border-b border-gray-100 shrink-0">
                 {[
                   { key: 'all', label: `전체 ${monthTableRows.length}` },
                   { key: 'done', label: `측정완료 ${monthDoneRows.length}` },
@@ -2351,24 +2384,33 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                   >{t.label}</button>
                 ))}
               </div>
-              <div className="divide-y divide-gray-50 max-h-64 overflow-y-auto">
-                {monTabRows.length === 0 ? (
+              <div className="divide-y divide-gray-50 flex-1 min-h-0 overflow-y-auto">
+                {monTabZoneGroups.length === 0 ? (
                   <p className="px-4 py-4 text-xs text-gray-400 text-center">해당 항목이 없습니다.</p>
-                ) : monTabRows.map((r, i) => {
-                  const isDone = completions.has(`${r.zone.id}_${r.measurement.num}`);
-                  return (
-                    <button
-                      key={`${r.zone.id}-${r.measurement.num}-${i}`}
-                      onClick={() => setSelectedDay(r.ds)}
-                      className="w-full flex items-center gap-2 px-4 py-2 text-left hover:bg-gray-50"
-                    >
-                      <span className={`text-xs shrink-0 ${isDone ? 'text-green-500' : 'text-gray-300'}`}>{isDone ? '✓' : '○'}</span>
-                      <span className="text-[11px] text-gray-400 shrink-0 w-9">{r.ds.slice(5).replace('-', '/')}</span>
-                      <span className={`text-xs flex-1 truncate ${isDone ? 'text-gray-400 line-through' : 'text-gray-700'}`}>{r.zone.name}[{r.zone.grade}]</span>
-                      <span className="text-[11px] text-gray-300 shrink-0">#{r.measurement.num}</span>
-                    </button>
-                  );
-                })}
+                ) : monTabZoneGroups.map(g => (
+                  <div key={g.zone.id} className="px-4 py-2.5">
+                    <p className="text-xs font-medium text-gray-700 mb-1.5 truncate">{g.zone.name}[{g.zone.grade}]</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {g.occurrences.map((occ, i) => {
+                        const isDone = completions.has(`${g.zone.id}_${occ.measurement.num}`);
+                        return (
+                          <button
+                            key={`${occ.zone.id}-${occ.measurement.num}-${i}`}
+                            onClick={() => setSelectedDay(occ.ds)}
+                            className={`text-[11px] px-1.5 py-0.5 rounded border flex items-center gap-1 transition-colors ${
+                              isDone ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
+                            }`}
+                            title={`${g.zone.name}[${g.zone.grade}] · ${occ.ds}${isDone ? ' [완료]' : ''}`}
+                          >
+                            <span>{isDone ? '✓' : '○'}</span>
+                            <span className="font-medium">{occ.monthIdx}/{occ.monthTotal}</span>
+                            <span className="text-gray-400">{occ.ds.slice(2).replace(/-/g, '/')}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
