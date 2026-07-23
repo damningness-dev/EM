@@ -2,8 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { syncGetConfig, syncSetConfig, syncUpload, syncPull } from '../lib/api';
 
 // 사이드바 하단의 공유 동기화 컨트롤.
-// 읽기(내려받기)는 모든 PC, 업로드(공유)는 토큰이 있는 관리자만.
-export default function SyncControl() {
+// 백그라운드 자동 동기화(주기적 내려받기)는 관리자 잠금과 무관하게 항상 동작하지만,
+// 사용자가 직접 누르는 버튼(지금 동기화·설정·업로드 등)은 관리자 잠금 해제 상태에서만
+// 활성화된다 — 실수로 다른 사람이 Gist/토큰 설정을 건드리는 것을 막기 위함.
+export default function SyncControl({ adminUnlocked }) {
   const [cfg, setCfg] = useState(null);          // { gistId, hasToken, autoSync, intervalMin, lastSyncedAt }
   const [status, setStatus] = useState(null);    // { type, message, lastSyncedAt }
   const [showSettings, setShowSettings] = useState(false);
@@ -38,16 +40,24 @@ export default function SyncControl() {
   })();
 
   async function doPull() {
+    if (!adminUnlocked) return;
     setBusy(true);
     try { const r = await syncPull(); if (!r?.ok && r?.error) setStatus({ type: 'error', message: r.error }); }
     finally { setBusy(false); }
+  }
+
+  function openSettings() {
+    if (!adminUnlocked) return;
+    setShowSettings(true);
   }
 
   return (
     <div className="px-4 py-3 border-t border-gray-700 text-xs">
       <div className="flex items-center justify-between mb-1.5">
         <span className="text-gray-400">🔄 공유 동기화</span>
-        <button onClick={() => setShowSettings(true)} className="text-gray-500 hover:text-gray-200" title="동기화 설정">⚙</button>
+        <button onClick={openSettings} disabled={!adminUnlocked}
+          className="text-gray-500 hover:text-gray-200 disabled:text-gray-700 disabled:cursor-not-allowed"
+          title={adminUnlocked ? '동기화 설정' : '관리자 잠금 해제가 필요합니다'}>⚙</button>
       </div>
       {cfg?.gistId ? (
         <>
@@ -55,18 +65,21 @@ export default function SyncControl() {
             최근: {lastText}{cfg.autoSync ? ` · 자동 ${cfg.intervalMin}분` : ' · 자동 꺼짐'}
           </div>
           {statusText && <div className={`mb-1.5 ${status?.type === 'error' ? 'text-red-400' : 'text-blue-400'}`}>{statusText}</div>}
-          <button onClick={doPull} disabled={busy}
-            className="w-full py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white font-medium disabled:opacity-50">
-            {busy ? '동기화 중…' : '지금 동기화'}
+          <button onClick={doPull} disabled={busy || !adminUnlocked}
+            title={adminUnlocked ? undefined : '관리자 잠금 해제가 필요합니다'}
+            className="w-full py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+            {busy ? '동기화 중…' : adminUnlocked ? '지금 동기화' : '🔒 지금 동기화'}
           </button>
         </>
       ) : (
-        <button onClick={() => setShowSettings(true)} className="w-full py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-gray-200">
-          공유 설정하기
+        <button onClick={openSettings} disabled={!adminUnlocked}
+          title={adminUnlocked ? undefined : '관리자 잠금 해제가 필요합니다'}
+          className="w-full py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed">
+          {adminUnlocked ? '공유 설정하기' : '🔒 공유 설정하기'}
         </button>
       )}
 
-      {showSettings && <SettingsModal cfg={cfg} onClose={() => { setShowSettings(false); reload(); }} onStatus={setStatus} />}
+      {showSettings && adminUnlocked && <SettingsModal cfg={cfg} onClose={() => { setShowSettings(false); reload(); }} onStatus={setStatus} />}
     </div>
   );
 }

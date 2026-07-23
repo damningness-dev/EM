@@ -125,7 +125,7 @@ export default function App() {
           </label>
         )}
 
-        <SyncControl />
+        <SyncControl adminUnlocked={adminUnlocked} />
       </aside>
 
       {showAdminLock && (
