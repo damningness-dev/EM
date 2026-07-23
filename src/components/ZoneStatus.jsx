@@ -1,14 +1,15 @@
 import { useState, useEffect, useMemo } from 'react';
 import { fetchZones, fetchScheduleConfig, fetchHolidays, fetchCompletions } from '../lib/api';
 import { GRADE_COLORS } from '../data/initialData';
-import { calcMeasurements, calcEndDate, buildHolidayMap, setScheduleConfig, getScheduleSpec, GRADE_PRIORITY } from '../lib/schedule';
+import { calcMeasurements, calcEndDate, buildHolidayMap, setScheduleConfig, getScheduleSpec, computePhaseCount, GRADE_PRIORITY } from '../lib/schedule';
 
 const DOW = ['일', '월', '화', '수', '목', '금', '토'];
 function fmt(d) { return d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '—'; }
 
-// 측정주기 표시("월1회", "분기1회" 등) — 구역의 phase 스펙(신형 unit/interval,
-// 구형 type/intervalDays 모두 지원)을 사람이 읽을 라벨로 변환한다.
-const CYCLE_UNIT_LABEL = { day: '일', week: '주', month: '월', quarter: '분기', half: '반기', year: '년' };
+// 측정주기 표시("월1회 12회", "주1회 4회 / 격주1회 6회" 등) — 구역의 phase 스펙
+// (신형 unit/interval, 구형 type/intervalDays 모두 지원)을 사람이 읽을 라벨로
+// 변환한다. "주1회 4회"의 뒤 숫자는 해당 phase 동안 실제로 몇 번 측정하는지(횟수).
+const CYCLE_UNIT_LABEL = { month: '월', quarter: '분기', half: '반기', year: '년' };
 function phaseLabel(p) {
   let unit, interval;
   if (p.unit) { unit = p.unit; interval = p.interval ?? 1; }
@@ -24,19 +25,31 @@ function phaseLabel(p) {
         else { unit = 'day'; interval = p.intervalDays ?? 1; }
     }
   }
-  // 월 단위 간격은 3/6/12의 배수면 분기/반기/년으로 승격해서 보여준다.
-  if (unit === 'month' && interval > 0) {
-    if (interval % 12 === 0) { unit = 'year'; interval /= 12; }
-    else if (interval % 6 === 0) { unit = 'half'; interval /= 6; }
-    else if (interval % 3 === 0) { unit = 'quarter'; interval /= 3; }
+  // 이 phase 동안의 실제 측정 횟수 — 스케줄 계산 엔진과 동일한 방식(기간/간격)으로 산출.
+  const count = (p.durationValue != null && p.durationUnit)
+    ? computePhaseCount(p.durationValue, p.durationUnit, interval, unit)
+    : (p.count || 1);
+
+  let cycleText;
+  if (unit === 'day') {
+    cycleText = interval <= 1 ? '매일' : `${interval}일마다`;
+  } else if (unit === 'week') {
+    cycleText = interval <= 1 ? '주1회' : interval === 2 ? '격주1회' : `${interval}주1회`;
+  } else if (unit === 'month' && interval > 0 && interval % 12 === 0) {
+    cycleText = `${CYCLE_UNIT_LABEL.year}${interval / 12}회`;
+  } else if (unit === 'month' && interval > 0 && interval % 6 === 0) {
+    cycleText = `${CYCLE_UNIT_LABEL.half}${interval / 6}회`;
+  } else if (unit === 'month' && interval > 0 && interval % 3 === 0) {
+    cycleText = `${CYCLE_UNIT_LABEL.quarter}${interval / 3}회`;
+  } else {
+    cycleText = `${CYCLE_UNIT_LABEL[unit] || unit}${interval}회`;
   }
-  if (unit === 'day') return interval <= 1 ? '매일' : `${interval}일마다`;
-  return `${CYCLE_UNIT_LABEL[unit] || unit}${interval}회`;
+  return `${cycleText} ${count}회`;
 }
 function zoneCycleLabel(zone) {
   const spec = getScheduleSpec(zone.category, zone.grade);
   if (!spec || !spec.length) return null;
-  return spec.map(phaseLabel).join(' → ');
+  return spec.map(phaseLabel).join(' / ');
 }
 
 export default function ZoneStatus({ year, onYearChange }) {

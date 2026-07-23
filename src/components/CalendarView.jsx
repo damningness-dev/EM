@@ -172,6 +172,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   const [addSchedPts, setAddSchedPts] = useState({ surface: '', float: '', fall: '', particle: '' });
   const [editingTempId, setEditingTempId] = useState(null); // 임시일정 이름 수정 중인 id
   const [editingTempName, setEditingTempName] = useState('');
+  const [deleteTempPrompt, setDeleteTempPrompt] = useState(null); // 삭제 확인 대기 중인 임시일정
   const [chipColors, setChipColors] = useState(() => {
     try {
       const saved = localStorage.getItem('em-chip-colors');
@@ -1009,6 +1010,28 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     showSuccess('임시 일정 이름을 변경했습니다. "일정 저장하기"를 눌러야 반영됩니다.');
   }
 
+  // 임시일정 완료 처리 토글 (초안 — 저장하기 전까지는 로컬 상태만 변경, 나머지 임시일정
+  // 수정과 동일한 방식)
+  function toggleTempDone(t) {
+    if (!requireAdmin()) return;
+    const done = !t.done;
+    setTempSchedules(prev => prev.map(x => x.id === t.id ? { ...x, done } : x));
+    logChange(`임시일정 ${done ? '완료 처리' : '완료 취소'}: ${t.name} (${t.date})`);
+    showSuccess(`임시 일정을 ${done ? '완료 처리' : '완료 취소'}했습니다. "일정 저장하기"를 눌러야 반영됩니다.`);
+  }
+
+  // 임시일정 삭제 확인 후 실행
+  function confirmDeleteTemp() {
+    const t = deleteTempPrompt;
+    setDeleteTempPrompt(null);
+    if (!t) return;
+    // 이미 저장된 임시일정이면 삭제를 "저장하기" 때까지 예약, 초안(_draftNew)이면 바로 제거
+    if (!t._draftNew) pendingTempDeletesRef.current = [...pendingTempDeletesRef.current, t.id];
+    setTempSchedules(prev => prev.filter(x => x.id !== t.id));
+    logChange(`임시일정 삭제: ${t.name} (${t.date})`);
+    showSuccess('임시 일정을 삭제 예약했습니다. "일정 저장하기"를 눌러야 반영됩니다.');
+  }
+
   // 되돌리기 — 마지막 저장 시점 상태로 전체 복원 (측정일 이동/시작일 변경/일정비우기/임시일정/최적화 초안 전체 취소)
   function handleRevertDraft() {
     if (!requireAdmin()) return;
@@ -1264,6 +1287,24 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                 }}
                 className={`px-4 py-2 text-sm text-white rounded-lg ${completionPrompt.isCompleted ? 'bg-red-500 hover:bg-red-600' : 'bg-green-600 hover:bg-green-700'}`}
               >{completionPrompt.isCompleted ? '완료 취소' : '완료 처리'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 임시일정 삭제 확인 */}
+      {deleteTempPrompt && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/40" onClick={() => setDeleteTempPrompt(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-80 p-6" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-gray-900 mb-1">임시 일정 삭제</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              <span className="font-semibold text-gray-800">{deleteTempPrompt.name}</span>을(를) 삭제하시겠습니까?
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setDeleteTempPrompt(null)}
+                className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>
+              <button onClick={confirmDeleteTemp}
+                className="px-4 py-2 text-sm text-white rounded-lg bg-red-500 hover:bg-red-600">삭제</button>
             </div>
           </div>
         </div>
@@ -2011,8 +2052,8 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                         <div
                           key={`t${i}`}
                           onClick={(e) => e.stopPropagation()}
-                          className="text-xs px-1 py-0.5 rounded truncate bg-orange-50 border border-orange-200 text-orange-600"
-                          title={`${t.name}[임시]`}
+                          className={`text-xs px-1 py-0.5 rounded truncate bg-orange-50 border border-orange-200 text-orange-600 ${t.done ? 'line-through opacity-60' : ''}`}
+                          title={`${t.name}[임시]${t.done ? ' [완료]' : ''}`}
                         >{t.name}[임시]</div>
                       ))}
                       {schedEvts.map(({ zone, measurement }, i) => {
@@ -2181,18 +2222,22 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                     {selectedTempEvents.map(t => (
                       <div key={t.id} className="px-4 py-2.5">
                         <div className="flex items-center justify-between gap-1 mb-1">
-                          <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-orange-50 border border-orange-200 text-orange-600">임시</span>
-                          <button
-                            onClick={() => {
-                              if (!requireAdmin()) return;
-                              // 이미 저장된 임시일정이면 삭제를 "저장하기" 때까지 예약, 초안(_draftNew)이면 바로 제거
-                              if (!t._draftNew) pendingTempDeletesRef.current = [...pendingTempDeletesRef.current, t.id];
-                              setTempSchedules(prev => prev.filter(x => x.id !== t.id));
-                              logChange(`임시일정 삭제: ${t.name} (${t.date})`);
-                              showSuccess('임시 일정을 삭제 예약했습니다. "일정 저장하기"를 눌러야 반영됩니다.');
-                            }}
-                            className="text-xs text-gray-400 hover:text-red-500 leading-none"
-                          >✕</button>
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-orange-50 border border-orange-200 text-orange-600">임시</span>
+                            {t.done && <span className="text-xs bg-green-500 text-white px-1 py-0.5 rounded font-bold">✓완료</span>}
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => { if (requireAdmin()) { setEditingTempId(t.id); setEditingTempName(t.name); } }}
+                              className="text-xs text-gray-400 hover:text-blue-500 leading-none"
+                              title="이름 수정"
+                            >✎</button>
+                            <button
+                              onClick={() => { if (!requireAdmin()) return; setDeleteTempPrompt(t); }}
+                              className="text-xs text-gray-400 hover:text-red-500 leading-none"
+                              title="삭제"
+                            >✕</button>
+                          </div>
                         </div>
                         {editingTempId === t.id ? (
                           <input
@@ -2206,9 +2251,9 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                           />
                         ) : (
                           <p
-                            className="text-sm font-medium text-gray-800 cursor-text"
-                            title="더블클릭하여 이름 수정"
-                            onDoubleClick={() => { if (requireAdmin()) { setEditingTempId(t.id); setEditingTempName(t.name); } }}
+                            className={`text-sm font-medium cursor-pointer ${t.done ? 'text-gray-400 line-through' : 'text-gray-800'}`}
+                            title="더블클릭하여 완료 처리"
+                            onDoubleClick={() => toggleTempDone(t)}
                           >{t.name}</p>
                         )}
                         {(t.points_surface || t.points_float || t.points_fall || t.points_particle) ? (
