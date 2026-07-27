@@ -163,6 +163,23 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   function logChange(msg) {
     setChangeLog(prev => [...prev, { id: `${prev.length}-${Math.random().toString(36).slice(2)}`, msg }]);
   }
+
+  // 같은 항목(key)을 저장 전에 여러 번 옮기면(예: 6일→7일→8일) 매번 별도 항목으로
+  // 남기지 않고, 항상 "최초 시작 위치 → 최종 위치" 한 건으로만 남긴다. 원래
+  // 위치로 되돌아오면(6일→7일→6일) 실질적인 변경이 없으므로 항목 자체를 지운다.
+  function logMoveChange(key, label, from, to, suffix = '') {
+    setChangeLog(prev => {
+      const idx = prev.findIndex(e => e.key === key);
+      if (idx >= 0) {
+        const origFrom = prev[idx].from;
+        if (String(origFrom) === String(to)) return [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+        const merged = { ...prev[idx], to, msg: `${label}: ${origFrom} → ${to}${suffix}` };
+        return [...prev.slice(0, idx), merged, ...prev.slice(idx + 1)];
+      }
+      if (String(from) === String(to)) return prev;
+      return [...prev, { id: `${prev.length}-${Math.random().toString(36).slice(2)}`, key, from, to, msg: `${label}: ${from} → ${to}${suffix}` }];
+    });
+  }
   // changeLog를 마운트-1회성 effect(useEffect(...,[]))의 클로저에서도 최신값으로 읽기 위한 ref
   const changeLogRef = useRef([]);
   useEffect(() => { changeLogRef.current = changeLog; }, [changeLog]);
@@ -853,7 +870,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     if (dragData.isFirst) {
       const updated = { ...zone, schedule_start: dateStr, schedule_overrides: { [String(dragData.num)]: dateStr } };
       setZones(prev => prev.map(z => z.id === zone.id ? updated : z));
-      logChange(`시작일 변경: ${zone.name}[${zone.grade}] ${zone.schedule_start || '?'} → ${dateStr} (이후 일정 재배치)`);
+      logMoveChange(`start:${zone.id}`, `시작일 변경: ${zone.name}[${zone.grade}]`, zone.schedule_start || '?', dateStr, ' (이후 일정 재배치)');
       showSuccess('시작일을 옮기고 이후 일정을 재배치했습니다. "일정 저장하기"를 눌러야 반영됩니다.');
       return;
     }
@@ -904,7 +921,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
       }
     }
 
-    logChange(`${zone.name}[${zone.grade}] ${dragData.num}회차: ${dragData.fromDateStr || '?'} → ${dateStr}`);
+    logMoveChange(`move:${zone.id}:${dragData.num}`, `${zone.name}[${zone.grade}] ${dragData.num}회차`, dragData.fromDateStr || '?', dateStr);
     moveMeasurementWithReflow(zone, dragData.num, dateStr);
     showSuccess(`${zone.name}[${zone.grade}] ${dragData.num}회차를 ${dateStr}로 옮겼습니다. "일정 저장하기"를 눌러야 반영됩니다.`);
   }
@@ -939,7 +956,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     setZones(prev => prev.map(z => updates.find(u => u.id === z.id) || z));
     moves.forEach((mv, i) => {
       const zone = zones.find(z => String(z.id) === String(mv.zoneId));
-      if (zone) logChange(`${zone.name}[${zone.grade}] ${mv.num}회차: ${fromDates[i] || '?'} → ${mv.date}`);
+      if (zone) logMoveChange(`move:${zone.id}:${mv.num}`, `${zone.name}[${zone.grade}] ${mv.num}회차`, fromDates[i] || '?', mv.date);
     });
   }
 
