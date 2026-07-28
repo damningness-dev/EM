@@ -8,10 +8,10 @@ let hid = 0;
 function newHistoryId() { return `h${Date.now()}_${hid++}`; }
 
 // 컬럼 순서(고정) + 기본 너비(px) — 헤더 사이 구분선을 드래그해 너비 조절
-const CALIB_COL_ORDER = ['expand', 'idx', 'no', 'sn', 'cert_no', 'name', 'calib_date', 'next_calib_date', 'dday', 'note', 'manage'];
+const CALIB_COL_ORDER = ['expand', 'idx', 'no', 'sn', 'cert_no', 'name', 'calib_date', 'next_calib_date', 'dday', 'calibNote', 'note', 'manage'];
 const CALIB_COL_DEFAULT_W = {
   expand: 28, idx: 40, no: 110, sn: 100, cert_no: 110, name: 140,
-  calib_date: 100, next_calib_date: 100, dday: 70, note: 140, manage: 140,
+  calib_date: 100, next_calib_date: 100, dday: 70, calibNote: 140, note: 140, manage: 140,
 };
 const CALIB_COL_STORE_KEY = 'em-calib-table-cols';
 
@@ -280,6 +280,11 @@ export default function Calibration() {
                   );
                 })}
                 <th className="relative text-center px-4 py-3 text-gray-500 font-medium">
+                  교정내역
+                  <span onMouseDown={e => startColResize(e, 'calibNote')} draggable={false} onDragStart={e => e.preventDefault()}
+                    className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                </th>
+                <th className="relative text-center px-4 py-3 text-gray-500 font-medium">
                   비고
                   <span onMouseDown={e => startColResize(e, 'note')} draggable={false} onDragStart={e => e.preventDefault()}
                     className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
@@ -314,6 +319,7 @@ export default function Calibration() {
                           <td className="px-4 py-2 text-center text-gray-400 text-xs">{formatDate((item.eff || item).calib_date)}</td>
                           <td className="px-4 py-2 text-center text-gray-400 text-xs">{formatDate((item.eff || item).next_calib_date)}</td>
                           <td className="px-4 py-2 text-center text-gray-300">—</td>
+                          <td className="px-4 py-2 text-center text-gray-400 text-xs truncate" title={latestHistory(item)?.note || ''}>{latestHistory(item)?.note || '—'}</td>
                           <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm text-center" placeholder="비고" value={form.note || ''} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} /></td>
                           <td className="px-4 py-2 text-center whitespace-nowrap">
                             <button onClick={saveEdit} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs mr-1 disabled:opacity-50">저장</button>
@@ -330,6 +336,7 @@ export default function Calibration() {
                           <td className="px-4 py-3 text-center text-gray-500 text-xs">{formatDate((item.eff || item).calib_date)}</td>
                           <td className="px-4 py-3 text-center text-gray-500 text-xs">{(item.eff || item).next_calib_date === '미사용' ? '미사용' : formatDate((item.eff || item).next_calib_date)}</td>
                           <td className={`px-4 py-3 text-center font-semibold text-sm ${getDDayColor(item.dday)}`}>{getDDayLabel(item.dday)}</td>
+                          <td className="px-4 py-3 text-center text-xs text-gray-400 truncate" title={latestHistory(item)?.note || ''}>{latestHistory(item)?.note || ''}</td>
                           <td className="px-4 py-3 text-center text-xs text-gray-400">{item.note}</td>
                           <td className="px-4 py-3 text-center whitespace-nowrap">
                             {(() => {
@@ -347,7 +354,7 @@ export default function Calibration() {
                     </tr>
                     {isExp && (
                       <tr>
-                        <td colSpan={11} className="p-0 bg-gray-50/60">
+                        <td colSpan={12} className="p-0 bg-gray-50/60">
                           <HistoryPanel item={item} onSave={history => persistHistory(item, history)} onNotice={showNotice} />
                         </td>
                       </tr>
@@ -440,7 +447,17 @@ function HistoryPanel({ item, onSave, onNotice }) {
 
   async function open(path) { const r = await openCalibFile(path); if (r && !r.ok) onNotice('열기 실패: ' + (r.error || ''), true); }
 
-  const view = rows.map((r, i) => ({ r, i })).sort((a, b) => (b.r.year || 0) - (a.r.year || 0));
+  // 교정일이 최신인 내역이 가장 위로 오도록 정렬(대표값 계산에 쓰는 latestCalibHistory와
+  // 동일한 기준: calib_date 내림차순, 동률이면 연도 내림차순). 교정일을 아직 입력하지
+  // 않은 새 내역(+ 내역 추가로 막 만든 행)은 연도만으로 비교하면 기존 항목들 사이에
+  // 끼어 들어갈 수 있으므로, 교정일이 비어있으면 항상 맨 위로 오게 한다.
+  const view = rows.map((r, i) => ({ r, i })).sort((a, b) => {
+    const ad = a.r.calib_date, bd = b.r.calib_date;
+    if (!ad && !bd) return (b.r.year || 0) - (a.r.year || 0);
+    if (!ad) return -1;
+    if (!bd) return 1;
+    return bd.localeCompare(ad) || (b.r.year || 0) - (a.r.year || 0);
+  });
 
   return (
     <div className="px-8 py-3">
@@ -467,7 +484,7 @@ function HistoryPanel({ item, onSave, onNotice }) {
               <label className="text-[10px] text-gray-400">교정일<input type="date" value={h.calib_date || ''} onChange={e => edit(idx, { calib_date: e.target.value })} className="ml-1 border border-gray-200 rounded px-1 py-1 text-xs" /></label>
               <label className="text-[10px] text-gray-400">차기<input type="date" readOnly title="교정일 +1년 -1일 자동" value={nextCalibDate(h.calib_date) || ''} className="ml-1 border border-gray-200 rounded px-1 py-1 text-xs bg-gray-50 text-gray-500" /></label>
               <input value={h.note || ''} onChange={e => edit(idx, { note: e.target.value })}
-                className="flex-1 min-w-24 border border-gray-200 rounded px-1.5 py-1 text-xs" placeholder="비고" />
+                className="flex-1 min-w-24 border border-gray-200 rounded px-1.5 py-1 text-xs" placeholder="교정내역" />
               {h.filePath ? (
                 <span className="flex items-center gap-1">
                   <button onClick={() => open(h.filePath)} className="text-xs px-2 py-1 bg-emerald-50 text-emerald-600 rounded hover:bg-emerald-100" title={h.fileName}>📄 열기</button>
