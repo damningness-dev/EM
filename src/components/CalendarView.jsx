@@ -337,27 +337,49 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     }
   }
 
-  // 구역/그룹/공휴일 다시 불러오기 (별도 창 저장 또는 공유 동기화로 데이터가 바뀌었을 때 호출됨)
-  // 저장하지 않은 일정 초안이 있으면 구역 정보는 덮어쓰지 않는다 (초안 유실 방지).
+  // 화면에 보이는 데이터 전체를 다시 불러온다 (별도 창 저장 또는 공유 동기화로 데이터가
+  // 바뀌었을 때 호출됨) — 이전에는 구역/그룹/공휴일만 새로고침해서 공유 동기화로 받은
+  // 교정·완료·임시일정·일정비우기 등은 다른 화면에 갔다 와야만(재마운트) 반영됐다.
+  // 저장하지 않은 일정 초안(측정일 이동 등)이 있으면 그 초안이 걸린 구역/일정비우기/
+  // 임시일정은 덮어쓰지 않는다 (초안 유실 방지). 나머지는 초안과 무관하므로 항상 반영.
   async function reloadZonesGroups() {
     try {
-      const [zns, grps, hols] = await Promise.all([fetchZones(), fetchGroups(), fetchHolidays()]);
+      const [zns, grps, hols, comps, temps, blocked, cal, mon, plan, schedCfg, tds] = await Promise.all([
+        fetchZones(), fetchGroups(), fetchHolidays(), fetchCompletions(), fetchTempSchedules(),
+        fetchBlockedDates(), fetchCalibration(), fetchMonitoringData(year, month), fetchAnnualPlan(year),
+        fetchScheduleConfig(), fetchTodos(),
+      ]);
       setGroups(grps);
       setHolidayDefs(hols);
+      setCompletions(new Set(comps.map(c => `${c.zoneId}_${c.num}`)));
+      setCalibration(cal);
+      setMonitoring(mon);
+      setAnnualPlan(plan);
+      if (schedCfg) {
+        const merged = mergeScheduleConfig(schedCfg);
+        setScheduleConfig(merged);
+        setScheduleConfigState(merged);
+      }
+      setTodos(tds);
       if (changeLogRef.current.length > 0) {
         showError('저장하지 않은 일정 변경사항이 있어 외부 변경 내용을 반영하지 않았습니다. 저장하거나 되돌린 뒤 새로고침하세요.');
         return;
       }
+      const blockedSet = new Set(blocked || []);
       setZones(zns);
-      if (savedSnapshotRef.current) savedSnapshotRef.current.zones = zns;
+      setBlockedDates(blockedSet);
+      setTempSchedules(temps);
+      savedSnapshotRef.current = { zones: zns, blockedDates: blockedSet, tempSchedules: temps };
     } catch { /* ignore */ }
   }
 
-  // 별도 창에서 데이터 변경 시 메인 창 새로고침
+  // 별도 창에서 데이터 변경 시, 또는 공유 동기화로 원격 변경을 받아왔을 때 메인 창 새로고침.
+  // year/month가 바뀌면 재구독해 reloadZonesGroups가 항상 현재 보고 있는 달 기준으로 동작하게 한다.
   useEffect(() => {
     if (!window.electronAPI?.onDataChanged) return;
     return window.electronAPI.onDataChanged(() => { reloadZonesGroups(); });
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, month]);
 
   // 할일(측정 알람) 로드
   useEffect(() => { fetchTodos().then(setTodos).catch(() => {}); }, []);
