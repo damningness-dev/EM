@@ -103,18 +103,21 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [selectedDay, setSelectedDay] = useState(null);
   const [monTab, setMonTab] = useState('all'); // 모니터링 현황 탭: all | done | pending
-  const [flashCell, setFlashCell] = useState(null); // 모니터링 현황에서 클릭한 날짜 — 잠깐 빨갛게 깜빡임
+  const [flashTarget, setFlashTarget] = useState(null); // { zoneId, num } — 모니터링 현황에서 클릭한 항목만 잠깐 빨갛게 깜빡임
   const flashTimerRef = useRef(null);
-  // 모니터링 현황 목록에서 항목을 클릭하면 해당 날짜를 선택하고, 우측 일정확인창과
-  // 달력의 해당 날짜 셀을 빨갛게 깜빡여 눈에 띄게 한다. 같은 날짜를 연달아 클릭해도
-  // 애니메이션이 다시 시작되도록 한 번 null로 비웠다가 다음 프레임에 다시 켠다.
-  function flashDate(dateStr) {
-    setSelectedDay(dateStr);
-    setFlashCell(null);
+  // 모니터링 현황 목록에서 항목을 클릭하면 해당 날짜를 선택하고, 화면을 맨 위로
+  // 스크롤해 달력과 우측 일정확인창이 바로 보이게 한 뒤, 클릭한 그 구역 항목만
+  // (날짜 셀 전체나 패널 전체가 아니라) 빨갛게 깜빡여 눈에 띄게 한다. 같은 항목을
+  // 연달아 클릭해도 애니메이션이 다시 시작되도록 한 번 null로 비웠다가 다음
+  // 프레임에 다시 켠다.
+  function flashItem(occ) {
+    setSelectedDay(occ.ds);
+    document.querySelector('main')?.scrollTo({ top: 0, behavior: 'smooth' });
+    setFlashTarget(null);
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
     requestAnimationFrame(() => {
-      setFlashCell(dateStr);
-      flashTimerRef.current = setTimeout(() => setFlashCell(null), 1800);
+      setFlashTarget({ zoneId: occ.zone.id, num: occ.measurement.num });
+      flashTimerRef.current = setTimeout(() => setFlashTarget(null), 1800);
     });
   }
 
@@ -213,6 +216,17 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   const [colorPicker, setColorPicker] = useState(null); // { key, label, type:'cat'|'grade', x, y }
   const colorPickerRef = useRef(null);
   const printAreaRef = useRef(null); // 인쇄 영역 — 인쇄 직전 크기를 재서 한 페이지에 맞게 축소
+  const [calHeight, setCalHeight] = useState(null); // 달력 카드의 실제 렌더링 높이(px) — 모니터링 현황 목록 높이 상한에 사용
+  useEffect(() => {
+    const el = printAreaRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(entries => {
+      const h = entries[0]?.contentRect?.height;
+      if (h) setCalHeight(h);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const [optimizePopup, setOptimizePopup] = useState(false);
   const [viewMode, setViewMode] = useState('calendar'); // 'calendar' | 'table'
   const [optimizeCapacities, setOptimizeCapacities] = useState(() => {
@@ -2039,7 +2053,6 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                     className={`cal-day min-h-28 p-1.5 cursor-pointer transition-colors
                       ${boundaryRight ? 'border-r-2 border-r-gray-400' : 'border-r border-r-gray-100'}
                       ${boundaryBottom ? 'border-b-2 border-b-gray-400' : 'border-b border-b-gray-100'}
-                      ${flashCell === dateStr ? 'flash-highlight' : ''}
                       ${isDragOver ? 'bg-blue-100 ring-2 ring-inset ring-blue-400' :
                         isOther ? 'bg-gray-100/90' :
                         isSelected ? (dow === 6 ? 'bg-blue-100' : (dow === 0 || isHol) ? 'bg-red-100' : 'bg-blue-50') :
@@ -2135,7 +2148,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                             } : undefined}
                             onDragEnd={(!isDone && adminUnlocked) ? () => setDragOverDay(null) : undefined}
                             onClick={(e) => e.stopPropagation()}
-                            className={`text-xs rounded overflow-hidden flex items-stretch min-w-0 ${isDone ? 'opacity-60 cursor-default' : 'cursor-grab active:cursor-grabbing'}`}
+                            className={`text-xs rounded overflow-hidden flex items-stretch min-w-0 ${isDone ? 'opacity-60 cursor-default' : 'cursor-grab active:cursor-grabbing'} ${flashTarget?.zoneId === zone.id && flashTarget?.num === measurement.num ? 'flash-highlight' : ''}`}
                             style={getChipStyle(zone.category, zone.grade)}
                             title={`${label}${noPts ? ' [포인트 입력 필요]' : ''}${isDone ? ' [완료]' : measurement.isFirst ? ' [첫 측정]' : measurement.isLast ? ' [마지막 측정]' : ''}`}
                           >
@@ -2227,7 +2240,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
         <div className="w-64 shrink-0 flex flex-col gap-3">
           {/* Selected day events */}
           {selectedDay && (
-            <div className={`bg-white rounded-xl border border-gray-200 flex flex-col flex-1 min-h-0 ${flashCell === selectedDay ? 'flash-highlight' : ''}`}>
+            <div className="bg-white rounded-xl border border-gray-200 flex flex-col flex-1 min-h-0">
               <div className={`px-4 py-3 ${hdBg} text-white shrink-0 flex items-start justify-between gap-2`}>
                 <div>
                   <p className={`text-xs ${hdSub}`}>{selectedDay.slice(0,4)}년 {MONTH_KR[parseInt(selectedDay.slice(5,7)) - 1]} · {DOW_LABELS[selDow]}요일</p>
@@ -2351,7 +2364,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                       return (
                         <div
                           key={`${zone.id}-${measurement.num}`}
-                          className={`px-4 py-2.5 cursor-pointer select-none ${isDone ? 'bg-green-50/60' : 'hover:bg-gray-50/50'}`}
+                          className={`px-4 py-2.5 cursor-pointer select-none ${isDone ? 'bg-green-50/60' : 'hover:bg-gray-50/50'} ${flashTarget?.zoneId === zone.id && flashTarget?.num === measurement.num ? 'flash-highlight' : ''}`}
                           style={{
                             borderLeft: measurement.isFirst ? '3px solid #22c55e' : measurement.isLast ? '3px solid #ef4444' : undefined,
                           }}
@@ -2427,8 +2440,8 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
             </div>
           )}
 
-          {/* AHU plan */}
-          {ahuTasks.length > 0 && (
+          {/* AHU plan — 날짜를 선택하면 일정확인창이 사이드바 공간을 온전히 쓰도록 숨긴다 */}
+          {!selectedDay && ahuTasks.length > 0 && (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50">
                 <p className="text-xs font-semibold text-gray-600">🔧 AHU 계획</p>
@@ -2484,7 +2497,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
               >{t.label}</button>
             ))}
           </div>
-          <div className="divide-y divide-gray-50 max-h-72 overflow-y-auto">
+          <div className="divide-y divide-gray-50 overflow-y-auto" style={{ maxHeight: calHeight ? `${calHeight}px` : '480px' }}>
             {monTabZoneGroups.length === 0 ? (
               <p className="px-4 py-4 text-xs text-gray-400 text-center">해당 항목이 없습니다.</p>
             ) : monTabZoneGroups.map(g => (
@@ -2496,15 +2509,16 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                     return (
                       <button
                         key={`${occ.zone.id}-${occ.measurement.num}-${i}`}
-                        onClick={() => flashDate(occ.ds)}
+                        onClick={() => flashItem(occ)}
                         className={`text-[11px] px-1.5 py-0.5 rounded border flex items-center gap-1 transition-colors ${
                           isDone ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
-                        }`}
+                        } ${flashTarget?.zoneId === occ.zone.id && flashTarget?.num === occ.measurement.num ? 'flash-highlight' : ''}`}
                         title={`${g.zone.name}[${g.zone.grade}] · ${occ.ds}${isDone ? ' [완료]' : ''}`}
                       >
                         <span>{isDone ? '✓' : '○'}</span>
                         <span className="font-medium">{occ.monthIdx}/{occ.monthTotal}</span>
                         <span className="text-gray-400">{occ.ds.slice(2).replace(/-/g, '/')}</span>
+                        <span className="text-gray-400">#{occ.measurement.num}/{totalCount(occ.zone)}</span>
                       </button>
                     );
                   })}
