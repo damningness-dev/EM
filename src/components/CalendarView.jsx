@@ -2237,7 +2237,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
         </div>
 
         {/* Sidebar */}
-        <div className="w-64 shrink-0 flex flex-col gap-3">
+        <div className="w-64 shrink-0 flex flex-col gap-3 overflow-hidden" style={{ maxHeight: calHeight ? `${calHeight}px` : undefined }}>
           {/* Selected day events */}
           {selectedDay && (
             <div className="bg-white rounded-xl border border-gray-200 flex flex-col flex-1 min-h-0">
