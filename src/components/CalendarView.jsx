@@ -117,7 +117,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
     requestAnimationFrame(() => {
       setFlashTarget({ zoneId: occ.zone.id, num: occ.measurement.num });
-      flashTimerRef.current = setTimeout(() => setFlashTarget(null), 1800);
+      flashTimerRef.current = setTimeout(() => setFlashTarget(null), 5000);
     });
   }
 
@@ -207,6 +207,8 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   const [editingTempId, setEditingTempId] = useState(null); // 임시일정 이름 수정 중인 id
   const [editingTempName, setEditingTempName] = useState('');
   const [deleteTempPrompt, setDeleteTempPrompt] = useState(null); // 삭제 확인 대기 중인 임시일정
+  const [editingZoneNameId, setEditingZoneNameId] = useState(null); // 모니터링 현황에서 구역명 수정 중인 zone.id
+  const [editingZoneName, setEditingZoneName] = useState('');
   const [chipColors, setChipColors] = useState(() => {
     try {
       const saved = localStorage.getItem('em-chip-colors');
@@ -1075,6 +1077,27 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     setTempSchedules(prev => prev.map(x => x.id === t.id ? { ...x, name } : x));
     logChange(`임시일정 이름 변경: ${t.name} → ${name}`);
     showSuccess('임시 일정 이름을 변경했습니다. "일정 저장하기"를 눌러야 반영됩니다.');
+  }
+
+  // 모니터링 현황에서 구역명 더블클릭으로 수정 — 같은 구역명(그룹)에 속한 모든
+  // 등급(P1/P2/P3/유지관리)의 zone.name을 함께 변경한다(순서/그룹 관리의 구역명
+  // 수정과 동일한 기준). 일정 초안과 달리 "저장하기"를 거치지 않는 변경이라
+  // 바로 저장하고, 조용히(알림 없이) 공유 동기화한다.
+  async function renameZoneGroup(zone, newName) {
+    const name = newName.trim();
+    setEditingZoneNameId(null);
+    if (!name || name === zone.name) return;
+    if (!requireAdmin()) return;
+    const siblings = zones.filter(z => z.category === zone.category && z.name === zone.name);
+    try {
+      const updated = await Promise.all(siblings.map(z => upsertZone({ ...z, name })));
+      setZones(prev => prev.map(z => updated.find(u => u.id === z.id) || z));
+      window.electronAPI?.notifyDataChanged?.();
+      silentSyncUpload();
+      showSuccess(`구역명을 "${zone.name}" → "${name}"으로 변경했습니다.`);
+    } catch (e) {
+      showError('구역명 변경 실패: ' + e.message);
+    }
   }
 
   // 임시일정 완료 처리 토글 (초안 — 저장하기 전까지는 로컬 상태만 변경, 나머지 임시일정
@@ -2502,7 +2525,23 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
               <p className="px-4 py-4 text-xs text-gray-400 text-center">해당 항목이 없습니다.</p>
             ) : monTabZoneGroups.map(g => (
               <div key={g.zone.id} className="px-4 py-2.5">
-                <p className="text-xs font-medium text-gray-700 mb-1.5 truncate">{g.zone.name}[{g.zone.grade}]</p>
+                {editingZoneNameId === g.zone.id ? (
+                  <input
+                    autoFocus
+                    className="text-xs font-medium text-gray-800 border border-blue-400 rounded px-1.5 py-0.5 mb-1.5 w-full focus:outline-none"
+                    value={editingZoneName}
+                    onChange={e => setEditingZoneName(e.target.value)}
+                    onClick={e => e.stopPropagation()}
+                    onKeyDown={e => { if (e.key === 'Enter') renameZoneGroup(g.zone, editingZoneName); if (e.key === 'Escape') setEditingZoneNameId(null); }}
+                    onBlur={() => renameZoneGroup(g.zone, editingZoneName)}
+                  />
+                ) : (
+                  <p
+                    className="text-xs font-medium text-gray-700 mb-1.5 truncate cursor-text"
+                    title="더블클릭하여 구역명 수정"
+                    onDoubleClick={() => { if (requireAdmin()) { setEditingZoneNameId(g.zone.id); setEditingZoneName(g.zone.name); } }}
+                  >{g.zone.name}[{g.zone.grade}]</p>
+                )}
                 <div className="flex flex-wrap gap-1.5">
                   {g.occurrences.map((occ, i) => {
                     const isDone = completions.has(`${g.zone.id}_${occ.measurement.num}`);
