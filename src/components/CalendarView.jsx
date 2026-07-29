@@ -103,6 +103,20 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [selectedDay, setSelectedDay] = useState(null);
   const [monTab, setMonTab] = useState('all'); // 모니터링 현황 탭: all | done | pending
+  const [flashCell, setFlashCell] = useState(null); // 모니터링 현황에서 클릭한 날짜 — 잠깐 빨갛게 깜빡임
+  const flashTimerRef = useRef(null);
+  // 모니터링 현황 목록에서 항목을 클릭하면 해당 날짜를 선택하고, 우측 일정확인창과
+  // 달력의 해당 날짜 셀을 빨갛게 깜빡여 눈에 띄게 한다. 같은 날짜를 연달아 클릭해도
+  // 애니메이션이 다시 시작되도록 한 번 null로 비웠다가 다음 프레임에 다시 켠다.
+  function flashDate(dateStr) {
+    setSelectedDay(dateStr);
+    setFlashCell(null);
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    requestAnimationFrame(() => {
+      setFlashCell(dateStr);
+      flashTimerRef.current = setTimeout(() => setFlashCell(null), 1800);
+    });
+  }
 
   const [calibration, setCalibration] = useState([]);
   const [zones, setZones] = useState([]);
@@ -2025,6 +2039,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                     className={`cal-day min-h-28 p-1.5 cursor-pointer transition-colors
                       ${boundaryRight ? 'border-r-2 border-r-gray-400' : 'border-r border-r-gray-100'}
                       ${boundaryBottom ? 'border-b-2 border-b-gray-400' : 'border-b border-b-gray-100'}
+                      ${flashCell === dateStr ? 'flash-highlight' : ''}
                       ${isDragOver ? 'bg-blue-100 ring-2 ring-inset ring-blue-400' :
                         isOther ? 'bg-gray-100/90' :
                         isSelected ? (dow === 6 ? 'bg-blue-100' : (dow === 0 || isHol) ? 'bg-red-100' : 'bg-blue-50') :
@@ -2212,7 +2227,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
         <div className="w-64 shrink-0 flex flex-col gap-3">
           {/* Selected day events */}
           {selectedDay && (
-            <div className="bg-white rounded-xl border border-gray-200 flex flex-col flex-1 min-h-0">
+            <div className={`bg-white rounded-xl border border-gray-200 flex flex-col flex-1 min-h-0 ${flashCell === selectedDay ? 'flash-highlight' : ''}`}>
               <div className={`px-4 py-3 ${hdBg} text-white shrink-0 flex items-start justify-between gap-2`}>
                 <div>
                   <p className={`text-xs ${hdSub}`}>{selectedDay.slice(0,4)}년 {MONTH_KR[parseInt(selectedDay.slice(5,7)) - 1]} · {DOW_LABELS[selDow]}요일</p>
@@ -2436,70 +2451,69 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
               </div>
             </div>
           )}
-
-          {/* Monitoring progress — 이번 달 측정 일정을 구역별로 묶어 완료 현황을 보여준다.
-              사이드바(w-64 flex-col)가 달력과 같은 높이로 늘어나 있으므로 이 패널이
-              flex-1로 남은 높이를 모두 차지해 달력과 같은 크기가 되고, 목록도 잘리지
-              않고 스크롤로 모든 구역을 볼 수 있다. */}
-          {monthTableRows.length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden flex flex-col flex-1 min-h-[240px]">
-              <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50 flex items-center justify-between shrink-0">
-                <p className="text-xs font-semibold text-gray-600">📋 모니터링 현황</p>
-                <span className={`text-xs font-bold ${monCompleteRate === 100 ? 'text-green-600' : 'text-blue-600'}`}>{monCompleteRate}%</span>
-              </div>
-              <div className="px-4 pt-3 shrink-0">
-                <div className="w-full bg-gray-100 rounded-full h-2 mb-2 overflow-hidden">
-                  <div className={`h-2 rounded-full ${monCompleteRate === 100 ? 'bg-green-500' : 'bg-blue-500'}`} style={{ width: `${monCompleteRate}%` }} />
-                </div>
-                <p className="text-xs text-gray-500 mb-2">이번 달 {monthTableRows.length}건 중 {monthDoneRows.length}건 완료</p>
-              </div>
-              <div className="flex border-b border-gray-100 shrink-0">
-                {[
-                  { key: 'all', label: `전체 ${monthTableRows.length}` },
-                  { key: 'done', label: `측정완료 ${monthDoneRows.length}` },
-                  { key: 'pending', label: `예정 ${monthPendingRows.length}` },
-                ].map(t => (
-                  <button
-                    key={t.key}
-                    onClick={() => setMonTab(t.key)}
-                    className={`flex-1 py-1.5 text-[11px] font-medium border-b-2 -mb-px transition-colors ${
-                      monTab === t.key ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'
-                    }`}
-                  >{t.label}</button>
-                ))}
-              </div>
-              <div className="divide-y divide-gray-50 flex-1 min-h-0 overflow-y-auto">
-                {monTabZoneGroups.length === 0 ? (
-                  <p className="px-4 py-4 text-xs text-gray-400 text-center">해당 항목이 없습니다.</p>
-                ) : monTabZoneGroups.map(g => (
-                  <div key={g.zone.id} className="px-4 py-2.5">
-                    <p className="text-xs font-medium text-gray-700 mb-1.5 truncate">{g.zone.name}[{g.zone.grade}]</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {g.occurrences.map((occ, i) => {
-                        const isDone = completions.has(`${g.zone.id}_${occ.measurement.num}`);
-                        return (
-                          <button
-                            key={`${occ.zone.id}-${occ.measurement.num}-${i}`}
-                            onClick={() => setSelectedDay(occ.ds)}
-                            className={`text-[11px] px-1.5 py-0.5 rounded border flex items-center gap-1 transition-colors ${
-                              isDone ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
-                            }`}
-                            title={`${g.zone.name}[${g.zone.grade}] · ${occ.ds}${isDone ? ' [완료]' : ''}`}
-                          >
-                            <span>{isDone ? '✓' : '○'}</span>
-                            <span className="font-medium">{occ.monthIdx}/{occ.monthTotal}</span>
-                            <span className="text-gray-400">{occ.ds.slice(2).replace(/-/g, '/')}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
+
+      {/* Monitoring progress — 이번 달 측정 일정을 구역별로 묶어 완료 현황을 보여준다.
+          달력 아래 전체 너비로 배치. 항목을 클릭하면 해당 날짜를 선택하고, 우측
+          일정확인창과 달력의 해당 날짜 셀이 잠깐 빨갛게 깜빡여 어디인지 바로 보여준다. */}
+      {monthTableRows.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+            <p className="text-xs font-semibold text-gray-600">📋 모니터링 현황</p>
+            <span className={`text-xs font-bold ${monCompleteRate === 100 ? 'text-green-600' : 'text-blue-600'}`}>{monCompleteRate}%</span>
+          </div>
+          <div className="px-4 pt-3">
+            <div className="w-full bg-gray-100 rounded-full h-2 mb-2 overflow-hidden">
+              <div className={`h-2 rounded-full ${monCompleteRate === 100 ? 'bg-green-500' : 'bg-blue-500'}`} style={{ width: `${monCompleteRate}%` }} />
+            </div>
+            <p className="text-xs text-gray-500 mb-2">이번 달 {monthTableRows.length}건 중 {monthDoneRows.length}건 완료</p>
+          </div>
+          <div className="flex border-b border-gray-100">
+            {[
+              { key: 'all', label: `전체 ${monthTableRows.length}` },
+              { key: 'done', label: `측정완료 ${monthDoneRows.length}` },
+              { key: 'pending', label: `예정 ${monthPendingRows.length}` },
+            ].map(t => (
+              <button
+                key={t.key}
+                onClick={() => setMonTab(t.key)}
+                className={`flex-1 py-1.5 text-[11px] font-medium border-b-2 -mb-px transition-colors ${
+                  monTab === t.key ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'
+                }`}
+              >{t.label}</button>
+            ))}
+          </div>
+          <div className="divide-y divide-gray-50 max-h-72 overflow-y-auto">
+            {monTabZoneGroups.length === 0 ? (
+              <p className="px-4 py-4 text-xs text-gray-400 text-center">해당 항목이 없습니다.</p>
+            ) : monTabZoneGroups.map(g => (
+              <div key={g.zone.id} className="px-4 py-2.5">
+                <p className="text-xs font-medium text-gray-700 mb-1.5 truncate">{g.zone.name}[{g.zone.grade}]</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {g.occurrences.map((occ, i) => {
+                    const isDone = completions.has(`${g.zone.id}_${occ.measurement.num}`);
+                    return (
+                      <button
+                        key={`${occ.zone.id}-${occ.measurement.num}-${i}`}
+                        onClick={() => flashDate(occ.ds)}
+                        className={`text-[11px] px-1.5 py-0.5 rounded border flex items-center gap-1 transition-colors ${
+                          isDone ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
+                        }`}
+                        title={`${g.zone.name}[${g.zone.grade}] · ${occ.ds}${isDone ? ' [완료]' : ''}`}
+                      >
+                        <span>{isDone ? '✓' : '○'}</span>
+                        <span className="font-medium">{occ.monthIdx}/{occ.monthTotal}</span>
+                        <span className="text-gray-400">{occ.ds.slice(2).replace(/-/g, '/')}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

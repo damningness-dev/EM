@@ -12,6 +12,17 @@ body {
   min-height: 100vh;
 }
 
+/* 모니터링 현황에서 항목을 클릭했을 때 우측 일정확인창·해당 달력 셀을 잠깐
+   빨갛게 깜빡여 위치를 바로 알려준다. */
+@keyframes flash-highlight-kf {
+  0%, 100% { box-shadow: none; }
+  15%, 45%, 75% { box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.9) inset; }
+  30%, 60%, 90% { box-shadow: none; }
+}
+.flash-highlight {
+  animation: flash-highlight-kf 1.8s ease-in-out;
+}
+
 /* 인쇄 — handlePrint()가 달력/표 카드를 body 최상단의 .print-portal로 복제하고
    body에 is-printing 클래스를 붙인다. 인쇄 시에는 원본 앱(#root)을 숨기고 이
    복제본만 가로 한 페이지에 출력한다(안 보이는 사이드바가 빈 페이지를 만들지 않음). */
