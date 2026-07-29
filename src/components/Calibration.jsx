@@ -266,11 +266,14 @@ export default function Calibration() {
             <colgroup>{CALIB_COL_ORDER.map(k => <col key={k} style={{ width: colWidth(k) }} />)}</colgroup>
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="relative" />
+                <th className="relative border-r border-gray-200">
+                  <span onMouseDown={e => startColResize(e, 'expand')} draggable={false} onDragStart={e => e.preventDefault()}
+                    className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                </th>
                 {COLS.map(c => {
                   const wKey = c.key || 'idx';
                   return (
-                    <th key={c.label} className={`relative px-4 py-3 text-gray-500 font-medium truncate text-center ${c.sortable ? 'cursor-pointer select-none hover:text-gray-800' : ''}`}
+                    <th key={c.label} className={`relative px-4 py-3 text-gray-500 font-medium truncate text-center border-r border-gray-200 ${c.sortable ? 'cursor-pointer select-none hover:text-gray-800' : ''}`}
                       onClick={c.sortable ? () => toggleSort(c.key) : undefined}>
                       {c.label} {c.sortable && sortArrow(c.key)}
                       <span onMouseDown={e => startColResize(e, wKey)} draggable={false} onDragStart={e => e.preventDefault()}
@@ -279,12 +282,12 @@ export default function Calibration() {
                     </th>
                   );
                 })}
-                <th className="relative text-center px-4 py-3 text-gray-500 font-medium">
+                <th className="relative text-center px-4 py-3 text-gray-500 font-medium border-r border-gray-200">
                   교정내역
                   <span onMouseDown={e => startColResize(e, 'calibNote')} draggable={false} onDragStart={e => e.preventDefault()}
                     className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
                 </th>
-                <th className="relative text-center px-4 py-3 text-gray-500 font-medium">
+                <th className="relative text-center px-4 py-3 text-gray-500 font-medium border-r border-gray-200">
                   비고
                   <span onMouseDown={e => startColResize(e, 'note')} draggable={false} onDragStart={e => e.preventDefault()}
                     className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />

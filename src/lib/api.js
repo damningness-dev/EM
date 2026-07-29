@@ -94,6 +94,14 @@ export async function upsertAnnualPlan(entry) {
   return api.invoke('annualPlan:upsert', entry);
 }
 
+// 연간계획(AHU) 목록 — 사용자가 화면에서 추가한 AHU도 공유 데이터에 저장되어 유지된다.
+export async function fetchAnnualPlanAhus() {
+  return api.invoke('annualPlanAhus:getAll');
+}
+export async function addAnnualPlanAhu(name) {
+  return api.invoke('annualPlanAhus:add', name);
+}
+
 // ─── 초기 데이터 시딩 ─────────────────────────────────────────────────────────
 
 export async function seedInitialData(calibrationData, zonesData) {

@@ -245,6 +245,10 @@ function setupAsarUpdater(win) {
 
 // ─── 로컬 데이터 저장 ──────────────────────────────────────────────────────────
 
+// 연간계획(AHU 유지보수) 화면의 기본 AHU 목록 — 사용자가 화면에서 추가한 AHU는
+// annualPlanAhus에 저장되어 공유 데이터(em-data.json)로 함께 동기화된다.
+const DEFAULT_AHUS = ['AHU-01', 'AHU-02', 'AHU-15', 'AHU-16', 'AHU-19', 'AHU-31', 'AHU-32', 'AHU-33', 'AHU-34', 'AHU-42', 'AHU-43'];
+
 function getDataPath() {
   return path.join(app.getPath('userData'), 'em-data.json');
 }
@@ -252,7 +256,7 @@ function getDataPath() {
 function loadData() {
   const p = getDataPath();
   if (!fs.existsSync(p)) {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS] };
   }
   try {
     const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
@@ -261,9 +265,10 @@ function loadData() {
     if (!data.completions) data.completions = [];
     if (!data.tempSchedules) data.tempSchedules = [];
     if (!data.blockedDates) data.blockedDates = [];
+    if (!data.annualPlanAhus) data.annualPlanAhus = [...DEFAULT_AHUS];
     return data;
   } catch {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS] };
   }
 }
 
@@ -1188,6 +1193,19 @@ function registerHandlers() {
     const data = loadData();
     data.groups = data.groups.filter(g => g.id !== id);
     saveData(data);
+  });
+
+  // ── 연간계획(AHU) 목록 — 사용자가 추가한 AHU를 공유 데이터에 저장해 재시작/다른 PC에서도 유지 ──
+  ipcMain.handle('annualPlanAhus:getAll', () => loadData().annualPlanAhus);
+
+  ipcMain.handle('annualPlanAhus:add', (_e, name) => {
+    const data = loadData();
+    const trimmed = String(name || '').trim();
+    if (trimmed && !data.annualPlanAhus.includes(trimmed)) {
+      data.annualPlanAhus.push(trimmed);
+      saveData(data);
+    }
+    return data.annualPlanAhus;
   });
 
   // ── 월별 모니터링 데이터 ──

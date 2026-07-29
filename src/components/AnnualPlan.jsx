@@ -1,21 +1,39 @@
 import { useState, useEffect } from 'react';
-import { fetchAnnualPlan, upsertAnnualPlan } from '../lib/api';
+import { fetchAnnualPlan, upsertAnnualPlan, fetchAnnualPlanAhus, addAnnualPlanAhu } from '../lib/api';
 
 const MONTHS = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'];
-const DEFAULT_AHUS = ['AHU-01', 'AHU-02', 'AHU-15', 'AHU-16', 'AHU-19', 'AHU-31', 'AHU-32', 'AHU-33', 'AHU-34', 'AHU-42', 'AHU-43'];
 
 export default function AnnualPlan({ year, onYearChange }) {
   const [plan, setPlan] = useState({});
-  const [ahus, setAhus] = useState(DEFAULT_AHUS);
+  const [ahus, setAhus] = useState([]);
   const [newAhu, setNewAhu] = useState('');
   const [loading, setLoading] = useState(true);
   const [editCell, setEditCell] = useState(null);
   const [noteForm, setNoteForm] = useState('');
 
+  // AHU 목록은 연도와 무관하게 한 번만 불러온다 — 화면에서 추가한 AHU는 공유
+  // 데이터(em-data.json)에 저장되어 재시작하거나 다른 PC에서도 유지된다.
+  useEffect(() => {
+    fetchAnnualPlanAhus().then(setAhus).catch(() => {});
+  }, []);
+
   useEffect(() => {
     setLoading(true);
     fetchAnnualPlan(year).then(p => { setPlan(p); setLoading(false); });
   }, [year]);
+
+  async function addAhu() {
+    const name = newAhu.trim();
+    if (!name || ahus.includes(name)) return;
+    try {
+      const updated = await addAnnualPlanAhu(name);
+      setAhus(updated);
+      setNewAhu('');
+      window.electronAPI?.notifyDataChanged?.();
+    } catch (e) {
+      alert('AHU 추가 실패: ' + e.message);
+    }
+  }
 
   async function togglePlanned(ahu, month) {
     const key = `${ahu}_${month}`;
@@ -141,7 +159,7 @@ export default function AnnualPlan({ year, onYearChange }) {
 
       <div className="flex gap-2">
         <input value={newAhu} onChange={e => setNewAhu(e.target.value)} onKeyDown={e => e.key === 'Enter' && addAhu()} placeholder="AHU 추가 (예: AHU-50)" className="flex-1 max-w-xs px-3 py-2 border border-gray-200 rounded-lg text-sm" />
-        <button onClick={() => { if (!newAhu.trim() || ahus.includes(newAhu.trim())) return; setAhus(p => [...p, newAhu.trim()]); setNewAhu(''); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">추가</button>
+        <button onClick={addAhu} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">추가</button>
       </div>
 
       {editCell && (
