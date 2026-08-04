@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { calcDDay, getDDayLabel, getDDayColor, formatDate } from '../utils/dateUtils';
 import { nextCalibDate, latestCalibHistory as latestHistory, effectiveCalib } from '../utils/calibUtils';
-import { fetchCalibration, upsertCalibration, deleteCalibration, saveCalibFile, openCalibFile, revealCalibFile, syncGetConfig, syncUpload } from '../lib/api';
+import { fetchCalibration, upsertCalibration, deleteCalibration, saveCalibFile, uploadCalibAttachment, openCalibFile, revealCalibFile, syncGetConfig, syncUpload } from '../lib/api';
 
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
 let hid = 0;
@@ -344,8 +344,8 @@ export default function Calibration({ adminUnlocked }) {
                           <td className="px-4 py-3 text-center whitespace-nowrap">
                             {(() => {
                               const lf = latestHistory(item);
-                              return lf?.filePath ? (
-                                <button onClick={async () => { const r = await openCalibFile(lf.filePath); if (r && !r.ok) showNotice('열기 실패: ' + (r.error || ''), true); }}
+                              return (lf?.filePath || lf?.gistKey) ? (
+                                <button onClick={async () => { const r = await openCalibFile(lf.filePath, lf.gistKey); if (r && !r.ok) showNotice('열기 실패: ' + (r.error || ''), true); }}
                                   className="px-1.5 py-1 rounded text-sm mr-1 hover:bg-emerald-50" title={`최근 성적서 열기: ${lf.fileName || ''}`}>📄</button>
                               ) : null;
                             })()}
@@ -431,7 +431,7 @@ function HistoryPanel({ item, onSave, onNotice }) {
   const [dirty, setDirty] = useState(false);
 
   function edit(idx, patch) { setRows(rs => rs.map((r, i) => i === idx ? { ...r, ...patch } : r)); setDirty(true); }
-  function add() { setRows(rs => [...rs, { id: newHistoryId(), year: new Date().getFullYear(), cert_no: '', calib_date: '', note: '', fileName: '', filePath: '' }]); setDirty(true); }
+  function add() { setRows(rs => [...rs, { id: newHistoryId(), year: new Date().getFullYear(), cert_no: '', calib_date: '', note: '', fileName: '', filePath: '', gistKey: '' }]); setDirty(true); }
   function remove(idx) { setRows(rs => rs.filter((_, i) => i !== idx)); setDirty(true); }
 
   async function upload(idx, file) {
@@ -442,8 +442,22 @@ function HistoryPanel({ item, onSave, onNotice }) {
     const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(file); });
     const desired = certFileName(item.no, row.calib_date, item.sn, file.name);
     const r = await saveCalibFile(desired, b64);
-    if (r?.ok) edit(idx, { fileName: r.name, filePath: r.path });
-    else onNotice('파일 저장 실패: ' + (r?.error || ''), true);
+    if (!r?.ok) { onNotice('파일 저장 실패: ' + (r?.error || ''), true); return; }
+    // 공유 설정(토큰)이 있는 PC에서만 첨부파일 전용 Gist에도 올려 다른 PC와 공유한다.
+    // 공유 설정이 없으면(대부분의 읽기 전용 PC) 조용히 건너뛰고 로컬 저장만 유지한다.
+    try {
+      const cfg = await syncGetConfig();
+      if (cfg?.hasToken) {
+        const dot = desired.lastIndexOf('.');
+        const ext = dot > 0 ? desired.slice(dot) : '';
+        const gistKey = `attach_${row.id}${ext}.b64`;
+        const ur = await uploadCalibAttachment(gistKey, b64);
+        edit(idx, { fileName: r.name, filePath: r.path, gistKey: ur?.ok ? gistKey : '' });
+        if (!ur?.ok) onNotice('파일은 저장됐지만 공유 업로드 실패: ' + (ur?.error || ''), true);
+        return;
+      }
+    } catch { /* 조용히 건너뜀 — 로컬 저장은 이미 성공했으므로 */ }
+    edit(idx, { fileName: r.name, filePath: r.path });
   }
 
   async function save() {
@@ -452,7 +466,7 @@ function HistoryPanel({ item, onSave, onNotice }) {
     try { await onSave(toSave); setDirty(false); } catch (e) { onNotice('저장 실패: ' + e.message, true); } finally { setBusy(false); }
   }
 
-  async function open(path) { const r = await openCalibFile(path); if (r && !r.ok) onNotice('열기 실패: ' + (r.error || ''), true); }
+  async function open(filePath, gistKey) { const r = await openCalibFile(filePath, gistKey); if (r && !r.ok) onNotice('열기 실패: ' + (r.error || ''), true); }
 
   // 교정일이 최신인 내역이 가장 위로 오도록 정렬(대표값 계산에 쓰는 latestCalibHistory와
   // 동일한 기준: calib_date 내림차순, 동률이면 연도 내림차순). 교정일을 아직 입력하지
@@ -492,11 +506,11 @@ function HistoryPanel({ item, onSave, onNotice }) {
               <label className="text-[10px] text-gray-400">차기<input type="date" readOnly title="교정일 +1년 -1일 자동" value={nextCalibDate(h.calib_date) || ''} className="ml-1 border border-gray-200 rounded px-1 py-1 text-xs bg-gray-50 text-gray-500" /></label>
               <input value={h.note || ''} onChange={e => edit(idx, { note: e.target.value })}
                 className="flex-1 min-w-24 border border-gray-200 rounded px-1.5 py-1 text-xs" placeholder="교정내역" />
-              {h.filePath ? (
+              {(h.filePath || h.gistKey) ? (
                 <span className="flex items-center gap-1">
-                  <button onClick={() => open(h.filePath)} className="text-xs px-2 py-1 bg-emerald-50 text-emerald-600 rounded hover:bg-emerald-100" title={h.fileName}>📄 열기</button>
-                  <button onClick={() => revealCalibFile(h.filePath)} className="text-xs px-1.5 py-1 text-gray-400 hover:text-gray-700" title="폴더에서 보기">📂</button>
-                  <button onClick={() => edit(idx, { fileName: '', filePath: '' })} className="text-xs text-gray-300 hover:text-red-500" title="첨부 제거">✕</button>
+                  <button onClick={() => open(h.filePath, h.gistKey)} className="text-xs px-2 py-1 bg-emerald-50 text-emerald-600 rounded hover:bg-emerald-100" title={h.fileName}>📄 열기</button>
+                  <button onClick={() => revealCalibFile(h.filePath, h.gistKey)} className="text-xs px-1.5 py-1 text-gray-400 hover:text-gray-700" title="폴더에서 보기">📂</button>
+                  <button onClick={() => edit(idx, { fileName: '', filePath: '', gistKey: '' })} className="text-xs text-gray-300 hover:text-red-500" title="첨부 제거">✕</button>
                 </span>
               ) : (
                 <label className="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded hover:bg-gray-200 cursor-pointer">
@@ -516,7 +530,7 @@ function HistoryPanel({ item, onSave, onNotice }) {
 
 // 파일명 규칙 안내
 function h_fileName_hint(rows) {
-  if (!rows.some(r => r.filePath)) return null;
+  if (!rows.some(r => r.filePath || r.gistKey)) return null;
   return <p className="text-[10px] text-gray-400 mt-2">첨부파일은 "관리번호 교정일(S/N)" 형식으로 저장됩니다.</p>;
 }
 

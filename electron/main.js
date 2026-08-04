@@ -941,6 +941,34 @@ function registerHandlers() {
     try { fs.mkdirSync(d, { recursive: true }); } catch { /* ignore */ }
     return d;
   };
+  // gistKey(예: attach_h1735000000_5.pdf.b64)로 첨부파일 전용 캐시 내 로컬 경로를 정한다.
+  // gistKey 자체가 고유해서 같은 파일이면 항상 같은 경로가 나오므로, 한 번 내려받으면
+  // 이후에는 다시 내려받지 않고 이 경로에서 바로 연다.
+  const attachCachePath = (gistKey) => path.join(calibFilesDir(), gistKey.replace(/\.b64$/, ''));
+
+  // 첨부파일 전용 Gist ID 확보(없으면 새로 만들어 공유 데이터에 저장).
+  // 성적서 PDF 등 첨부파일을 일정 데이터와 같은 Gist에 넣으면 매번 자동 동기화되는
+  // 응답이 커져 느려지고 rate limit도 더 쉽게 소진되므로, 별도 Gist에 두고 "열기"를
+  // 누를 때만 필요한 파일 하나만 내려받는다. attachGistId는 짧은 문자열이라 일반
+  // em-data.json 동기화에 얹혀도 부담이 없다.
+  async function ensureAttachGistId() {
+    const data = loadData();
+    if (data.attachGistId) return data.attachGistId;
+    const cfg = loadSyncConfig();
+    if (!cfg.token) throw new Error('첨부파일을 공유하려면 GitHub 토큰이 필요합니다');
+    const r = await ghRequest('POST', 'https://api.github.com/gists', {
+      token: cfg.token,
+      body: {
+        description: '환경 모니터링 첨부파일(교정 성적서 등) — 삭제하지 마세요',
+        public: false,
+        files: { 'README.md': { content: '이 Gist는 환경 모니터링 앱의 교정 성적서 등 첨부파일 저장용입니다.' } },
+      },
+    });
+    data.attachGistId = r.json.id;
+    saveData(data);
+    return data.attachGistId;
+  }
+
   ipcMain.handle('calibFile:save', (_e, { name, dataBase64 } = {}) => {
     try {
       const safe = String(name || 'file').replace(/[^\w.\-가-힣 ()]/g, '_');
@@ -955,17 +983,68 @@ function registerHandlers() {
       return { ok: true, path: full, name: path.basename(full) };
     } catch (e) { return { ok: false, error: e.message }; }
   });
-  ipcMain.handle('calibFile:open', async (_e, filePath) => {
+
+  // 첨부파일 전용 Gist에 파일 내용(base64 텍스트)을 올려 다른 PC와 공유한다.
+  ipcMain.handle('calibFile:uploadAttachment', async (_e, { gistKey, dataBase64 } = {}) => {
     try {
-      if (!filePath || !fs.existsSync(filePath)) return { ok: false, error: '파일을 찾을 수 없습니다' };
-      const r = await shell.openPath(filePath);
-      return { ok: !r, error: r || undefined };
+      if (!gistKey || !dataBase64) return { ok: false, error: '잘못된 요청' };
+      const cfg = loadSyncConfig();
+      if (!cfg.token) return { ok: false, error: '업로드하려면 GitHub 토큰이 필요합니다' };
+      const attachGistId = await ensureAttachGistId();
+      await ghRequest('PATCH', `https://api.github.com/gists/${attachGistId}`, {
+        token: cfg.token,
+        body: { files: { [gistKey]: { content: dataBase64 } } },
+      });
+      return { ok: true };
     } catch (e) { return { ok: false, error: e.message }; }
   });
-  ipcMain.handle('calibFile:reveal', (_e, filePath) => {
+
+  ipcMain.handle('calibFile:open', async (_e, arg) => {
     try {
-      if (!filePath || !fs.existsSync(filePath)) return { ok: false, error: '파일을 찾을 수 없습니다' };
-      shell.showItemInFolder(filePath);
+      const { filePath, gistKey } = typeof arg === 'string' ? { filePath: arg } : (arg || {});
+      if (filePath && fs.existsSync(filePath)) {
+        const r = await shell.openPath(filePath);
+        return { ok: !r, error: r || undefined };
+      }
+      if (!gistKey) return { ok: false, error: '파일을 찾을 수 없습니다' };
+      const cachePath = attachCachePath(gistKey);
+      if (fs.existsSync(cachePath)) {
+        const r = await shell.openPath(cachePath);
+        return { ok: !r, error: r || undefined, newPath: cachePath };
+      }
+      // 로컬(원본 PC·이 PC 캐시 모두)에 없으면 첨부파일 전용 Gist에서 내려받는다.
+      const data = loadData();
+      if (!data.attachGistId) return { ok: false, error: '파일을 찾을 수 없습니다 (공유된 첨부파일 없음)' };
+      const cfg = loadSyncConfig();
+      const r = await ghRequest('GET', `https://api.github.com/gists/${data.attachGistId}`, { token: cfg.token || undefined });
+      const file = r.json.files && r.json.files[gistKey];
+      if (!file) return { ok: false, error: '공유된 첨부파일을 찾을 수 없습니다' };
+      let content = file.content;
+      if (file.truncated && file.raw_url) {
+        const res = await httpGet(file.raw_url);
+        content = await new Promise((resolve, reject) => {
+          const chunks = [];
+          res.on('data', c => chunks.push(c));
+          res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+          res.on('error', reject);
+        });
+      }
+      fs.writeFileSync(cachePath, Buffer.from(content, 'base64'));
+      const r2 = await shell.openPath(cachePath);
+      return { ok: !r2, error: r2 || undefined, newPath: cachePath };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('calibFile:reveal', (_e, arg) => {
+    try {
+      const { filePath, gistKey } = typeof arg === 'string' ? { filePath: arg } : (arg || {});
+      let target = filePath;
+      if ((!target || !fs.existsSync(target)) && gistKey) {
+        const cachePath = attachCachePath(gistKey);
+        if (fs.existsSync(cachePath)) target = cachePath;
+      }
+      if (!target || !fs.existsSync(target)) return { ok: false, error: '파일을 찾을 수 없습니다 (먼저 "열기"로 내려받으세요)' };
+      shell.showItemInFolder(target);
       return { ok: true };
     } catch (e) { return { ok: false, error: e.message }; }
   });

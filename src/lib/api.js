@@ -14,15 +14,19 @@ export async function deleteCalibration(id) {
   return api.invoke('calibration:delete', id);
 }
 
-// 교정 첨부파일 (로컬 저장)
+// 교정 첨부파일 — 로컬 저장 + (동기화 설정이 있으면) 첨부파일 전용 Gist에도 올려
+// 다른 PC와 공유한다. 다른 PC는 "열기"를 누르는 순간에만 그 파일 하나를 내려받는다.
 export async function saveCalibFile(name, dataBase64) {
   return api.invoke('calibFile:save', { name, dataBase64 });
 }
-export async function openCalibFile(path) {
-  return api.invoke('calibFile:open', path);
+export async function uploadCalibAttachment(gistKey, dataBase64) {
+  return api.invoke('calibFile:uploadAttachment', { gistKey, dataBase64 });
 }
-export async function revealCalibFile(path) {
-  return api.invoke('calibFile:reveal', path);
+export async function openCalibFile(filePath, gistKey) {
+  return api.invoke('calibFile:open', { filePath, gistKey });
+}
+export async function revealCalibFile(filePath, gistKey) {
+  return api.invoke('calibFile:reveal', { filePath, gistKey });
 }
 
 // ─── 구역 ─────────────────────────────────────────────────────────────────────
