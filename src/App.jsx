@@ -152,7 +152,7 @@ export default function App() {
           {page === 'status' && <ZoneStatus year={year} onYearChange={setYear} />}
           {page === 'gantt'  && <ZoneGantt  year={year} onYearChange={setYear} />}
           {page === 'annual' && <AnnualPlan year={year} onYearChange={setYear} />}
-          {page === 'calibration' && <Calibration />}
+          {page === 'calibration' && <Calibration adminUnlocked={adminUnlocked} />}
         </main>
       </div>
     </div>

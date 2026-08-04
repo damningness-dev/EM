@@ -87,7 +87,7 @@ export default function SyncControl({ adminUnlocked }) {
           <button onClick={doPull} disabled={busy || onCooldown}
             title={onCooldown ? `너무 자주 요청하지 않도록 잠시 후 다시 시도하세요 (${cooldownLeft}초)` : undefined}
             className="w-full py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed">
-            {busy ? '동기화 중…' : onCooldown ? `잠시 후 다시 (${Math.floor(cooldownLeft / 60)}:${String(cooldownLeft % 60).padStart(2, '0')})` : '지금 동기화'}
+            {busy ? '동기화 중…' : onCooldown ? `수동 동기화 (${Math.floor(cooldownLeft / 60)}:${String(cooldownLeft % 60).padStart(2, '0')})` : '수동 동기화'}
           </button>
         </>
       ) : (

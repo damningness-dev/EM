@@ -23,7 +23,7 @@ function certFileName(no, calibDate, sn, originalName) {
   return base + ext;
 }
 
-export default function Calibration() {
+export default function Calibration({ adminUnlocked }) {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -349,8 +349,12 @@ export default function Calibration() {
                                   className="px-1.5 py-1 rounded text-sm mr-1 hover:bg-emerald-50" title={`최근 성적서 열기: ${lf.fileName || ''}`}>📄</button>
                               ) : null;
                             })()}
-                            <button onClick={() => { setEditingId(item.id); setForm({ ...item }); }} className="px-2 py-1 text-blue-600 hover:bg-blue-50 rounded text-xs mr-1">수정</button>
-                            <button onClick={() => handleDelete(item.id)} className="px-2 py-1 text-red-500 hover:bg-red-50 rounded text-xs">삭제</button>
+                            {adminUnlocked && (
+                              <>
+                                <button onClick={() => { setEditingId(item.id); setForm({ ...item }); }} className="px-2 py-1 text-blue-600 hover:bg-blue-50 rounded text-xs mr-1">수정</button>
+                                <button onClick={() => handleDelete(item.id)} className="px-2 py-1 text-red-500 hover:bg-red-50 rounded text-xs">삭제</button>
+                              </>
+                            )}
                           </td>
                         </>
                       )}
