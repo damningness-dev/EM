@@ -362,7 +362,7 @@ export default function Calibration({ adminUnlocked }) {
                     {isExp && (
                       <tr>
                         <td colSpan={12} className="p-0 bg-gray-50/60">
-                          <HistoryPanel item={item} onSave={history => persistHistory(item, history)} onNotice={showNotice} />
+                          <HistoryPanel item={item} onSave={history => persistHistory(item, history)} onNotice={showNotice} adminUnlocked={adminUnlocked} />
                         </td>
                       </tr>
                     )}
@@ -425,17 +425,22 @@ export default function Calibration({ adminUnlocked }) {
 
 function FragmentRow({ children }) { return <>{children}</>; }
 
-function HistoryPanel({ item, onSave, onNotice }) {
+function HistoryPanel({ item, onSave, onNotice, adminUnlocked }) {
   const [rows, setRows] = useState(() => (item.history || []).map(h => ({ ...h })));
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
 
-  function edit(idx, patch) { setRows(rs => rs.map((r, i) => i === idx ? { ...r, ...patch } : r)); setDirty(true); }
-  function add() { setRows(rs => [...rs, { id: newHistoryId(), year: new Date().getFullYear(), cert_no: '', calib_date: '', note: '', fileName: '', filePath: '', gistKey: '' }]); setDirty(true); }
-  function remove(idx) { setRows(rs => rs.filter((_, i) => i !== idx)); setDirty(true); }
+  function requireAdmin() {
+    if (!adminUnlocked) { onNotice('관리자 잠금 해제가 필요합니다.', true); return false; }
+    return true;
+  }
+  function edit(idx, patch) { if (!requireAdmin()) return; setRows(rs => rs.map((r, i) => i === idx ? { ...r, ...patch } : r)); setDirty(true); }
+  function add() { if (!requireAdmin()) return; setRows(rs => [...rs, { id: newHistoryId(), year: new Date().getFullYear(), cert_no: '', calib_date: '', note: '', fileName: '', filePath: '', gistKey: '' }]); setDirty(true); }
+  function remove(idx) { if (!requireAdmin()) return; setRows(rs => rs.filter((_, i) => i !== idx)); setDirty(true); }
 
   async function upload(idx, file) {
     if (!file) return;
+    if (!requireAdmin()) return;
     if (!isElectron) { onNotice('파일 첨부는 데스크톱 앱에서만 지원됩니다.', true); return; }
     const row = rows[idx];
     if (!row.calib_date) { onNotice('먼저 교정일을 입력하세요. (파일명이 관리번호·교정일 기준으로 저장됩니다)', true); return; }
@@ -461,6 +466,7 @@ function HistoryPanel({ item, onSave, onNotice }) {
   }
 
   async function save() {
+    if (!requireAdmin()) return;
     setBusy(true);
     const toSave = rows.map(r => ({ ...r, next_calib_date: r.calib_date ? nextCalibDate(r.calib_date) : '' }));
     try { await onSave(toSave); setDirty(false); } catch (e) { onNotice('저장 실패: ' + e.message, true); } finally { setBusy(false); }
@@ -483,10 +489,13 @@ function HistoryPanel({ item, onSave, onNotice }) {
   return (
     <div className="px-8 py-3">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-semibold text-gray-600">📁 연도별 교정내역</span>
+        <span className="text-xs font-semibold text-gray-600">
+          📁 연도별 교정내역
+          {!adminUnlocked && <span className="ml-1.5 text-[10px] font-normal text-gray-400">🔒 읽기 전용 (관리자 잠금 해제 필요)</span>}
+        </span>
         <div className="flex items-center gap-2">
-          <button onClick={add} className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium">+ 내역 추가</button>
-          <button onClick={save} disabled={busy || !dirty}
+          <button onClick={add} disabled={!adminUnlocked} className="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium disabled:opacity-40 disabled:cursor-not-allowed">+ 내역 추가</button>
+          <button onClick={save} disabled={busy || !dirty || !adminUnlocked}
             className={`text-xs px-3 py-1 rounded font-semibold ${dirty ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-100 text-gray-400'} disabled:opacity-60`}>
             {busy ? '저장 중…' : dirty ? '저장' : '저장됨'}
           </button>
@@ -498,27 +507,33 @@ function HistoryPanel({ item, onSave, onNotice }) {
         <div className="space-y-1.5">
           {view.map(({ r: h, i: idx }) => (
             <div key={h.id} className="flex flex-wrap items-center gap-2 bg-white border border-gray-100 rounded-lg px-3 py-2">
-              <input type="number" value={h.year || ''} onChange={e => edit(idx, { year: parseInt(e.target.value) || '' })}
-                className="w-16 border border-gray-200 rounded px-1.5 py-1 text-xs text-center" placeholder="연도" />
-              <input value={h.cert_no || ''} onChange={e => edit(idx, { cert_no: e.target.value })}
-                className="w-32 border border-gray-200 rounded px-1.5 py-1 text-xs" placeholder="성적서번호" />
-              <label className="text-[10px] text-gray-400">교정일<input type="date" value={h.calib_date || ''} onChange={e => edit(idx, { calib_date: e.target.value })} className="ml-1 border border-gray-200 rounded px-1 py-1 text-xs" /></label>
+              <input type="number" value={h.year || ''} onChange={e => edit(idx, { year: parseInt(e.target.value) || '' })} disabled={!adminUnlocked}
+                className="w-16 border border-gray-200 rounded px-1.5 py-1 text-xs text-center disabled:bg-gray-50 disabled:text-gray-400" placeholder="연도" />
+              <input value={h.cert_no || ''} onChange={e => edit(idx, { cert_no: e.target.value })} disabled={!adminUnlocked}
+                className="w-32 border border-gray-200 rounded px-1.5 py-1 text-xs disabled:bg-gray-50 disabled:text-gray-400" placeholder="성적서번호" />
+              <label className="text-[10px] text-gray-400">교정일<input type="date" value={h.calib_date || ''} onChange={e => edit(idx, { calib_date: e.target.value })} disabled={!adminUnlocked} className="ml-1 border border-gray-200 rounded px-1 py-1 text-xs disabled:bg-gray-50 disabled:text-gray-400" /></label>
               <label className="text-[10px] text-gray-400">차기<input type="date" readOnly title="교정일 +1년 -1일 자동" value={nextCalibDate(h.calib_date) || ''} className="ml-1 border border-gray-200 rounded px-1 py-1 text-xs bg-gray-50 text-gray-500" /></label>
-              <input value={h.note || ''} onChange={e => edit(idx, { note: e.target.value })}
-                className="flex-1 min-w-24 border border-gray-200 rounded px-1.5 py-1 text-xs" placeholder="교정내역" />
+              <input value={h.note || ''} onChange={e => edit(idx, { note: e.target.value })} disabled={!adminUnlocked}
+                className="flex-1 min-w-24 border border-gray-200 rounded px-1.5 py-1 text-xs disabled:bg-gray-50 disabled:text-gray-400" placeholder="교정내역" />
               {(h.filePath || h.gistKey) ? (
                 <span className="flex items-center gap-1">
                   <button onClick={() => open(h.filePath, h.gistKey)} className="text-xs px-2 py-1 bg-emerald-50 text-emerald-600 rounded hover:bg-emerald-100" title={h.fileName}>📄 열기</button>
                   <button onClick={() => revealCalibFile(h.filePath, h.gistKey)} className="text-xs px-1.5 py-1 text-gray-400 hover:text-gray-700" title="폴더에서 보기">📂</button>
-                  <button onClick={() => edit(idx, { fileName: '', filePath: '', gistKey: '' })} className="text-xs text-gray-300 hover:text-red-500" title="첨부 제거">✕</button>
+                  {adminUnlocked && (
+                    <button onClick={() => edit(idx, { fileName: '', filePath: '', gistKey: '' })} className="text-xs text-gray-300 hover:text-red-500" title="첨부 제거">✕</button>
+                  )}
                 </span>
-              ) : (
+              ) : adminUnlocked ? (
                 <label className="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded hover:bg-gray-200 cursor-pointer">
                   📎 파일첨부
                   <input type="file" className="hidden" onChange={e => { upload(idx, e.target.files?.[0]); e.target.value = ''; }} />
                 </label>
+              ) : (
+                <span className="text-xs px-2 py-1 bg-gray-50 text-gray-300 rounded">📎 파일첨부</span>
               )}
-              <button onClick={() => remove(idx)} className="text-xs text-gray-300 hover:text-red-500 px-1" title="내역 삭제">🗑</button>
+              {adminUnlocked && (
+                <button onClick={() => remove(idx)} className="text-xs text-gray-300 hover:text-red-500 px-1" title="내역 삭제">🗑</button>
+              )}
             </div>
           ))}
         </div>
