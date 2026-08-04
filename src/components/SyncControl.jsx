@@ -1,15 +1,21 @@
 import { useState, useEffect, useCallback } from 'react';
 import { syncGetConfig, syncSetConfig, syncUpload, syncPull } from '../lib/api';
 
+const PULL_COOLDOWN_MS = 3 * 60 * 1000; // "지금 동기화" 버튼 쿨타임 — 아래 설명 참고
+
 // 사이드바 하단의 공유 동기화 컨트롤.
-// 백그라운드 자동 동기화(주기적 내려받기)는 관리자 잠금과 무관하게 항상 동작하지만,
-// 사용자가 직접 누르는 버튼(지금 동기화·설정·업로드 등)은 관리자 잠금 해제 상태에서만
-// 활성화된다 — 실수로 다른 사람이 Gist/토큰 설정을 건드리는 것을 막기 위함.
+// 백그라운드 자동 동기화(주기적 내려받기)는 관리자 잠금과 무관하게 항상 동작한다.
+// "지금 동기화"(수동 내려받기)는 읽기 전용 동작이라 관리자 잠금 없이 누구나 쓸 수
+// 있지만, 여러 사람이 연달아 눌러 GitHub 비인증 요청 시간당 60회 한도를 금방
+// 소진하지 않도록 3분 쿨타임을 둔다. 설정(⚙)·업로드처럼 Gist/토큰을 바꾸는
+// 버튼은 계속 관리자 잠금 해제 상태에서만 활성화된다.
 export default function SyncControl({ adminUnlocked }) {
   const [cfg, setCfg] = useState(null);          // { gistId, hasToken, autoSync, intervalMin, lastSyncedAt }
   const [status, setStatus] = useState(null);    // { type, message, lastSyncedAt }
   const [showSettings, setShowSettings] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [cooldownUntil, setCooldownUntil] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
 
   const reload = useCallback(() => { syncGetConfig().then(setCfg).catch(() => {}); }, []);
 
@@ -23,10 +29,19 @@ export default function SyncControl({ adminUnlocked }) {
     });
   }, [reload]);
 
+  // 쿨타임 표시용 1초 틱 — 쿨타임이 없을 땐 타이머를 돌리지 않는다.
+  useEffect(() => {
+    if (cooldownUntil <= Date.now()) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [cooldownUntil]);
+
   if (!window.electronAPI) return null; // 웹에서는 미표시
 
   const lastSynced = status?.lastSyncedAt || cfg?.lastSyncedAt;
   const lastText = lastSynced ? new Date(lastSynced).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '없음';
+  const cooldownLeft = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
+  const onCooldown = cooldownLeft > 0;
 
   const statusText = (() => {
     switch (status?.type) {
@@ -40,10 +55,14 @@ export default function SyncControl({ adminUnlocked }) {
   })();
 
   async function doPull() {
-    if (!adminUnlocked) return;
+    if (busy || onCooldown) return;
     setBusy(true);
     try { const r = await syncPull(); if (!r?.ok && r?.error) setStatus({ type: 'error', message: r.error }); }
-    finally { setBusy(false); }
+    finally {
+      setBusy(false);
+      setCooldownUntil(Date.now() + PULL_COOLDOWN_MS);
+      setNow(Date.now());
+    }
   }
 
   function openSettings() {
@@ -65,10 +84,10 @@ export default function SyncControl({ adminUnlocked }) {
             최근: {lastText}{cfg.autoSync ? ` · 자동 ${cfg.intervalMin}분` : ' · 자동 꺼짐'}
           </div>
           {statusText && <div className={`mb-1.5 ${status?.type === 'error' ? 'text-red-400' : 'text-blue-400'}`}>{statusText}</div>}
-          <button onClick={doPull} disabled={busy || !adminUnlocked}
-            title={adminUnlocked ? undefined : '관리자 잠금 해제가 필요합니다'}
+          <button onClick={doPull} disabled={busy || onCooldown}
+            title={onCooldown ? `너무 자주 요청하지 않도록 잠시 후 다시 시도하세요 (${cooldownLeft}초)` : undefined}
             className="w-full py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed">
-            {busy ? '동기화 중…' : adminUnlocked ? '지금 동기화' : '🔒 지금 동기화'}
+            {busy ? '동기화 중…' : onCooldown ? `잠시 후 다시 (${Math.floor(cooldownLeft / 60)}:${String(cooldownLeft % 60).padStart(2, '0')})` : '지금 동기화'}
           </button>
         </>
       ) : (
