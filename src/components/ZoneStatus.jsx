@@ -52,7 +52,7 @@ function zoneCycleLabel(zone) {
   return spec.map(phaseLabel).join(' / ');
 }
 
-export default function ZoneStatus({ year, onYearChange }) {
+export default function ZoneStatus({ year, onYearChange, onJumpToSchedule }) {
   const [zones, setZones] = useState([]);
   const [holidayDefs, setHolidayDefs] = useState([]);
   const [completions, setCompletions] = useState(new Set());
@@ -131,6 +131,16 @@ export default function ZoneStatus({ year, onYearChange }) {
       <div className="space-y-2">
         {groups.map(group => {
           const isExp = expanded.has(group.key);
+          // 그룹 헤더에 보여줄 "현재 진행 중인 구분" 하나만 고른다.
+          // 1) 오늘이 시작~종료 사이인 구역 우선, 2) 없으면 이미 시작된 것 중 가장
+          // 최근에 시작된 것(끝났어도), 3) 그마저 없으면 가장 빨리 시작될 예정인 것.
+          const withPlan = group.zones.filter(z => z.schedule_start).map(z => ({ zone: z, plan: zonePlan(z) }));
+          let current = withPlan.find(zp => zp.plan.endDate && new Date(zp.zone.schedule_start) <= todayMid && todayMid <= zp.plan.endDate);
+          if (!current && withPlan.length) {
+            const started = withPlan.filter(zp => new Date(zp.zone.schedule_start) <= todayMid)
+              .sort((a, b) => new Date(b.zone.schedule_start) - new Date(a.zone.schedule_start));
+            current = started[0] || [...withPlan].sort((a, b) => new Date(a.zone.schedule_start) - new Date(b.zone.schedule_start))[0];
+          }
           return (
             <div key={group.key} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               <button
@@ -140,10 +150,15 @@ export default function ZoneStatus({ year, onYearChange }) {
                 <span className={`text-xs transition-transform ${isExp ? 'rotate-90 text-blue-500' : 'text-gray-400'}`}>▶</span>
                 <span className="font-semibold text-gray-800">{group.name}</span>
                 <span className="text-xs text-gray-400">{group.category}</span>
+                {current && (
+                  <span className="text-[11px] text-gray-400 whitespace-nowrap">
+                    시작 {current.zone.schedule_start} · 종료 {fmt(current.plan.endDate)} · {current.plan.done}/{current.plan.total}회
+                  </span>
+                )}
                 <div className="ml-auto flex items-center gap-1.5">
-                  {group.zones.map(z => (
-                    <span key={z.id} className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${GRADE_COLORS[z.grade] || 'bg-gray-100 text-gray-600'}`}>{z.grade}</span>
-                  ))}
+                  {current && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${GRADE_COLORS[current.zone.grade] || 'bg-gray-100 text-gray-600'}`}>{current.zone.grade}</span>
+                  )}
                 </div>
               </button>
 
@@ -178,11 +193,12 @@ export default function ZoneStatus({ year, onYearChange }) {
                             {plan.measurements.map(m => {
                               const done = completions.has(`${zone.id}_${m.num}`) || m.date <= todayMid;
                               return (
-                                <span key={m.num}
-                                  className={`text-[11px] px-1.5 py-1 rounded border ${done ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-gray-200 text-gray-600'}`}
-                                  title={`${m.num}회차`}>
+                                <button key={m.num}
+                                  onClick={() => onJumpToSchedule?.(fmt(m.date), zone.id, m.num)}
+                                  className={`text-[11px] px-1.5 py-1 rounded border transition-colors ${done ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                                  title={`${m.num}회차 · 월별 모니터링 일정에서 보기`}>
                                   <b className="text-gray-400 mr-1">{m.num}</b>{String(m.date.getFullYear()).slice(2)}/{m.date.getMonth() + 1}/{m.date.getDate()}({DOW[m.date.getDay()]})
-                                </span>
+                                </button>
                               );
                             })}
                           </div>

@@ -32,6 +32,14 @@ export default function App() {
   const [autoStart, setAutoStartState] = useState(false);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [showAdminLock, setShowAdminLock] = useState(false);
+  const [scheduleJumpTarget, setScheduleJumpTarget] = useState(null); // {date, zoneId, num} — 구역별 현황 등에서 특정 일정으로 이동
+
+  // 구역별 현황 등 다른 화면에서 특정 측정일을 클릭하면 월별 모니터링 일정으로
+  // 이동해 그 날짜를 선택하고 깜빡여 보여준다.
+  function jumpToSchedule(date, zoneId, num) {
+    setScheduleJumpTarget({ date, zoneId, num });
+    setPage('calendar');
+  }
 
   useEffect(() => {
     if (window.electronAPI) getAutoStart().then(setAutoStartState).catch(() => {});
@@ -148,8 +156,11 @@ export default function App() {
         <main className="flex-1 overflow-y-auto">
           {page === 'dashboard' && <Dashboard year={year} />}
           {page === 'todo' && <TodoToday />}
-          {page === 'calendar' && <CalendarView year={year} onYearChange={setYear} adminUnlocked={adminUnlocked} />}
-          {page === 'status' && <ZoneStatus year={year} onYearChange={setYear} />}
+          {page === 'calendar' && (
+            <CalendarView year={year} onYearChange={setYear} adminUnlocked={adminUnlocked}
+              jumpTarget={scheduleJumpTarget} onJumpTargetConsumed={() => setScheduleJumpTarget(null)} />
+          )}
+          {page === 'status' && <ZoneStatus year={year} onYearChange={setYear} onJumpToSchedule={jumpToSchedule} />}
           {page === 'gantt'  && <ZoneGantt  year={year} onYearChange={setYear} />}
           {page === 'annual' && <AnnualPlan year={year} onYearChange={setYear} />}
           {page === 'calibration' && <Calibration adminUnlocked={adminUnlocked} />}

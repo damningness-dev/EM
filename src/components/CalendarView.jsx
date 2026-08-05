@@ -97,7 +97,7 @@ function buildGrid(year, month, weekStart = 'mon') {
   return cells;
 }
 
-export default function CalendarView({ year: initYear, onYearChange, adminUnlocked }) {
+export default function CalendarView({ year: initYear, onYearChange, adminUnlocked, jumpTarget, onJumpTargetConsumed }) {
   const today = new Date();
   const [year, setYear] = useState(initYear || today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
@@ -120,6 +120,20 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
       flashTimerRef.current = setTimeout(() => setFlashTarget(null), 5000);
     });
   }
+
+  // 구역별 현황 등 다른 화면에서 "특정 일정으로 이동" 요청이 오면(jumpTarget),
+  // 그 날짜가 속한 년/월로 이동한 뒤 모니터링 현황과 동일하게 선택+깜빡임 처리한다.
+  useEffect(() => {
+    if (!jumpTarget) return;
+    const { date, zoneId, num } = jumpTarget;
+    const y = parseInt(date.slice(0, 4), 10), m = parseInt(date.slice(5, 7), 10);
+    setYear(y);
+    onYearChange?.(y);
+    setMonth(m);
+    flashItem({ ds: date, zone: { id: zoneId }, measurement: { num } });
+    onJumpTargetConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpTarget]);
 
   const [calibration, setCalibration] = useState([]);
   const [zones, setZones] = useState([]);
