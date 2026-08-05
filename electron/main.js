@@ -1049,6 +1049,53 @@ function registerHandlers() {
     } catch (e) { return { ok: false, error: e.message }; }
   });
 
+  // 첨부파일 공유 기능이 생기기 전에 로컬에만 저장돼 있던 기존 첨부파일들을
+  // 한 번에 첨부파일 전용 Gist로 올려 다른 PC와 공유되게 하는 일회성 이관 기능.
+  // 이미 gistKey가 있는(공유된) 항목은 건너뛰고, 로컬 파일이 실제로 존재하는
+  // 항목만 올린다. 요청 수를 줄이려고 여러 파일을 한 PATCH에 묶어서 보낸다.
+  ipcMain.handle('calibFile:backfillAttachments', async () => {
+    try {
+      const cfg = loadSyncConfig();
+      if (!cfg.token) return { ok: false, error: '업로드하려면 GitHub 토큰이 필요합니다' };
+      const data = loadData();
+      const pending = [];
+      (data.calibration || []).forEach((item, itemIdx) => {
+        (item.history || []).forEach((h, histIdx) => {
+          if (h.filePath && !h.gistKey && fs.existsSync(h.filePath)) {
+            const dot = h.filePath.lastIndexOf('.');
+            const ext = dot > 0 ? h.filePath.slice(dot) : '';
+            pending.push({ itemIdx, histIdx, filePath: h.filePath, gistKey: `attach_${h.id}${ext}.b64` });
+          }
+        });
+      });
+      if (!pending.length) return { ok: true, uploaded: 0, total: 0, failed: [] };
+      const attachGistId = await ensureAttachGistId();
+      const BATCH = 10;
+      let uploaded = 0;
+      const failed = [];
+      for (let i = 0; i < pending.length; i += BATCH) {
+        const batch = pending.slice(i, i + BATCH);
+        const files = {};
+        for (const p of batch) {
+          try { files[p.gistKey] = { content: fs.readFileSync(p.filePath).toString('base64') }; }
+          catch (e) { failed.push({ filePath: p.filePath, error: e.message }); }
+        }
+        if (!Object.keys(files).length) continue;
+        try {
+          await ghRequest('PATCH', `https://api.github.com/gists/${attachGistId}`, { token: cfg.token, body: { files } });
+          batch.forEach(p => {
+            if (files[p.gistKey]) { data.calibration[p.itemIdx].history[p.histIdx].gistKey = p.gistKey; uploaded++; }
+          });
+        } catch (e) {
+          batch.forEach(p => { if (files[p.gistKey]) failed.push({ filePath: p.filePath, error: e.message }); });
+        }
+      }
+      saveData(data);
+      if (uploaded > 0) { try { await syncUpload(); } catch { /* 메타데이터 반영 실패해도 파일 업로드 자체는 성공 */ } }
+      return { ok: true, uploaded, total: pending.length, failed };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
   // ── 부팅 시 자동 시작 ──
   ipcMain.handle('app:getAutoStart', () => getAutoStartEnabled());
   ipcMain.handle('app:setAutoStart', (_e, enabled) => {

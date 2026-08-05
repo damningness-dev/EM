@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { calcDDay, getDDayLabel, getDDayColor, formatDate } from '../utils/dateUtils';
 import { nextCalibDate, latestCalibHistory as latestHistory, effectiveCalib } from '../utils/calibUtils';
-import { fetchCalibration, upsertCalibration, deleteCalibration, saveCalibFile, uploadCalibAttachment, openCalibFile, revealCalibFile, syncGetConfig, syncUpload } from '../lib/api';
+import { fetchCalibration, upsertCalibration, deleteCalibration, saveCalibFile, uploadCalibAttachment, openCalibFile, revealCalibFile, syncGetConfig, syncUpload, backfillCalibAttachments } from '../lib/api';
 
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
 let hid = 0;
@@ -35,6 +35,7 @@ export default function Calibration({ adminUnlocked }) {
   const noticeTimer = useRef(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
   const [expanded, setExpanded] = useState(new Set());
   const [sortKey, setSortKey] = useState(null);   // null = 수동(드래그) 순서
   const [sortDir, setSortDir] = useState('asc');
@@ -156,6 +157,28 @@ export default function Calibration({ adminUnlocked }) {
       showNotice('⚠ 공유 업로드 중 오류: ' + e.message, true);
     }
   }
+  // 첨부파일 공유 기능이 생기기 전에 로컬에만 저장돼 있던 기존 첨부파일들을
+  // 한 번에 첨부파일 전용 Gist로 올려 다른 PC와 공유되게 하는 일회성 이관.
+  async function handleBackfillAttachments() {
+    if (!requireAdmin()) return;
+    setBackfilling(true);
+    try {
+      const r = await backfillCalibAttachments();
+      if (!r?.ok) { showNotice('첨부파일 이관 실패: ' + (r?.error || ''), true); return; }
+      if (r.total === 0) { showNotice('새로 올릴 첨부파일이 없습니다.'); return; }
+      if (r.uploaded > 0) {
+        // main 프로세스에서 파일을 직접 수정했으므로, 화면의 gistKey 표시가
+        // 최신 상태를 반영하도록 목록을 다시 불러온다.
+        try { setData(await fetchCalibration()); } catch { /* ignore */ }
+      }
+      const failMsg = r.failed?.length ? ` (실패 ${r.failed.length}건)` : '';
+      showNotice(`📎 기존 첨부파일 ${r.uploaded}/${r.total}건을 공유했습니다.${failMsg}`, r.failed?.length > 0);
+    } catch (e) {
+      showNotice('첨부파일 이관 중 오류: ' + e.message, true);
+    } finally {
+      setBackfilling(false);
+    }
+  }
   // 네이티브 alert()는 Electron에서 렌더러 입력 포커스를 한동안 먹통으로 만드는 문제가 있어
   // 항상 이 비차단(non-blocking) 토스트를 사용한다.
   function showNotice(text, isError) {
@@ -239,7 +262,16 @@ export default function Calibration({ adminUnlocked }) {
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-800">교정 관리</h1>
-        <button onClick={() => { setShowAdd(true); setForm({}); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">+ 추가</button>
+        <div className="flex items-center gap-2">
+          {adminUnlocked && (
+            <button onClick={handleBackfillAttachments} disabled={backfilling}
+              className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-50"
+              title="첨부파일 공유 기능이 생기기 전에 로컬에만 저장된 기존 첨부파일들을 한 번에 공유용 Gist로 올립니다.">
+              {backfilling ? '📎 이관 중…' : '📎 기존 첨부파일 공유'}
+            </button>
+          )}
+          <button onClick={() => { setShowAdd(true); setForm({}); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">+ 추가</button>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-3 items-center">
