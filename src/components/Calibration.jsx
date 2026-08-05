@@ -173,7 +173,7 @@ export default function Calibration({ adminUnlocked }) {
   // 첨부파일 공유 기능이 생기기 전에 로컬에만 저장돼 있던 기존 첨부파일들을
   // 한 번에 첨부파일 전용 Gist로 올려 다른 PC와 공유되게 하는 일회성 이관.
   async function handleBackfillAttachments() {
-    if (!requireAdmin()) return;
+    if (!adminUnlocked) { showNotice('관리자 잠금 해제가 필요합니다.', true); return; }
     setBackfilling(true);
     setBackfillProgress({ phase: 'checking' });
     try {
@@ -278,13 +278,14 @@ export default function Calibration({ adminUnlocked }) {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-800">교정 관리</h1>
         <div className="flex items-center gap-2">
-          {adminUnlocked && (
-            <button onClick={handleBackfillAttachments} disabled={backfilling}
-              className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-50"
-              title="첨부파일 공유 기능이 생기기 전에 로컬에만 저장된 기존 첨부파일들을 한 번에 공유용 Gist로 올립니다.">
-              {backfilling ? `📎 ${backfillProgressLabel(backfillProgress)}` : '📎 기존 첨부파일 공유'}
-            </button>
-          )}
+          {/* 관리자가 아니어도 버튼은 항상 보이게 해서, 눌렀을 때 최소한 "관리자
+              잠금 해제가 필요합니다" 안내라도 뜨도록 한다(숨겨두면 눌러도
+              아무 반응이 없는 것처럼 보일 수 있음). */}
+          <button onClick={handleBackfillAttachments} disabled={backfilling}
+            className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-50"
+            title="첨부파일 공유 기능이 생기기 전에 로컬에만 저장된 기존 첨부파일들을 한 번에 공유용 Gist로 올립니다.">
+            {backfilling ? `📎 ${backfillProgressLabel(backfillProgress)}` : adminUnlocked ? '📎 기존 첨부파일 공유' : '🔒 기존 첨부파일 공유'}
+          </button>
           <button onClick={() => { setShowAdd(true); setForm({}); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">+ 추가</button>
         </div>
       </div>
