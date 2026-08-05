@@ -2074,8 +2074,8 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                       } catch {}
                     }}
                     className={`cal-day min-h-28 p-1.5 cursor-pointer transition-colors
-                      ${boundaryRight ? 'border-r-2 border-r-gray-400' : 'border-r border-r-gray-100'}
-                      ${boundaryBottom ? 'border-b-2 border-b-gray-400' : 'border-b border-b-gray-100'}
+                      ${boundaryRight ? 'border-r-2 border-r-gray-500' : 'border-r border-r-gray-300'}
+                      ${boundaryBottom ? 'border-b-2 border-b-gray-500' : 'border-b border-b-gray-300'}
                       ${isDragOver ? 'bg-blue-100 ring-2 ring-inset ring-blue-400' :
                         isOther ? 'bg-gray-100/90' :
                         isSelected ? (dow === 6 ? 'bg-blue-100' : (dow === 0 || isHol) ? 'bg-red-100' : 'bg-blue-50') :
