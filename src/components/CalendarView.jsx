@@ -2272,14 +2272,26 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                     <p className={`text-xs mt-0.5 ${hdSub}`}>🎌 {holidays[selectedDay]}</p>
                   )}
                 </div>
-                {(selectedScheduleEvents.length > 0 || blockedDates.has(selectedDay)) && (
-                  <label className="flex items-center gap-1 text-xs text-white/90 cursor-pointer select-none shrink-0 whitespace-nowrap"
-                    title="체크 시 이 날의 모든 일정을 다른 날로 옮기고, 이 날에는 어떤 일정도 배치되지 않습니다">
-                    <input type="checkbox" checked={blockedDates.has(selectedDay)}
-                      onChange={e => handleToggleBlockDay(selectedDay, e.target.checked)} className="rounded" />
-                    일정비우기
-                  </label>
-                )}
+                <div className="flex flex-col items-end gap-1.5 shrink-0">
+                  <button
+                    onClick={() => {
+                      if (!requireAdmin()) return;
+                      if (blockedDates.has(selectedDay)) { showError('일정비우기가 체크되어있습니다'); return; }
+                      setAddSchedName('');
+                      setAddSchedPts({ surface: '', float: '', fall: '', particle: '' });
+                      setAddSchedPopup({ date: selectedDay });
+                    }}
+                    className="px-2.5 py-1 text-xs font-medium text-white bg-white/20 hover:bg-white/30 rounded-lg transition-colors whitespace-nowrap"
+                  >+ 일정 추가</button>
+                  {(selectedScheduleEvents.length > 0 || blockedDates.has(selectedDay)) && (
+                    <label className="flex items-center gap-1 text-xs text-white/90 cursor-pointer select-none whitespace-nowrap"
+                      title="체크 시 이 날의 모든 일정을 다른 날로 옮기고, 이 날에는 어떤 일정도 배치되지 않습니다">
+                      <input type="checkbox" checked={blockedDates.has(selectedDay)}
+                        onChange={e => handleToggleBlockDay(selectedDay, e.target.checked)} className="rounded" />
+                      일정비우기
+                    </label>
+                  )}
+                </div>
               </div>
               <div className="flex-1 overflow-y-auto min-h-0">
 
@@ -2447,18 +2459,6 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
               {selectedCalibEvents.length === 0 && selectedScheduleEvents.length === 0 && selectedTempEvents.length === 0 && !blockedDates.has(selectedDay) && (
                 <p className="px-4 py-3 text-sm text-gray-400">일정 없음</p>
               )}
-              </div>
-              <div className="px-3 py-2 border-t border-gray-100 shrink-0">
-                <button
-                  onClick={() => {
-                    if (!requireAdmin()) return;
-                    if (blockedDates.has(selectedDay)) { showError('일정비우기가 체크되어있습니다'); return; }
-                    setAddSchedName('');
-                    setAddSchedPts({ surface: '', float: '', fall: '', particle: '' });
-                    setAddSchedPopup({ date: selectedDay });
-                  }}
-                  className="w-full py-1.5 text-sm font-medium text-orange-600 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100 transition-colors"
-                >+ 일정 추가</button>
               </div>
             </div>
           )}
