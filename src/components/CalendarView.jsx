@@ -634,20 +634,41 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     portal.appendChild(clone);
     document.body.appendChild(portal);
     document.body.classList.add('is-printing');
+
+    // 표로보기는 세로(portrait)로, 여러 페이지에 걸쳐 자연스럽게 흐르도록 인쇄한다.
+    // 달력보기는 한 페이지에 맞춰야 해서 계속 가로(landscape) + 고정 높이를 쓴다.
+    // @page는 선택자로 조건부 지정이 안 되므로, 표로보기일 때만 별도 <style>을
+    // 끼워 넣어 index.css의 기본(가로) 규칙을 덮어쓴다.
+    const isTable = viewMode === 'table';
+    let styleEl = null;
+    if (isTable) {
+      styleEl = document.createElement('style');
+      styleEl.textContent = `
+        @page { size: A4 portrait; margin: 12mm; }
+        .print-portal .print-area {
+          height: auto !important;
+          max-height: none !important;
+          overflow: visible !important;
+        }
+      `;
+      document.head.appendChild(styleEl);
+    }
+
     let cleaned = false;
     const cleanup = () => {
       if (cleaned) return;
       cleaned = true;
       document.body.classList.remove('is-printing');
       portal.remove();
+      styleEl?.remove();
       window.removeEventListener('afterprint', cleanup);
     };
     if (window.electronAPI) {
       // 렌더 안정화를 위해 한 프레임 뒤 PDF 생성
       await new Promise(r => requestAnimationFrame(() => r()));
       try {
-        const res = await printDoc({ landscape: true, pageSize: 'A4' });
-        if (res && res.ok) showSuccess('가로 PDF로 열었습니다. 뷰어에서 인쇄(Ctrl+P)하면 가로로 출력됩니다.');
+        const res = await printDoc({ landscape: !isTable, pageSize: 'A4' });
+        if (res && res.ok) showSuccess(isTable ? '세로 PDF로 열었습니다. 뷰어에서 인쇄(Ctrl+P)하세요.' : '가로 PDF로 열었습니다. 뷰어에서 인쇄(Ctrl+P)하면 가로로 출력됩니다.');
         else showError('인쇄 준비 실패: ' + (res?.error || ''));
       } catch (e) { showError('인쇄 준비 실패: ' + e.message); }
       cleanup();
@@ -1941,10 +1962,12 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
           </div>
           <button
             onClick={handlePrint}
-            title="이번 달 일정을 가로 PDF로 열기 (뷰어에서 인쇄하면 항상 가로로 출력)"
+            title={viewMode === 'table'
+              ? '이번 달 일정 표를 세로 PDF로 열기 (뷰어에서 인쇄하면 세로로 출력)'
+              : '이번 달 일정을 가로 PDF로 열기 (뷰어에서 인쇄하면 항상 가로로 출력)'}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-xl border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition-colors"
           >
-            🖨 인쇄(가로 PDF)
+            🖨 인쇄({viewMode === 'table' ? '세로' : '가로'} PDF)
           </button>
           <button
             onClick={handleExportExcel}
