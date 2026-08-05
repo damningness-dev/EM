@@ -72,11 +72,11 @@ function httpGet(url, _bustCache) {
       ? url + (url.includes('?') ? '&' : '?') + '_ts=' + Date.now()
       : url;
     const mod = target.startsWith('https:') ? https : http;
-    mod.get(target, { headers: {
+    const req = mod.get(target, { headers: {
       'User-Agent': 'em-updater/1.0',
       'Cache-Control': 'no-cache, no-store',
       'Pragma': 'no-cache',
-    } }, (res) => {
+    }, timeout: 20000 }, (res) => {
       if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
         res.resume();
         resolve(httpGet(res.headers.location));
@@ -86,7 +86,9 @@ function httpGet(url, _bustCache) {
       } else {
         resolve(res);
       }
-    }).on('error', reject);
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(new Error('요청 시간 초과 (20초) — 네트워크 상태를 확인하세요')); });
   });
 }
 
@@ -393,7 +395,7 @@ function ghRequest(method, apiUrl, { token, body, extraHeaders } = {}) {
     const headers = { 'User-Agent': 'em-sync/1.0', 'Accept': 'application/vnd.github+json', ...extraHeaders };
     if (token) headers['Authorization'] = 'token ' + token;
     if (data) { headers['Content-Type'] = 'application/json'; headers['Content-Length'] = data.length; }
-    const req = https.request({ hostname: u.hostname, path: u.pathname + u.search, method, headers }, (res) => {
+    const req = https.request({ hostname: u.hostname, path: u.pathname + u.search, method, headers, timeout: 20000 }, (res) => {
       // 청크를 문자열로 바로 이어붙이면(out += chunk) 한글 등 멀티바이트 문자가
       // 청크 경계에서 잘려 깨질 수 있다(예: 구역 이름 일부만 깨짐). Buffer로 모았다가
       // 한 번에 UTF-8로 디코딩해야 안전하다.
@@ -418,6 +420,10 @@ function ghRequest(method, apiUrl, { token, body, extraHeaders } = {}) {
       });
     });
     req.on('error', reject);
+    // 네트워크 문제(방화벽·프록시 등)로 응답이 아예 안 오면 요청이 끝없이 매달려
+    // 있을 수 있다 — 20초 안에 응답이 없으면 명확한 오류로 끝내서 화면이 "아무
+    // 반응 없이" 멈춰 있는 것처럼 보이지 않게 한다.
+    req.on('timeout', () => { req.destroy(new Error('요청 시간 초과 (20초) — 네트워크 상태를 확인하세요')); });
     if (data) req.write(data);
     req.end();
   });
@@ -1053,8 +1059,14 @@ function registerHandlers() {
   // 한 번에 첨부파일 전용 Gist로 올려 다른 PC와 공유되게 하는 일회성 이관 기능.
   // 이미 gistKey가 있는(공유된) 항목은 건너뛰고, 로컬 파일이 실제로 존재하는
   // 항목만 올린다. 요청 수를 줄이려고 여러 파일을 한 PATCH에 묶어서 보낸다.
-  ipcMain.handle('calibFile:backfillAttachments', async () => {
+  ipcMain.handle('calibFile:backfillAttachments', async (event) => {
+    // 렌더러에 진행 상황을 실시간으로 알려준다 — 전체 과정이 IPC 호출 하나로
+    // 끝나면 완료될 때까지 화면에 아무 반응이 없어 보이는 문제를 막기 위함.
+    const sendProgress = (phase, extra = {}) => {
+      try { event.sender.send('calibFile:backfillProgress', { phase, ...extra }); } catch { /* 창이 닫혔으면 무시 */ }
+    };
     try {
+      sendProgress('checking');
       const cfg = loadSyncConfig();
       if (!cfg.token) return { ok: false, error: '업로드하려면 GitHub 토큰이 필요합니다' };
       const data = loadData();
@@ -1069,6 +1081,7 @@ function registerHandlers() {
         });
       });
       if (!pending.length) return { ok: true, uploaded: 0, total: 0, failed: [] };
+      sendProgress('uploading', { done: 0, total: pending.length });
       const attachGistId = await ensureAttachGistId();
       const BATCH = 10;
       let uploaded = 0;
@@ -1080,18 +1093,23 @@ function registerHandlers() {
           try { files[p.gistKey] = { content: fs.readFileSync(p.filePath).toString('base64') }; }
           catch (e) { failed.push({ filePath: p.filePath, error: e.message }); }
         }
-        if (!Object.keys(files).length) continue;
-        try {
-          await ghRequest('PATCH', `https://api.github.com/gists/${attachGistId}`, { token: cfg.token, body: { files } });
-          batch.forEach(p => {
-            if (files[p.gistKey]) { data.calibration[p.itemIdx].history[p.histIdx].gistKey = p.gistKey; uploaded++; }
-          });
-        } catch (e) {
-          batch.forEach(p => { if (files[p.gistKey]) failed.push({ filePath: p.filePath, error: e.message }); });
+        if (Object.keys(files).length) {
+          try {
+            await ghRequest('PATCH', `https://api.github.com/gists/${attachGistId}`, { token: cfg.token, body: { files } });
+            batch.forEach(p => {
+              if (files[p.gistKey]) { data.calibration[p.itemIdx].history[p.histIdx].gistKey = p.gistKey; uploaded++; }
+            });
+          } catch (e) {
+            batch.forEach(p => { if (files[p.gistKey]) failed.push({ filePath: p.filePath, error: e.message }); });
+          }
         }
+        sendProgress('uploading', { done: Math.min(i + BATCH, pending.length), total: pending.length });
       }
       saveData(data);
-      if (uploaded > 0) { try { await syncUpload(); } catch { /* 메타데이터 반영 실패해도 파일 업로드 자체는 성공 */ } }
+      if (uploaded > 0) {
+        sendProgress('finalizing', { done: pending.length, total: pending.length });
+        try { await syncUpload(); } catch { /* 메타데이터 반영 실패해도 파일 업로드 자체는 성공 */ }
+      }
       return { ok: true, uploaded, total: pending.length, failed };
     } catch (e) { return { ok: false, error: e.message }; }
   });

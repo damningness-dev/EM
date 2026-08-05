@@ -16,6 +16,14 @@ const CALIB_COL_DEFAULT_W = {
 const CALIB_COL_STORE_KEY = 'em-calib-table-cols';
 
 function dotDate(s) { return s ? s.replaceAll('-', '.') : ''; }
+// 기존 첨부파일 이관 진행 상황을 버튼에 보여줄 짧은 텍스트로 변환
+function backfillProgressLabel(p) {
+  if (!p) return '이관 중…';
+  if (p.phase === 'checking') return '확인 중…';
+  if (p.phase === 'uploading') return `업로드 중… (${p.done ?? 0}/${p.total ?? '?'})`;
+  if (p.phase === 'finalizing') return '마무리 중…';
+  return '이관 중…';
+}
 // 성적서 파일명: "관리번호 교정일(S/N)" + 확장자
 function certFileName(no, calibDate, sn, originalName) {
   const ext = originalName && originalName.includes('.') ? originalName.slice(originalName.lastIndexOf('.')) : '';
@@ -36,6 +44,7 @@ export default function Calibration({ adminUnlocked }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
+  const [backfillProgress, setBackfillProgress] = useState(null); // { phase, done, total }
   const [expanded, setExpanded] = useState(new Set());
   const [sortKey, setSortKey] = useState(null);   // null = 수동(드래그) 순서
   const [sortDir, setSortDir] = useState('asc');
@@ -46,6 +55,10 @@ export default function Calibration({ adminUnlocked }) {
     return {};
   });
   useEffect(() => { try { localStorage.setItem(CALIB_COL_STORE_KEY, JSON.stringify(colW)); } catch { /* ignore */ } }, [colW]);
+  useEffect(() => {
+    if (!window.electronAPI?.onCalibBackfillProgress) return;
+    return window.electronAPI.onCalibBackfillProgress(setBackfillProgress);
+  }, []);
   const colWidth = k => colW[k] ?? CALIB_COL_DEFAULT_W[k];
   function startColResize(e, key) {
     e.preventDefault(); e.stopPropagation();
@@ -162,6 +175,7 @@ export default function Calibration({ adminUnlocked }) {
   async function handleBackfillAttachments() {
     if (!requireAdmin()) return;
     setBackfilling(true);
+    setBackfillProgress({ phase: 'checking' });
     try {
       const r = await backfillCalibAttachments();
       if (!r?.ok) { showNotice('첨부파일 이관 실패: ' + (r?.error || ''), true); return; }
@@ -177,6 +191,7 @@ export default function Calibration({ adminUnlocked }) {
       showNotice('첨부파일 이관 중 오류: ' + e.message, true);
     } finally {
       setBackfilling(false);
+      setBackfillProgress(null);
     }
   }
   // 네이티브 alert()는 Electron에서 렌더러 입력 포커스를 한동안 먹통으로 만드는 문제가 있어
@@ -267,7 +282,7 @@ export default function Calibration({ adminUnlocked }) {
             <button onClick={handleBackfillAttachments} disabled={backfilling}
               className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-50"
               title="첨부파일 공유 기능이 생기기 전에 로컬에만 저장된 기존 첨부파일들을 한 번에 공유용 Gist로 올립니다.">
-              {backfilling ? '📎 이관 중…' : '📎 기존 첨부파일 공유'}
+              {backfilling ? `📎 ${backfillProgressLabel(backfillProgress)}` : '📎 기존 첨부파일 공유'}
             </button>
           )}
           <button onClick={() => { setShowAdd(true); setForm({}); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">+ 추가</button>

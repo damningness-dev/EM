@@ -42,4 +42,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('admin:unlockChanged', handler);
     return () => ipcRenderer.removeListener('admin:unlockChanged', handler);
   },
+
+  // 교정 첨부파일 일괄 이관 진행 상황 수신
+  onCalibBackfillProgress: (callback) => {
+    const handler = (_event, status) => callback(status);
+    ipcRenderer.on('calibFile:backfillProgress', handler);
+    return () => ipcRenderer.removeListener('calibFile:backfillProgress', handler);
+  },
 });
