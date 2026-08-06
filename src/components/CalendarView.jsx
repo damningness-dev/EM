@@ -624,31 +624,6 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   // Windows 인쇄 대화상자가 가로 방향을 무시하는 문제 때문에, Electron에서는
   // 가로·배경색이 확정된 A4 PDF로 만들어 기본 뷰어로 연다(항상 가로 출력).
   // 인쇄 레이아웃(고정 폭·셀 클리핑)은 index.css의 @media print에서 처리.
-  // 인쇄 시 하루에 일정이 유난히 많은 날짜 때문에 셀 내용이 잘리지 않도록, 이번
-  // 달에서 가장 일정이 많은 날짜를 기준으로 글씨 크기를 자동으로 계산한다.
-  // 달력 그리드는 모든 주가 같은 높이를 나눠 쓰므로(grid-auto-rows: 1fr), 어느
-  // 한 셀이라도 넘치면 전체 글씨를 그 셀 기준으로 줄여야 잘리지 않는다.
-  function computePrintCalendarFontPx() {
-    const prefix = `${year}-${String(month).padStart(2, '0')}-`;
-    let maxEvents = 1;
-    const allDates = new Set([...Object.keys(scheduleByDate), ...Object.keys(calibByDate), ...Object.keys(tempByDate)]);
-    allDates.forEach(ds => {
-      if (!ds.startsWith(prefix)) return;
-      const n = (scheduleByDate[ds]?.length || 0) + (calibByDate[ds]?.length || 0) + (tempByDate[ds]?.length || 0);
-      if (n > maxEvents) maxEvents = n;
-    });
-    const numWeeks = Math.max(1, Math.round(grid.length / 7));
-    const GRID_HEIGHT = 700;  // print-area(760px)에서 월표시줄·요일헤더가 쓰는 높이를 뺀 대략값
-    const DAY_NUM_ROW = 16;   // 날짜 숫자 줄이 쓰는 높이
-    const CELL_PAD = 4;       // 셀 상하 여백
-    const rowHeight = GRID_HEIGHT / numWeeks;
-    const availableForChips = Math.max(16, rowHeight - DAY_NUM_ROW - CELL_PAD);
-    const perChipHeight = availableForChips / maxEvents;
-    // 칩 한 줄 높이 ≈ 글씨크기 × line-height(1.15) + 아주 약간의 여백
-    const fontPx = Math.max(4, Math.min(8.5, perChipHeight / 1.35));
-    return Math.round(fontPx * 10) / 10;
-  }
-
   async function handlePrint() {
     const src = printAreaRef.current;
     if (!src) { window.print(); return; }
@@ -666,6 +641,8 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     // index.css의 기본 규칙을 상황에 맞게 덮어쓴다.
     const isTable = viewMode === 'table';
     const styleEl = document.createElement('style');
+    document.head.appendChild(styleEl);
+
     if (isTable) {
       styleEl.textContent = `
         @page { size: A4 portrait; margin: 12mm; }
@@ -676,21 +653,37 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
         }
       `;
     } else {
-      const fontPx = computePrintCalendarFontPx();
-      const dotPx = Math.max(8, Math.round(fontPx * 1.6));
-      styleEl.textContent = `
-        .print-portal .cal-day,
-        .print-portal .cal-day * {
-          font-size: ${fontPx}px !important;
-          line-height: 1.15 !important;
-        }
-        .print-portal .cal-day .rounded-full {
-          width: ${dotPx}px !important;
-          height: ${dotPx}px !important;
-        }
-      `;
+      // 미리 계산한 공식은 실제 렌더링 여백과 어긋나 잘리거나(부족) 반대로 다른
+      // 주까지 불필요하게 작아질 수 있어(과함) 믿을 수 없다 — 화면 밖에 실제로
+      // 그려보고 각 날짜 셀이 넘치는지 직접 측정해, 넘치지 않을 때까지 글씨를
+      // 8px에서 0.5px씩 줄인다. index.css의 .print-portal 레이아웃 규칙은
+      // @media print에 갇혀있지 않아 이 측정 중에도 그대로 적용된다.
+      // 폭도 실제 인쇄 폭(A4 가로, 3mm 여백)에 맞춰야 줄바꿈·말줄임(…) 여부가
+      // 실제 인쇄 결과와 같게 측정된다.
+      portal.style.cssText = 'display: block; position: fixed; left: -10000px; top: 0; width: 1100px;';
+      await new Promise(r => requestAnimationFrame(() => r()));
+      const cells = clone.querySelectorAll('.cal-day');
+      let fontPx = 8;
+      for (; fontPx >= 4; fontPx -= 0.5) {
+        const dotPx = Math.max(8, Math.round(fontPx * 1.6));
+        styleEl.textContent = `
+          .print-portal .cal-day,
+          .print-portal .cal-day * {
+            font-size: ${fontPx}px !important;
+            line-height: 1.12 !important;
+          }
+          .print-portal .cal-day .rounded-full {
+            width: ${dotPx}px !important;
+            height: ${dotPx}px !important;
+          }
+        `;
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise(r => requestAnimationFrame(() => r()));
+        const overflowing = Array.from(cells).some(cell => cell.scrollHeight > cell.clientHeight + 1);
+        if (!overflowing) break;
+      }
+      portal.style.cssText = ''; // 측정용 강제 표시 해제 — 실제 인쇄는 @media print가 담당
     }
-    document.head.appendChild(styleEl);
 
     let cleaned = false;
     const cleanup = () => {

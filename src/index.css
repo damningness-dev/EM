@@ -30,6 +30,81 @@ body {
   display: none;
 }
 
+/* 달력 인쇄 레이아웃 — 실제 인쇄(@media print)뿐 아니라, handlePrint()가 일정이
+   많은 날짜에 맞춰 글씨 크기를 자동으로 줄이려고 화면 밖에서 실측할 때도 이
+   레이아웃이 그대로 적용돼야 하므로 @media print에 가두지 않는다. .print-portal
+   자체가 기본 display:none이라 평소에는 어차피 보이지 않는다.
+   글씨 크기(font-size)는 handlePrint()가 실측 후 별도 <style>로 덮어쓴다. */
+.print-portal .print-area {
+  width: 100%;
+  height: 760px;                 /* A4 가로 인쇄영역(3mm 여백 기준) 높이에 최대한 맞춤 */
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #d1d5db;
+  border-radius: 0;
+  box-shadow: none;
+  overflow: hidden;
+}
+.print-portal .cal-monthbar {
+  flex: 0 0 auto;
+  padding: 1px 0 !important;
+}
+.print-portal .cal-monthbar span {
+  font-size: 13px !important;
+}
+.print-portal .cal-dow {
+  flex: 0 0 auto;
+}
+.print-portal .cal-dow > div {
+  padding: 1px 0 !important;
+  font-size: 9px !important;
+}
+/* 달력 본문: 남은 높이를 각 주(5·6주)가 균등하게 채워 잘리는 줄이 없게 한다. */
+.print-portal .cal-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  grid-auto-rows: 1fr;
+}
+.print-portal .cal-day {
+  min-height: 0 !important;
+  height: 100% !important;
+  padding: 1px !important;
+  overflow: hidden !important;
+}
+.print-portal .cal-events {
+  overflow: hidden !important;
+}
+/* 셀 안 글씨 기본값 — handlePrint()가 실측해서 필요하면 더 작게 덮어쓴다. */
+.print-portal .cal-day,
+.print-portal .cal-day * {
+  font-size: 8px !important;
+  line-height: 1.1 !important;
+}
+.print-portal .cal-day .rounded-full {
+  width: 12px !important;
+  height: 12px !important;
+}
+/* 표 보기: 스크롤 영역 제한을 풀어 전체 표가 인쇄되게 한다. */
+.print-portal .print-unlock {
+  max-height: none !important;
+  overflow: visible !important;
+}
+/* 하단 범례 — 달력 그리드에 세로 공간을 더 주기 위해 최대한 압축 */
+.print-portal .cal-legend {
+  flex: 0 0 auto;
+  padding: 2px 6px !important;
+  gap: 2px 10px !important;
+}
+.print-portal .cal-legend,
+.print-portal .cal-legend * {
+  font-size: 7px !important;
+  line-height: 1.1 !important;
+}
+.print-portal .cal-legend span.w-3 {
+  width: 6px !important;
+  height: 6px !important;
+}
+
 @media print {
   @page {
     size: A4 landscape;
@@ -40,76 +115,5 @@ body {
   }
   .print-portal {
     display: block !important;
-  }
-  /* 달력 카드를 가로 A4 인쇄영역에 꽉 채운다(가로 100% · 세로 최대한 확보). */
-  .print-portal .print-area {
-    width: 100%;
-    height: 760px;                 /* 줄어든 여백(3mm) 기준 A4 가로 인쇄영역 높이에 최대한 맞춤 */
-    display: flex;
-    flex-direction: column;
-    border: 1px solid #d1d5db;
-    border-radius: 0;
-    box-shadow: none;
-    overflow: hidden;
-  }
-  /* 상단 월 표시 · 요일 헤더 — 셀에 세로 공간을 더 주기 위해 최대한 컴팩트하게 */
-  .print-portal .cal-monthbar {
-    flex: 0 0 auto;
-    padding: 1px 0 !important;
-  }
-  .print-portal .cal-monthbar span {
-    font-size: 13px !important;
-  }
-  .print-portal .cal-dow {
-    flex: 0 0 auto;
-  }
-  .print-portal .cal-dow > div {
-    padding: 1px 0 !important;
-    font-size: 9px !important;
-  }
-  /* 달력 본문: 남은 높이를 각 주(5·6주)가 균등하게 채워 잘리는 줄이 없게 한다. */
-  .print-portal .cal-grid {
-    flex: 1 1 auto;
-    min-height: 0;
-    grid-auto-rows: 1fr;
-  }
-  .print-portal .cal-day {
-    min-height: 0 !important;
-    height: 100% !important;
-    padding: 1px !important;
-    overflow: hidden !important;
-  }
-  .print-portal .cal-events {
-    overflow: hidden !important;
-  }
-  /* 셀 안 글씨 전체 축소 (넘치는 텍스트는 각 칩의 truncate로 '…' 처리) */
-  .print-portal .cal-day,
-  .print-portal .cal-day * {
-    font-size: 8px !important;
-    line-height: 1.1 !important;
-  }
-  .print-portal .cal-day .rounded-full {
-    width: 12px !important;
-    height: 12px !important;
-  }
-  /* 표 보기: 스크롤 영역 제한을 풀어 전체 표가 인쇄되게 한다. */
-  .print-portal .print-unlock {
-    max-height: none !important;
-    overflow: visible !important;
-  }
-  /* 하단 범례 — 달력 그리드에 세로 공간을 더 주기 위해 최대한 압축 */
-  .print-portal .cal-legend {
-    flex: 0 0 auto;
-    padding: 2px 6px !important;
-    gap: 2px 10px !important;
-  }
-  .print-portal .cal-legend,
-  .print-portal .cal-legend * {
-    font-size: 7px !important;
-    line-height: 1.1 !important;
-  }
-  .print-portal .cal-legend span.w-3 {
-    width: 6px !important;
-    height: 6px !important;
   }
 }
