@@ -13,7 +13,8 @@ import SyncControl from './components/SyncControl';
 import AdminLock from './components/AdminLock';
 import Login from './components/Login';
 import MemberManager from './components/MemberManager';
-import { seedInitialData, fetchScheduleConfig, getAutoStart, setAutoStart, adminIsUnlocked, adminLock, setCurrentMemberOnMain } from './lib/api';
+import ChangePasswordModal from './components/ChangePasswordModal';
+import { seedInitialData, fetchScheduleConfig, getAutoStart, setAutoStart, adminIsUnlocked, adminLock, adminChangePassword, setCurrentMemberOnMain, fetchGuestAccess, memberChangePassword } from './lib/api';
 import { setScheduleConfig } from './lib/schedule';
 import { INITIAL_CALIBRATION, MONITORING_ZONES } from './data/initialData';
 
@@ -36,6 +37,8 @@ export default function App() {
   const [autoStart, setAutoStartState] = useState(false);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [showAdminLock, setShowAdminLock] = useState(false);
+  const [showAdminChangePassword, setShowAdminChangePassword] = useState(false);
+  const [showMemberChangePassword, setShowMemberChangePassword] = useState(false);
   const [scheduleJumpTarget, setScheduleJumpTarget] = useState(null); // {date, zoneId, num} — 구역별 현황 등에서 특정 일정으로 이동
 
   // 로그인(선택 사항) — 로그인하지 않으면 지금까지처럼 전체 메뉴가 보인다.
@@ -46,7 +49,18 @@ export default function App() {
   });
   const [showLogin, setShowLogin] = useState(false);
   const [showMemberManager, setShowMemberManager] = useState(false);
-  const visibleMenu = currentMember ? MENU.filter(m => (currentMember.allowedTabs || []).includes(m.id)) : MENU;
+
+  // 로그인하지 않았을 때 보이는 메뉴 제한(관리자가 "권한 설정"에서 지정) — null이면
+  // 제한 없음(지금까지처럼 전체 메뉴).
+  const [guestAllowedTabs, setGuestAllowedTabs] = useState(null);
+  function reloadGuestAccess() {
+    fetchGuestAccess().then(c => setGuestAllowedTabs(c?.allowedTabs || null)).catch(() => {});
+  }
+  useEffect(() => { reloadGuestAccess(); }, []);
+
+  const visibleMenu = currentMember
+    ? MENU.filter(m => (currentMember.allowedTabs || []).includes(m.id))
+    : (guestAllowedTabs ? MENU.filter(m => guestAllowedTabs.includes(m.id)) : MENU);
 
   function handleLoggedIn(member) {
     setCurrentMember(member);
@@ -59,14 +73,13 @@ export default function App() {
     try { localStorage.removeItem('em-current-member'); } catch { /* ignore */ }
   }
 
-  // 이전에 로그인한 상태로 앱을 다시 열었을 때, 기본 시작 페이지(대시보드)가
-  // 이 계정에 허용되지 않을 수 있으므로 허용된 첫 메뉴로 보정한다.
+  // 지금 보이는 메뉴(로그인 계정 권한 또는 비로그인 시 게스트 제한)에 현재 페이지가
+  // 없으면 허용된 첫 메뉴로 보정한다 — 앱 시작 시 재수화, 로그인·로그아웃, 관리자가
+  // 게스트 제한을 방금 켠 경우 등 모두 여기서 한 번에 처리된다.
   useEffect(() => {
-    if (currentMember && !(currentMember.allowedTabs || []).includes(page)) {
-      setPage((currentMember.allowedTabs || [])[0] || 'dashboard');
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const allowed = currentMember ? (currentMember.allowedTabs || []) : guestAllowedTabs;
+    if (allowed && !allowed.includes(page)) setPage(allowed[0] || 'dashboard');
+  }, [currentMember, guestAllowedTabs]);
 
   // 로그인 상태가 바뀔 때마다(로그인·로그아웃·앱 시작 시 재수화 포함) main
   // 프로세스에 알려준다 — 관리자가 이 계정에 발급해 둔 토큰이 있으면 이 PC의
@@ -80,6 +93,7 @@ export default function App() {
   // 않았다면(구역별 현황만 허용된 계정 등) 이동하지 않는다.
   function jumpToSchedule(date, zoneId, num) {
     if (currentMember && !(currentMember.allowedTabs || []).includes('calendar')) return;
+    if (!currentMember && guestAllowedTabs && !guestAllowedTabs.includes('calendar')) return;
     setScheduleJumpTarget({ date, zoneId, num });
     setPage('calendar');
   }
@@ -159,6 +173,8 @@ export default function App() {
           {currentMember ? (
             <div className="flex items-center gap-2">
               <span className="flex-1 text-xs text-gray-300 truncate">👤 {currentMember.username}</span>
+              <button onClick={() => setShowMemberChangePassword(true)} title="비밀번호 변경"
+                className="text-[11px] px-1.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300">🔑</button>
               <button onClick={handleLogout} className="text-[11px] px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300">로그아웃</button>
             </div>
           ) : (
@@ -179,7 +195,11 @@ export default function App() {
               </button>
               <button onClick={() => setShowMemberManager(true)}
                 className="w-full py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-xs text-gray-300">
-                👥 사용자 계정 관리
+                🔐 권한 설정
+              </button>
+              <button onClick={() => setShowAdminChangePassword(true)}
+                className="w-full py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-xs text-gray-300">
+                🔑 관리자 비밀번호 변경
               </button>
             </>
           ) : (
@@ -210,7 +230,23 @@ export default function App() {
       {showLogin && <Login onClose={() => setShowLogin(false)} onLoggedIn={handleLoggedIn} />}
 
       {showMemberManager && adminUnlocked && (
-        <MemberManager menu={MENU} onClose={() => setShowMemberManager(false)} />
+        <MemberManager menu={MENU} onClose={() => { setShowMemberManager(false); reloadGuestAccess(); }} />
+      )}
+
+      {showAdminChangePassword && adminUnlocked && (
+        <ChangePasswordModal
+          title="관리자 비밀번호 변경"
+          onSubmit={(oldPassword, newPassword) => adminChangePassword(oldPassword, newPassword)}
+          onClose={ok => { setShowAdminChangePassword(false); if (ok) alert('관리자 비밀번호가 변경되었습니다.'); }}
+        />
+      )}
+
+      {showMemberChangePassword && currentMember && (
+        <ChangePasswordModal
+          title={`${currentMember.username} 비밀번호 변경`}
+          onSubmit={(oldPassword, newPassword) => memberChangePassword(currentMember.id, oldPassword, newPassword)}
+          onClose={ok => { setShowMemberChangePassword(false); if (ok) alert('비밀번호가 변경되었습니다.'); }}
+        />
       )}
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">

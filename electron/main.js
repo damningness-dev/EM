@@ -261,7 +261,7 @@ function getDataPath() {
 function loadData() {
   const p = getDataPath();
   if (!fs.existsSync(p)) {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES } };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES }, guestAllowedTabs: null };
   }
   try {
     const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
@@ -274,9 +274,12 @@ function loadData() {
     if (!data.memberAccounts) data.memberAccounts = [];
     if (!data.usagePoints) data.usagePoints = [];
     if (!data.usagePointCategories) data.usagePointCategories = { ...DEFAULT_USAGE_POINT_CATEGORIES };
+    // 로그인하지 않았을 때 보이는 메뉴 — null(기본값)이면 지금까지처럼 전체 메뉴가 보이고,
+    // 배열이면 그 탭들만 보인다(계정별 allowedTabs와 같은 방식, 로그인 전 상태에 적용).
+    if (!('guestAllowedTabs' in data)) data.guestAllowedTabs = null;
     return data;
   } catch {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES } };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES }, guestAllowedTabs: null };
   }
 }
 
@@ -1280,10 +1283,36 @@ function registerHandlers() {
     if (!m || hashPassword(password) !== m.passwordHash) return { ok: false, error: '사용자이름 또는 비밀번호가 올바르지 않습니다' };
     return { ok: true, member: { id: m.id, username: m.username, allowedTabs: m.allowedTabs || [] } };
   });
+  // 로그인한 본인이 관리자 도움 없이 직접 비밀번호를 바꾼다(현재 비밀번호 확인 필요).
+  // 관리자가 MemberManager에서 바꿔주는 것(members:upsert)과는 별개 경로.
+  ipcMain.handle('members:changePassword', (_e, { id, oldPassword, newPassword } = {}) => {
+    const data = loadData();
+    const idx = (data.memberAccounts || []).findIndex(m => m.id === id);
+    if (idx < 0) return { ok: false, error: '존재하지 않는 계정입니다' };
+    if (hashPassword(oldPassword) !== data.memberAccounts[idx].passwordHash) {
+      return { ok: false, error: '현재 비밀번호가 올바르지 않습니다' };
+    }
+    if (!newPassword) return { ok: false, error: '새 비밀번호를 입력하세요' };
+    data.memberAccounts[idx].passwordHash = hashPassword(newPassword);
+    saveData(data);
+    return { ok: true };
+  });
   // 렌더러가 로그인 상태를 알려주면(로그인·로그아웃·앱 시작 시 재수화 포함) 이 PC의
   // 공유 업로드에 그 계정 전용 토큰(있다면)을 자동으로 쓴다.
   ipcMain.handle('members:setCurrent', (_e, memberId) => {
     currentMemberId = memberId || null;
+    return { ok: true };
+  });
+
+  // 로그인하지 않았을 때 보이는 메뉴 — null이면 제한 없음(전체 메뉴), 배열이면 그 탭들만.
+  ipcMain.handle('guestAccess:get', () => {
+    const data = loadData();
+    return { allowedTabs: data.guestAllowedTabs || null };
+  });
+  ipcMain.handle('guestAccess:set', (_e, allowedTabs) => {
+    const data = loadData();
+    data.guestAllowedTabs = Array.isArray(allowedTabs) ? allowedTabs : null;
+    saveData(data);
     return { ok: true };
   });
 

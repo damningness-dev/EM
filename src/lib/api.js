@@ -263,6 +263,17 @@ export async function memberLogin(username, password) {
 export async function setCurrentMemberOnMain(memberId) {
   return api.invoke('members:setCurrent', memberId || null);
 }
+// 로그인한 본인이 직접 비밀번호를 바꾼다(관리자 도움 없이, 현재 비밀번호 확인 필요).
+export async function memberChangePassword(id, oldPassword, newPassword) {
+  return api.invoke('members:changePassword', { id, oldPassword, newPassword });
+}
+// 로그인하지 않았을 때 보이는 메뉴 제한 — null이면 제한 없음(전체 메뉴).
+export async function fetchGuestAccess() {
+  return api.invoke('guestAccess:get');
+}
+export async function saveGuestAccess(allowedTabs) {
+  return api.invoke('guestAccess:set', allowedTabs);
+}
 
 // ─── 공유 동기화 (Gist) ───────────────────────────────────────────────────────
 

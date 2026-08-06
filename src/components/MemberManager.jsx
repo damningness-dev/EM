@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { fetchMembers, upsertMember, deleteMember } from '../lib/api';
+import { fetchMembers, upsertMember, deleteMember, fetchGuestAccess, saveGuestAccess } from '../lib/api';
 
-// 관리자 전용 — 로그인 계정(멤버)을 만들고, 계정마다 사이드바에 보일 탭 메뉴를
-// 체크박스로 골라 지정한다. 관리자 잠금 해제 상태에서만 열 수 있다.
+// 관리자 전용 권한 설정 화면 — (1) 로그인하지 않았을 때 보이는 메뉴를 제한하고,
+// (2) 로그인 계정(멤버)을 만들어 계정마다 사이드바에 보일 탭 메뉴를 체크박스로
+// 골라 지정한다. 관리자 잠금 해제 상태에서만 열 수 있다.
 export default function MemberManager({ menu, onClose }) {
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -69,14 +70,17 @@ export default function MemberManager({ menu, onClose }) {
     <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between shrink-0">
-          <h2 className="text-base font-bold text-gray-900">👥 사용자 계정 관리</h2>
+          <h2 className="text-base font-bold text-gray-900">🔐 권한 설정</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-lg leading-none">✕</button>
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-4">
+          <GuestAccessSection menu={menu} />
+
+          <p className="text-sm font-semibold text-gray-700 mb-1">👥 계정별 권한</p>
           <p className="text-xs text-gray-400 mb-3">
-            계정을 만들어 사용자이름·비밀번호와 허용할 탭 메뉴를 지정하세요. 로그인은 필수가
-            아니며, 로그인하지 않으면 지금처럼 전체 메뉴가 보입니다.
+            계정을 만들어 사용자이름·비밀번호와 허용할 탭 메뉴를 지정하세요. 로그인한 계정은
+            여기서 허용한 탭만 보입니다.
           </p>
           <p className="text-[11px] text-amber-600 mb-3">
             ⚠ GitHub 토큰(선택)을 등록해두면 그 계정으로 로그인한 PC는 별도 설정 없이 자동으로
@@ -133,6 +137,70 @@ export default function MemberManager({ menu, onClose }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// 로그인하지 않았을 때(비로그인 상태) 보이는 메뉴를 제한한다. 끄면 지금까지처럼
+// 전체 메뉴가 보인다(null 저장). 켜면 체크한 탭만 보이고, 나머지 메뉴를 쓰려면
+// 로그인해야 한다.
+function GuestAccessSection({ menu }) {
+  const [loaded, setLoaded] = useState(false);
+  const [restrict, setRestrict] = useState(false);
+  const [tabs, setTabs] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  useEffect(() => {
+    fetchGuestAccess().then(c => {
+      const allowed = c?.allowedTabs || null;
+      setRestrict(Array.isArray(allowed));
+      setTabs(allowed || menu.map(m => m.id));
+      setLoaded(true);
+    }).catch(() => setLoaded(true));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function toggleTab(id) {
+    setTabs(t => t.includes(id) ? t.filter(x => x !== id) : [...t, id]);
+  }
+
+  async function save() {
+    setBusy(true);
+    setMsg(null);
+    try {
+      await saveGuestAccess(restrict ? tabs : null);
+      setMsg({ ok: true, text: '저장되었습니다.' });
+    } catch (e) {
+      setMsg({ ok: false, text: '저장 실패: ' + e.message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!loaded) return null;
+
+  return (
+    <div className="border border-gray-200 rounded-lg p-3 space-y-2 mb-5">
+      <p className="text-sm font-semibold text-gray-700">🔓 로그인하지 않았을 때</p>
+      <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer select-none">
+        <input type="checkbox" checked={restrict} onChange={e => setRestrict(e.target.checked)} />
+        보이는 메뉴 제한하기 (끄면 지금처럼 전체 메뉴가 보입니다)
+      </label>
+      {restrict && (
+        <div className="flex flex-wrap gap-x-3 gap-y-1.5 pl-0.5 pt-0.5">
+          {menu.map(item => (
+            <label key={item.id} className="flex items-center gap-1 text-xs text-gray-600 cursor-pointer select-none">
+              <input type="checkbox" checked={tabs.includes(item.id)} onChange={() => toggleTab(item.id)} />
+              {item.icon} {item.label}
+            </label>
+          ))}
+        </div>
+      )}
+      {msg && <p className={`text-xs ${msg.ok ? 'text-green-600' : 'text-red-500'}`}>{msg.text}</p>}
+      <button onClick={save} disabled={busy}
+        className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded font-semibold hover:bg-blue-700 disabled:opacity-50">
+        {busy ? '저장 중…' : '저장'}
+      </button>
     </div>
   );
 }
