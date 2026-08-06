@@ -223,6 +223,15 @@ export async function setAutoStart(enabled) {
   return api.invoke('app:setAutoStart', enabled);
 }
 
+// ─── 할일 알람 리마인드 주기 (미완료 알람을 몇 분마다 다시 울릴지, 0 = 꺼짐) ──────
+
+export async function getTodoReminderInterval() {
+  return api.invoke('todoReminder:get');
+}
+export async function setTodoReminderInterval(intervalMin) {
+  return api.invoke('todoReminder:set', intervalMin);
+}
+
 // ─── 관리자 권한 (일정 편집 권한) ──────────────────────────────────────────────
 // 로그인 계정의 isAdmin 여부로 결정된다 — 로그인 자체가 곧 관리자 권한이다.
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, fetchTodos, upsertTodo, deleteTodo, toggleTodoDone, fetchHolidays } from '../lib/api';
+import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, fetchTodos, upsertTodo, deleteTodo, toggleTodoDone, fetchHolidays, getTodoReminderInterval, setTodoReminderInterval } from '../lib/api';
 import { effectiveCalib } from '../utils/calibUtils';
 import { buildHolidayMap } from '../lib/schedule';
 import { parseISO, differenceInDays } from 'date-fns';
@@ -18,6 +18,14 @@ const REPEAT_OPTIONS = [
 ];
 const REPEAT_LABEL = { none: '', daily: '매일', weekly: '매주', monthly: '매월', quarter: '분기', half: '반기', yearly: '매년' };
 const NTH_LABEL = ['', '첫째', '둘째', '셋째', '넷째', '마지막'];
+const REMINDER_OPTIONS = [
+  { value: 0, label: '끄기 (알람 시각에 한 번만)' },
+  { value: 5, label: '5분마다' },
+  { value: 10, label: '10분마다' },
+  { value: 15, label: '15분마다' },
+  { value: 30, label: '30분마다' },
+  { value: 60, label: '60분마다' },
+];
 
 function nthWeekdayOfMonth(year, month0, nth, dow) {
   const firstDow = new Date(year, month0, 1).getDay();
@@ -145,6 +153,8 @@ export default function TodoToday() {
   const [holidayDefs, setHolidayDefs] = useState([]);
   const [showTodoForm, setShowTodoForm] = useState(false);
   const [editingTodo, setEditingTodo] = useState(null); // 편집중 todo id
+  const [showReminderSettings, setShowReminderSettings] = useState(false);
+  const [reminderIntervalMin, setReminderIntervalMin] = useState(10);
   const blankForm = {
     title: '', date: todayStr(), due: '', note: '',
     // 일정 반복
@@ -226,7 +236,15 @@ export default function TodoToday() {
       setHolidayDefs(hols || []);
       setLoading(false);
     });
+    if (window.electronAPI) {
+      getTodoReminderInterval().then(r => setReminderIntervalMin(r?.intervalMin ?? 10)).catch(() => {});
+    }
   }, []);
+
+  async function saveReminderInterval(v) {
+    setReminderIntervalMin(v);
+    try { await setTodoReminderInterval(v); } catch { /* ignore */ }
+  }
 
   async function saveTodo() {
     const title = todoForm.title.trim();
@@ -358,12 +376,36 @@ export default function TodoToday() {
                 className={`px-2.5 py-1 ${todoView === v ? 'bg-blue-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'}`}>{label}</button>
             ))}
           </div>
+          {window.electronAPI && (
+            <button onClick={() => setShowReminderSettings(true)} title="리마인드 알람 설정"
+              className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-500 hover:bg-gray-50">⚙</button>
+          )}
           <button
             onClick={() => { setEditingTodo(null); setTodoForm(blankForm); setShowTodoForm(v => !v); }}
             className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
           >+ 할일 추가</button>
         </div>
       </div>
+
+      {/* 리마인드 알람 설정 — 완료되지 않은 할일 알람을 몇 분마다 다시 울릴지 */}
+      {showReminderSettings && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowReminderSettings(false)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-xs p-5 space-y-3" onClick={e => e.stopPropagation()}>
+            <h2 className="font-bold text-gray-800 text-sm">⏰ 리마인드 알람 설정</h2>
+            <p className="text-xs text-gray-400">완료하지 않은 할일 알람을 얼마마다 다시 알릴지 정하세요.</p>
+            <div className="space-y-1">
+              {REMINDER_OPTIONS.map(o => (
+                <label key={o.value} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none px-2 py-1.5 rounded hover:bg-gray-50">
+                  <input type="radio" name="reminderInterval" checked={reminderIntervalMin === o.value} onChange={() => saveReminderInterval(o.value)} />
+                  {o.label}
+                </label>
+              ))}
+            </div>
+            <button onClick={() => setShowReminderSettings(false)}
+              className="w-full py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">닫기</button>
+          </div>
+        </div>
+      )}
 
       {/* 할일 추가/편집 폼 */}
       {showTodoForm && (

@@ -362,6 +362,13 @@ function prefsPath() { return path.join(app.getPath('userData'), 'app-prefs.json
 function loadPrefs() { try { return JSON.parse(fs.readFileSync(prefsPath(), 'utf-8')) || {}; } catch { return {}; } }
 function savePrefs(p) { try { fs.writeFileSync(prefsPath(), JSON.stringify(p, null, 2)); } catch { /* ignore */ } }
 
+// 완료되지 않은 할일 알람을 몇 분마다 다시 울릴지 — 이 PC에만 저장되는 설정.
+// 0이면 리마인드 꺼짐(예전처럼 하루 1회만 울림). 기본 10분.
+function getReminderIntervalMin() {
+  const p = loadPrefs();
+  return Number.isFinite(p.reminderIntervalMin) ? p.reminderIntervalMin : 10;
+}
+
 // 부팅 시 자동 시작 등록/해제. 로그인 시엔 '--hidden'으로 실행 → 창 없이 트레이 상주.
 const AUTOSTART_ARGS = ['--hidden'];
 function applyAutoStart(enabled) {
@@ -674,7 +681,14 @@ function todoAlarmDueNow(todo, now) {
     if (nowHM < fireHM) continue;
     if ((todo.completedDates || []).includes(occDay)) continue;
     const key = `${todo.id}_${occDay}_${mode}`;
-    if (firedAlarms.has(key)) continue;
+    const lastFired = firedAlarms.get(key);
+    if (lastFired != null) {
+      // 이미 한 번 울린 알람 — 완료 처리 전까지 리마인드 주기마다 다시 울린다.
+      // 주기가 0(꺼짐)이면 예전처럼 하루 1회만 울리고 끝낸다.
+      const intervalMin = getReminderIntervalMin();
+      if (!intervalMin) continue;
+      if (now.getTime() - lastFired < intervalMin * 60000) continue;
+    }
     return { key, occDay };
   }
   return null;
@@ -750,7 +764,7 @@ function showNextAlarm() {
   } catch { currentAlarmWin = null; }
 }
 
-const firedAlarms = new Set(); // `${id}_${yyyy-MM-dd}` — 하루 1회 발사 보장
+const firedAlarms = new Map(); // `${id}_${occDay}_${mode}` → 마지막으로 울린 시각(ms). 리마인드 간격 계산에 씀.
 let alarmTimer = null;
 let alarmBlockerId = null;
 function checkAlarms() {
@@ -761,7 +775,7 @@ function checkAlarms() {
   todos.forEach(t => {
     const fire = todoAlarmDueNow(t, now);
     if (!fire) return;
-    firedAlarms.add(fire.key);
+    firedAlarms.set(fire.key, now.getTime());
     // 1) 데스크톱 팝업 창 (항상 위) — 한 번에 하나씩, 확인 전까지 유지 + 대기열
     enqueueAlarm(t);
     // 2) 작업표시줄 깜빡임
@@ -1226,6 +1240,15 @@ function registerHandlers() {
     return { ok: true, enabled: !!enabled };
   });
 
+  // 완료되지 않은 할일 알람 리마인드 주기 (이 PC 전용 설정, 0 = 꺼짐)
+  ipcMain.handle('todoReminder:get', () => ({ intervalMin: getReminderIntervalMin() }));
+  ipcMain.handle('todoReminder:set', (_e, intervalMin) => {
+    const p = loadPrefs();
+    p.reminderIntervalMin = Math.max(0, parseInt(intervalMin) || 0);
+    savePrefs(p);
+    return { ok: true, intervalMin: p.reminderIntervalMin };
+  });
+
   // ── 관리자 권한 — 로그인 계정의 isAdmin 여부로 결정된다(아래 members:* 참고) ──
   ipcMain.handle('admin:isUnlocked', () => computeAdminUnlocked());
 
@@ -1333,8 +1356,8 @@ function registerHandlers() {
     if (todo.id) {
       const i = todos.findIndex(t => t.id === todo.id);
       if (i >= 0) todos[i] = todo; else todos.push(todo);
-      // 알람 시간을 수정했으면 오늘자 발사 기록을 지워 새 시간에 다시 울리게 한다
-      firedAlarms.forEach(k => { if (k.startsWith(todo.id + '_')) firedAlarms.delete(k); });
+      // 알람 시간을 수정했으면 발사 기록을 지워 새 시간에 다시 울리게 한다
+      for (const k of [...firedAlarms.keys()]) { if (k.startsWith(todo.id + '_')) firedAlarms.delete(k); }
     } else {
       todo.id = newId();
       if (!todo.completedDates) todo.completedDates = [];
