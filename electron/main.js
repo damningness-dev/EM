@@ -251,6 +251,9 @@ function setupAsarUpdater(win) {
 // annualPlanAhus에 저장되어 공유 데이터(em-data.json)로 함께 동기화된다.
 const DEFAULT_AHUS = ['AHU-01', 'AHU-02', 'AHU-15', 'AHU-16', 'AHU-19', 'AHU-31', 'AHU-32', 'AHU-33', 'AHU-34', 'AHU-42', 'AHU-43'];
 
+// 사용점 관리 대분류별 소분류 기본 목록 — 관리자가 화면에서 추가·수정할 수 있다.
+const DEFAULT_USAGE_POINT_CATEGORIES = { '공조': [], '가스': [], '용수': [], '기타': [] };
+
 function getDataPath() {
   return path.join(app.getPath('userData'), 'em-data.json');
 }
@@ -258,7 +261,7 @@ function getDataPath() {
 function loadData() {
   const p = getDataPath();
   if (!fs.existsSync(p)) {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES } };
   }
   try {
     const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
@@ -270,9 +273,10 @@ function loadData() {
     if (!data.annualPlanAhus) data.annualPlanAhus = [...DEFAULT_AHUS];
     if (!data.memberAccounts) data.memberAccounts = [];
     if (!data.usagePoints) data.usagePoints = [];
+    if (!data.usagePointCategories) data.usagePointCategories = { ...DEFAULT_USAGE_POINT_CATEGORIES };
     return data;
   } catch {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES } };
   }
 }
 
@@ -943,9 +947,13 @@ function registerHandlers() {
     } catch (e) { return { ok: false, error: e.message }; }
   });
 
-  // ── 교정 첨부파일 ──
-  const calibFilesDir = () => {
-    const d = path.join(app.getPath('userData'), 'calib-files');
+  // ── 첨부파일(교정 성적서·사용점 사진 등) ──
+  // 화면(카테고리)별로 다운로드 폴더를 분리해 둔다 — 교정관리 첨부파일과
+  // 사용점관리 사진이 한 폴더에 섞이지 않도록.
+  const CALIB_FILE_CATEGORIES = { calibration: 'calibration', usagepoints: 'usagepoints' };
+  const calibFilesDir = (category) => {
+    const sub = CALIB_FILE_CATEGORIES[category] || 'calibration';
+    const d = path.join(app.getPath('userData'), 'calib-files', sub);
     try { fs.mkdirSync(d, { recursive: true }); } catch { /* ignore */ }
     return d;
   };
@@ -953,14 +961,14 @@ function registerHandlers() {
   // 그 안에는 업로드했을 때의 원래 파일명 그대로 저장한다. gistKey로 폴더 위치가
   // 정해지니(같은 파일이면 항상 같은 폴더) 한 번 내려받으면 이후엔 다시 내려받지
   // 않고 이 경로에서 바로 열되, 실제 저장 파일명은 원본과 동일하게 유지된다.
-  const attachCacheDir = (gistKey) => {
-    const dir = path.join(calibFilesDir(), 'gist-cache', gistKey.replace(/[^\w.\-]/g, '_'));
+  const attachCacheDir = (category, gistKey) => {
+    const dir = path.join(calibFilesDir(category), 'gist-cache', gistKey.replace(/[^\w.\-]/g, '_'));
     try { fs.mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
     return dir;
   };
-  function attachCachePath(gistKey, fileName) {
+  function attachCachePath(category, gistKey, fileName) {
     const safeName = String(fileName || gistKey.replace(/\.b64$/, '')).replace(/[^\w.\-가-힣 ()]/g, '_');
-    return path.join(attachCacheDir(gistKey), safeName);
+    return path.join(attachCacheDir(category, gistKey), safeName);
   }
 
   // 첨부파일 전용 Gist ID 확보(없으면 새로 만들어 공유 데이터에 저장).
@@ -1003,11 +1011,11 @@ function registerHandlers() {
     }
   }
 
-  ipcMain.handle('calibFile:save', (_e, { name, dataBase64 } = {}) => {
+  ipcMain.handle('calibFile:save', (_e, { name, dataBase64, category } = {}) => {
     try {
       const safe = String(name || 'file').replace(/[^\w.\-가-힣 ()]/g, '_');
       // 입력한 이름 그대로 저장(랜덤 접두사 없음). 이름이 겹치면 (2),(3)… 을 붙여 덮어쓰기 방지.
-      const dir = calibFilesDir();
+      const dir = calibFilesDir(category);
       const dot = safe.lastIndexOf('.');
       const stem = dot > 0 ? safe.slice(0, dot) : safe;
       const ext = dot > 0 ? safe.slice(dot) : '';
@@ -1035,13 +1043,13 @@ function registerHandlers() {
 
   ipcMain.handle('calibFile:open', async (_e, arg) => {
     try {
-      const { filePath, gistKey, fileName } = typeof arg === 'string' ? { filePath: arg } : (arg || {});
+      const { filePath, gistKey, fileName, category } = typeof arg === 'string' ? { filePath: arg } : (arg || {});
       if (filePath && fs.existsSync(filePath)) {
         const r = await shell.openPath(filePath);
         return { ok: !r, error: r || undefined };
       }
       if (!gistKey) return { ok: false, error: '파일을 찾을 수 없습니다' };
-      const cachePath = attachCachePath(gistKey, fileName);
+      const cachePath = attachCachePath(category, gistKey, fileName);
       if (fs.existsSync(cachePath)) {
         const r = await shell.openPath(cachePath);
         return { ok: !r, error: r || undefined, newPath: cachePath };
@@ -1071,10 +1079,10 @@ function registerHandlers() {
 
   ipcMain.handle('calibFile:reveal', (_e, arg) => {
     try {
-      const { filePath, gistKey, fileName } = typeof arg === 'string' ? { filePath: arg } : (arg || {});
+      const { filePath, gistKey, fileName, category } = typeof arg === 'string' ? { filePath: arg } : (arg || {});
       let target = filePath;
       if ((!target || !fs.existsSync(target)) && gistKey) {
-        const cachePath = attachCachePath(gistKey, fileName);
+        const cachePath = attachCachePath(category, gistKey, fileName);
         if (fs.existsSync(cachePath)) target = cachePath;
       }
       if (!target || !fs.existsSync(target)) return { ok: false, error: '파일을 찾을 수 없습니다 (먼저 "열기"로 내려받으세요)' };
@@ -1390,6 +1398,18 @@ function registerHandlers() {
     const data = loadData();
     data.usagePoints = data.usagePoints.filter(u => u.id !== id);
     saveData(data);
+  });
+
+  // 대분류(공조/가스/용수/기타)별 소분류 목록 — 관리자가 추가·수정한다.
+  ipcMain.handle('usagePointCategories:get', () => {
+    return loadData().usagePointCategories;
+  });
+
+  ipcMain.handle('usagePointCategories:set', (_e, categories) => {
+    const data = loadData();
+    data.usagePointCategories = categories;
+    saveData(data);
+    return data.usagePointCategories;
   });
 
   // ── 모니터링 구역 ──

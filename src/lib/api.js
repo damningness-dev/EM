@@ -14,19 +14,21 @@ export async function deleteCalibration(id) {
   return api.invoke('calibration:delete', id);
 }
 
-// 교정 첨부파일 — 로컬 저장 + (동기화 설정이 있으면) 첨부파일 전용 Gist에도 올려
-// 다른 PC와 공유한다. 다른 PC는 "열기"를 누르는 순간에만 그 파일 하나를 내려받는다.
-export async function saveCalibFile(name, dataBase64) {
-  return api.invoke('calibFile:save', { name, dataBase64 });
+// 첨부파일(교정 성적서·사용점 사진 등) — 로컬 저장 + (동기화 설정이 있으면)
+// 첨부파일 전용 Gist에도 올려 다른 PC와 공유한다. 다른 PC는 "열기"를 누르는
+// 순간에만 그 파일 하나를 내려받는다. category로 화면별 다운로드 폴더가 분리된다
+// (calibration → 교정관리, usagepoints → 사용점관리).
+export async function saveCalibFile(name, dataBase64, category = 'calibration') {
+  return api.invoke('calibFile:save', { name, dataBase64, category });
 }
 export async function uploadCalibAttachment(gistKey, dataBase64) {
   return api.invoke('calibFile:uploadAttachment', { gistKey, dataBase64 });
 }
-export async function openCalibFile(filePath, gistKey, fileName) {
-  return api.invoke('calibFile:open', { filePath, gistKey, fileName });
+export async function openCalibFile(filePath, gistKey, fileName, category = 'calibration') {
+  return api.invoke('calibFile:open', { filePath, gistKey, fileName, category });
 }
-export async function revealCalibFile(filePath, gistKey, fileName) {
-  return api.invoke('calibFile:reveal', { filePath, gistKey, fileName });
+export async function revealCalibFile(filePath, gistKey, fileName, category = 'calibration') {
+  return api.invoke('calibFile:reveal', { filePath, gistKey, fileName, category });
 }
 // 첨부파일 공유 기능이 생기기 전에 로컬에만 있던 기존 첨부파일들을 한 번에
 // 첨부파일 전용 Gist로 올려 다른 PC와 공유되게 하는 일회성 이관 기능.
@@ -44,6 +46,12 @@ export async function upsertUsagePoint(item) {
 }
 export async function deleteUsagePoint(id) {
   return api.invoke('usagePoints:delete', id);
+}
+export async function fetchUsagePointCategories() {
+  return api.invoke('usagePointCategories:get');
+}
+export async function saveUsagePointCategories(categories) {
+  return api.invoke('usagePointCategories:set', categories);
 }
 
 // ─── 구역 ─────────────────────────────────────────────────────────────────────

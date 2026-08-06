@@ -227,7 +227,7 @@ export default function App() {
           {page === 'gantt'  && <ZoneGantt  year={year} onYearChange={setYear} />}
           {page === 'annual' && <AnnualPlan year={year} onYearChange={setYear} />}
           {page === 'calibration' && <Calibration adminUnlocked={adminUnlocked} />}
-          {page === 'usagepoints' && <UsagePoints adminUnlocked={adminUnlocked} />}
+          {page === 'usagepoints' && <UsagePoints adminUnlocked={adminUnlocked} currentMember={currentMember} />}
         </main>
       </div>
     </div>
