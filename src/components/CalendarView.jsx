@@ -624,6 +624,31 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   // Windows 인쇄 대화상자가 가로 방향을 무시하는 문제 때문에, Electron에서는
   // 가로·배경색이 확정된 A4 PDF로 만들어 기본 뷰어로 연다(항상 가로 출력).
   // 인쇄 레이아웃(고정 폭·셀 클리핑)은 index.css의 @media print에서 처리.
+  // 인쇄 시 하루에 일정이 유난히 많은 날짜 때문에 셀 내용이 잘리지 않도록, 이번
+  // 달에서 가장 일정이 많은 날짜를 기준으로 글씨 크기를 자동으로 계산한다.
+  // 달력 그리드는 모든 주가 같은 높이를 나눠 쓰므로(grid-auto-rows: 1fr), 어느
+  // 한 셀이라도 넘치면 전체 글씨를 그 셀 기준으로 줄여야 잘리지 않는다.
+  function computePrintCalendarFontPx() {
+    const prefix = `${year}-${String(month).padStart(2, '0')}-`;
+    let maxEvents = 1;
+    const allDates = new Set([...Object.keys(scheduleByDate), ...Object.keys(calibByDate), ...Object.keys(tempByDate)]);
+    allDates.forEach(ds => {
+      if (!ds.startsWith(prefix)) return;
+      const n = (scheduleByDate[ds]?.length || 0) + (calibByDate[ds]?.length || 0) + (tempByDate[ds]?.length || 0);
+      if (n > maxEvents) maxEvents = n;
+    });
+    const numWeeks = Math.max(1, Math.round(grid.length / 7));
+    const GRID_HEIGHT = 700;  // print-area(760px)에서 월표시줄·요일헤더가 쓰는 높이를 뺀 대략값
+    const DAY_NUM_ROW = 16;   // 날짜 숫자 줄이 쓰는 높이
+    const CELL_PAD = 4;       // 셀 상하 여백
+    const rowHeight = GRID_HEIGHT / numWeeks;
+    const availableForChips = Math.max(16, rowHeight - DAY_NUM_ROW - CELL_PAD);
+    const perChipHeight = availableForChips / maxEvents;
+    // 칩 한 줄 높이 ≈ 글씨크기 × line-height(1.15) + 아주 약간의 여백
+    const fontPx = Math.max(4, Math.min(8.5, perChipHeight / 1.35));
+    return Math.round(fontPx * 10) / 10;
+  }
+
   async function handlePrint() {
     const src = printAreaRef.current;
     if (!src) { window.print(); return; }
@@ -637,12 +662,11 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
 
     // 표로보기는 세로(portrait)로, 여러 페이지에 걸쳐 자연스럽게 흐르도록 인쇄한다.
     // 달력보기는 한 페이지에 맞춰야 해서 계속 가로(landscape) + 고정 높이를 쓴다.
-    // @page는 선택자로 조건부 지정이 안 되므로, 표로보기일 때만 별도 <style>을
-    // 끼워 넣어 index.css의 기본(가로) 규칙을 덮어쓴다.
+    // @page는 선택자로 조건부 지정이 안 되므로, 별도 <style>을 끼워 넣어
+    // index.css의 기본 규칙을 상황에 맞게 덮어쓴다.
     const isTable = viewMode === 'table';
-    let styleEl = null;
+    const styleEl = document.createElement('style');
     if (isTable) {
-      styleEl = document.createElement('style');
       styleEl.textContent = `
         @page { size: A4 portrait; margin: 12mm; }
         .print-portal .print-area {
@@ -651,8 +675,22 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
           overflow: visible !important;
         }
       `;
-      document.head.appendChild(styleEl);
+    } else {
+      const fontPx = computePrintCalendarFontPx();
+      const dotPx = Math.max(8, Math.round(fontPx * 1.6));
+      styleEl.textContent = `
+        .print-portal .cal-day,
+        .print-portal .cal-day * {
+          font-size: ${fontPx}px !important;
+          line-height: 1.15 !important;
+        }
+        .print-portal .cal-day .rounded-full {
+          width: ${dotPx}px !important;
+          height: ${dotPx}px !important;
+        }
+      `;
     }
+    document.head.appendChild(styleEl);
 
     let cleaned = false;
     const cleanup = () => {
