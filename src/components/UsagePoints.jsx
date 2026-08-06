@@ -57,15 +57,6 @@ function resizeImage(file, maxDim, quality) {
   });
 }
 
-function readFileAsBase64(file) {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result).split(',')[1]);
-    r.onerror = reject;
-    r.readAsDataURL(file);
-  });
-}
-
 export default function UsagePoints({ adminUnlocked, currentMember }) {
   const [data, setData] = useState([]);
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
@@ -158,23 +149,33 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
     if (!file) return;
     setUploadingPhoto(true);
     try {
-      const thumb = await resizeImage(file, 260, 0.6);
+      // 원본을 손대지 않고 그대로 올리면 휴대폰 사진(수 MB)이 공유 첨부파일 Gist
+      // 업로드에서 실패하기 쉬워 다른 PC에서 "사진이 안 보이는" 문제로 이어진다.
+      // 화질 손상이 거의 느껴지지 않는 선(최대 2000px, JPEG 품질 0.85)까지만
+      // 제한해 저장하고, 목록 미리보기는 이보다 훨씬 작은 썸네일을 따로 만든다.
+      let thumb, capped;
+      try {
+        [thumb, capped] = await Promise.all([resizeImage(file, 260, 0.6), resizeImage(file, 2000, 0.85)]);
+      } catch {
+        showNotice('사진을 불러올 수 없습니다. 지원하지 않는 이미지 형식일 수 있습니다(예: 아이폰 HEIC) — JPG·PNG로 다시 시도해보세요.', true);
+        return;
+      }
       setForm(f => ({ ...f, photoThumb: thumb }));
       if (isElectron) {
-        // 원본은 축소하지 않고 그대로 저장·공유한다(미리보기만 작게 만든 썸네일 사용).
-        const b64 = await readFileAsBase64(file);
-        const desired = `usagepoint_${Date.now()}_${file.name.replace(/[^\w.\-가-힣 ()]/g, '_')}`;
+        const b64 = capped.split(',')[1];
+        const dot = file.name.lastIndexOf('.');
+        const baseName = (dot > 0 ? file.name.slice(0, dot) : file.name).replace(/[^\w.\-가-힣 ()]/g, '_');
+        // 캔버스로 다시 인코딩한 결과는 항상 JPEG이므로 원래 확장자 대신 .jpg로 저장한다.
+        const desired = `usagepoint_${Date.now()}_${baseName}.jpg`;
         const r = await saveCalibFile(desired, b64, 'usagepoints');
         if (r?.ok) {
           let gistKey = '';
           try {
             const cfg = await syncGetConfig();
             if (cfg?.hasToken) {
-              const dot = desired.lastIndexOf('.');
-              const ext = dot > 0 ? desired.slice(dot) : '';
-              gistKey = `attach_up_${Date.now()}${ext}.b64`;
+              gistKey = `attach_up_${Date.now()}.jpg.b64`;
               const ur = await uploadCalibAttachment(gistKey, b64);
-              if (!ur?.ok) gistKey = '';
+              if (!ur?.ok) { gistKey = ''; showNotice('사진은 저장됐지만 공유 업로드 실패: ' + (ur?.error || ''), true); }
             }
           } catch { /* 공유 설정 없으면 로컬 저장만 유지 */ }
           setForm(f => ({ ...f, photoFileName: r.name, photoFilePath: r.path, photoGistKey: gistKey }));
@@ -516,7 +517,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[300] p-6" onClick={() => setLightbox(null)}>
           <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-4 space-y-3" onClick={e => e.stopPropagation()}>
             <img src={lightbox.photoThumb} alt="사진" className="w-full max-h-[70vh] object-contain rounded-lg" />
-            <p className="text-[11px] text-gray-400">미리보기는 용량을 줄이려 압축되어 있습니다. 원본 화질은 "원본 열기"로 확인하세요.</p>
+            <p className="text-[11px] text-gray-400">위 미리보기는 더 작게 압축되어 있습니다. "고화질로 열기"로 저장된 사진(최대 2000px)을 확인하세요.</p>
             <div className="flex justify-between items-center">
               <p className="text-xs text-gray-400 truncate">{lightbox.photoFileName || ''}</p>
               <div className="flex gap-2">
@@ -524,7 +525,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                   <>
                     <button onClick={() => openOriginal(lightbox)} disabled={openingId === lightbox.id}
                       className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs disabled:opacity-50">
-                      {openingId === lightbox.id ? '⏳ 다운로드 중…' : '📄 원본 열기'}
+                      {openingId === lightbox.id ? '⏳ 다운로드 중…' : '📄 고화질로 열기'}
                     </button>
                     <button onClick={() => revealCalibFile(lightbox.photoFilePath, lightbox.photoGistKey, lightbox.photoFileName, 'usagepoints')}
                       className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs">📁 폴더 열기</button>
