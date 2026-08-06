@@ -34,6 +34,18 @@ export async function backfillCalibAttachments() {
   return api.invoke('calibFile:backfillAttachments');
 }
 
+// ─── 사용점 관리 ──────────────────────────────────────────────────────────────
+
+export async function fetchUsagePoints() {
+  return api.invoke('usagePoints:getAll');
+}
+export async function upsertUsagePoint(item) {
+  return api.invoke('usagePoints:upsert', item);
+}
+export async function deleteUsagePoint(id) {
+  return api.invoke('usagePoints:delete', id);
+}
+
 // ─── 구역 ─────────────────────────────────────────────────────────────────────
 
 export async function fetchZones() {

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import Dashboard from './components/Dashboard';
 import Calibration from './components/Calibration';
+import UsagePoints from './components/UsagePoints';
 import AnnualPlan from './components/AnnualPlan';
 import ZoneStatus from './components/ZoneStatus';
 import ZoneGantt from './components/ZoneGantt';
@@ -24,6 +25,7 @@ const MENU = [
   { id: 'gantt',  label: '간트 차트',  icon: '📊' },
   { id: 'annual', label: '연간 계획 (AHU)', icon: '🔧' },
   { id: 'calibration', label: '교정 관리', icon: '⚙️' },
+  { id: 'usagepoints', label: '사용점 관리', icon: '📍' },
 ];
 
 export default function App() {
@@ -225,6 +227,7 @@ export default function App() {
           {page === 'gantt'  && <ZoneGantt  year={year} onYearChange={setYear} />}
           {page === 'annual' && <AnnualPlan year={year} onYearChange={setYear} />}
           {page === 'calibration' && <Calibration adminUnlocked={adminUnlocked} />}
+          {page === 'usagepoints' && <UsagePoints adminUnlocked={adminUnlocked} />}
         </main>
       </div>
     </div>

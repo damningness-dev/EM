@@ -258,7 +258,7 @@ function getDataPath() {
 function loadData() {
   const p = getDataPath();
   if (!fs.existsSync(p)) {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [] };
   }
   try {
     const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
@@ -269,9 +269,10 @@ function loadData() {
     if (!data.blockedDates) data.blockedDates = [];
     if (!data.annualPlanAhus) data.annualPlanAhus = [...DEFAULT_AHUS];
     if (!data.memberAccounts) data.memberAccounts = [];
+    if (!data.usagePoints) data.usagePoints = [];
     return data;
   } catch {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [] };
   }
 }
 
@@ -1363,6 +1364,31 @@ function registerHandlers() {
   ipcMain.handle('calibration:delete', (_e, id) => {
     const data = loadData();
     data.calibration = data.calibration.filter(c => c.id !== id);
+    saveData(data);
+  });
+
+  // ── 사용점 관리 ──
+  ipcMain.handle('usagePoints:getAll', () => {
+    return loadData().usagePoints;
+  });
+
+  ipcMain.handle('usagePoints:upsert', (_e, item) => {
+    const data = loadData();
+    if (item.id) {
+      const idx = data.usagePoints.findIndex(u => u.id === item.id);
+      if (idx >= 0) data.usagePoints[idx] = item;
+      else data.usagePoints.push(item);
+    } else {
+      item.id = newId();
+      data.usagePoints.push(item);
+    }
+    saveData(data);
+    return item;
+  });
+
+  ipcMain.handle('usagePoints:delete', (_e, id) => {
+    const data = loadData();
+    data.usagePoints = data.usagePoints.filter(u => u.id !== id);
     saveData(data);
   });
 
