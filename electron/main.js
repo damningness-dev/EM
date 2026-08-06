@@ -268,6 +268,7 @@ function loadData() {
     if (!data.tempSchedules) data.tempSchedules = [];
     if (!data.blockedDates) data.blockedDates = [];
     if (!data.annualPlanAhus) data.annualPlanAhus = [...DEFAULT_AHUS];
+    if (!data.memberAccounts) data.memberAccounts = [];
     return data;
   } catch {
     return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS] };
@@ -1187,6 +1188,53 @@ function registerHandlers() {
     data.adminPasswordHash = hashPassword(newPassword);
     saveData(data);
     return { ok: true };
+  });
+
+  // ── 사용자 계정(멤버) — 관리자가 만든 로그인 계정별로 보이는 탭 메뉴가 다르다.
+  // 기존 "관리자 잠금"(비밀번호 하나로 편집 권한을 여는 것)과는 별개 개념이다.
+  // 로그인은 필수가 아니며, 로그인하지 않으면 지금까지처럼 전체 메뉴가 보인다.
+  ipcMain.handle('members:getAll', () => {
+    const data = loadData();
+    return (data.memberAccounts || []).map(m => ({ id: m.id, username: m.username, allowedTabs: m.allowedTabs || [] }));
+  });
+  ipcMain.handle('members:upsert', (_e, member = {}) => {
+    const data = loadData();
+    if (!data.memberAccounts) data.memberAccounts = [];
+    const username = String(member.username || '').trim();
+    if (!username) return { ok: false, error: '사용자이름을 입력하세요' };
+    const allowedTabs = Array.isArray(member.allowedTabs) ? member.allowedTabs : [];
+    if (member.id) {
+      const idx = data.memberAccounts.findIndex(m => m.id === member.id);
+      if (idx < 0) return { ok: false, error: '존재하지 않는 사용자입니다' };
+      if (data.memberAccounts.some(m => m.id !== member.id && m.username === username)) {
+        return { ok: false, error: '이미 사용 중인 사용자이름입니다' };
+      }
+      data.memberAccounts[idx].username = username;
+      data.memberAccounts[idx].allowedTabs = allowedTabs;
+      if (member.password) data.memberAccounts[idx].passwordHash = hashPassword(member.password);
+      saveData(data);
+      return { ok: true, id: member.id };
+    }
+    if (data.memberAccounts.some(m => m.username === username)) {
+      return { ok: false, error: '이미 사용 중인 사용자이름입니다' };
+    }
+    if (!member.password) return { ok: false, error: '비밀번호를 입력하세요' };
+    const id = newId();
+    data.memberAccounts.push({ id, username, passwordHash: hashPassword(member.password), allowedTabs });
+    saveData(data);
+    return { ok: true, id };
+  });
+  ipcMain.handle('members:delete', (_e, id) => {
+    const data = loadData();
+    data.memberAccounts = (data.memberAccounts || []).filter(m => m.id !== id);
+    saveData(data);
+    return { ok: true };
+  });
+  ipcMain.handle('members:login', (_e, { username, password } = {}) => {
+    const data = loadData();
+    const m = (data.memberAccounts || []).find(m => m.username === String(username || '').trim());
+    if (!m || hashPassword(password) !== m.passwordHash) return { ok: false, error: '사용자이름 또는 비밀번호가 올바르지 않습니다' };
+    return { ok: true, member: { id: m.id, username: m.username, allowedTabs: m.allowedTabs || [] } };
   });
 
   // ── 할일(반복 일정) — 설치본 공유 데이터가 아닌 이 PC 로컬 파일에서 관리 ──

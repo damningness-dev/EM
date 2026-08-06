@@ -10,6 +10,8 @@ import UpdateNotifier from './components/UpdateNotifier';
 import SyncChangeNotifier from './components/SyncChangeNotifier';
 import SyncControl from './components/SyncControl';
 import AdminLock from './components/AdminLock';
+import Login from './components/Login';
+import MemberManager from './components/MemberManager';
 import { seedInitialData, fetchScheduleConfig, getAutoStart, setAutoStart, adminIsUnlocked, adminLock } from './lib/api';
 import { setScheduleConfig } from './lib/schedule';
 import { INITIAL_CALIBRATION, MONITORING_ZONES } from './data/initialData';
@@ -34,9 +36,41 @@ export default function App() {
   const [showAdminLock, setShowAdminLock] = useState(false);
   const [scheduleJumpTarget, setScheduleJumpTarget] = useState(null); // {date, zoneId, num} — 구역별 현황 등에서 특정 일정으로 이동
 
+  // 로그인(선택 사항) — 로그인하지 않으면 지금까지처럼 전체 메뉴가 보인다.
+  // 로그인하면 관리자가 그 계정에 허용한 탭만 보이도록 사이드바 메뉴가 좁혀진다.
+  // 재로그인 번거로움을 줄이려고 이 PC에 로그인 상태를 기억해둔다(비밀번호는 저장 안 함).
+  const [currentMember, setCurrentMember] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('em-current-member')) || null; } catch { return null; }
+  });
+  const [showLogin, setShowLogin] = useState(false);
+  const [showMemberManager, setShowMemberManager] = useState(false);
+  const visibleMenu = currentMember ? MENU.filter(m => (currentMember.allowedTabs || []).includes(m.id)) : MENU;
+
+  function handleLoggedIn(member) {
+    setCurrentMember(member);
+    try { localStorage.setItem('em-current-member', JSON.stringify(member)); } catch { /* ignore */ }
+    setShowLogin(false);
+    if (!(member.allowedTabs || []).includes(page)) setPage((member.allowedTabs || [])[0] || 'dashboard');
+  }
+  function handleLogout() {
+    setCurrentMember(null);
+    try { localStorage.removeItem('em-current-member'); } catch { /* ignore */ }
+  }
+
+  // 이전에 로그인한 상태로 앱을 다시 열었을 때, 기본 시작 페이지(대시보드)가
+  // 이 계정에 허용되지 않을 수 있으므로 허용된 첫 메뉴로 보정한다.
+  useEffect(() => {
+    if (currentMember && !(currentMember.allowedTabs || []).includes(page)) {
+      setPage((currentMember.allowedTabs || [])[0] || 'dashboard');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // 구역별 현황 등 다른 화면에서 특정 측정일을 클릭하면 월별 모니터링 일정으로
-  // 이동해 그 날짜를 선택하고 깜빡여 보여준다.
+  // 이동해 그 날짜를 선택하고 깜빡여 보여준다. 로그인 계정에 그 메뉴가 허용되지
+  // 않았다면(구역별 현황만 허용된 계정 등) 이동하지 않는다.
   function jumpToSchedule(date, zoneId, num) {
+    if (currentMember && !(currentMember.allowedTabs || []).includes('calendar')) return;
     setScheduleJumpTarget({ date, zoneId, num });
     setPage('calendar');
   }
@@ -94,7 +128,7 @@ export default function App() {
         </div>
 
         <nav className="flex-1 py-4 overflow-y-auto">
-          {MENU.map(item => (
+          {visibleMenu.map(item => (
             <button
               key={item.id}
               onClick={() => { setPage(item.id); setSidebarOpen(false); }}
@@ -111,13 +145,34 @@ export default function App() {
         <UpdateNotifier />
         <SyncChangeNotifier />
 
-        {/* 관리자 잠금 — 비밀번호를 입력해야 일정 변경/일정 관리가 가능 */}
-        <div className="px-4 py-3 border-t border-gray-700">
-          {adminUnlocked ? (
-            <button onClick={handleLockAdmin}
-              className="w-full py-1.5 rounded bg-emerald-700 hover:bg-emerald-600 text-xs text-white font-medium">
-              🔓 관리자 모드 (클릭하여 잠그기)
+        {/* 로그인(선택) — 로그인하면 계정에 허용된 메뉴만 보인다. 안 하면 전체 메뉴. */}
+        <div className="px-4 pt-3">
+          {currentMember ? (
+            <div className="flex items-center gap-2">
+              <span className="flex-1 text-xs text-gray-300 truncate">👤 {currentMember.username}</span>
+              <button onClick={handleLogout} className="text-[11px] px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300">로그아웃</button>
+            </div>
+          ) : (
+            <button onClick={() => setShowLogin(true)}
+              className="w-full py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-xs text-gray-300">
+              👤 로그인
             </button>
+          )}
+        </div>
+
+        {/* 관리자 잠금 — 비밀번호를 입력해야 일정 변경/일정 관리가 가능 */}
+        <div className="px-4 py-3 border-t border-gray-700 space-y-1.5">
+          {adminUnlocked ? (
+            <>
+              <button onClick={handleLockAdmin}
+                className="w-full py-1.5 rounded bg-emerald-700 hover:bg-emerald-600 text-xs text-white font-medium">
+                🔓 관리자 모드 (클릭하여 잠그기)
+              </button>
+              <button onClick={() => setShowMemberManager(true)}
+                className="w-full py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-xs text-gray-300">
+                👥 사용자 계정 관리
+              </button>
+            </>
           ) : (
             <button onClick={() => setShowAdminLock(true)}
               className="w-full py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-xs text-gray-300">
@@ -141,6 +196,12 @@ export default function App() {
           onClose={() => setShowAdminLock(false)}
           onUnlocked={() => setShowAdminLock(false)}
         />
+      )}
+
+      {showLogin && <Login onClose={() => setShowLogin(false)} onLoggedIn={handleLoggedIn} />}
+
+      {showMemberManager && adminUnlocked && (
+        <MemberManager menu={MENU} onClose={() => setShowMemberManager(false)} />
       )}
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">

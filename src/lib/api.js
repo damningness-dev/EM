@@ -224,6 +224,21 @@ export async function adminChangePassword(oldPassword, newPassword) {
   return api.invoke('admin:changePassword', { oldPassword, newPassword });
 }
 
+// ─── 사용자 계정(멤버) — 로그인 시 허용된 탭 메뉴만 표시 ───────────────────────────
+
+export async function fetchMembers() {
+  return api.invoke('members:getAll');
+}
+export async function upsertMember(member) {
+  return api.invoke('members:upsert', member);
+}
+export async function deleteMember(id) {
+  return api.invoke('members:delete', id);
+}
+export async function memberLogin(username, password) {
+  return api.invoke('members:login', { username, password });
+}
+
 // ─── 공유 동기화 (Gist) ───────────────────────────────────────────────────────
 
 export async function syncGetConfig() {
