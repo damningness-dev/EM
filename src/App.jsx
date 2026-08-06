@@ -13,7 +13,7 @@ import SyncControl from './components/SyncControl';
 import AdminLock from './components/AdminLock';
 import Login from './components/Login';
 import MemberManager from './components/MemberManager';
-import { seedInitialData, fetchScheduleConfig, getAutoStart, setAutoStart, adminIsUnlocked, adminLock } from './lib/api';
+import { seedInitialData, fetchScheduleConfig, getAutoStart, setAutoStart, adminIsUnlocked, adminLock, setCurrentMemberOnMain } from './lib/api';
 import { setScheduleConfig } from './lib/schedule';
 import { INITIAL_CALIBRATION, MONITORING_ZONES } from './data/initialData';
 
@@ -67,6 +67,13 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 로그인 상태가 바뀔 때마다(로그인·로그아웃·앱 시작 시 재수화 포함) main
+  // 프로세스에 알려준다 — 관리자가 이 계정에 발급해 둔 토큰이 있으면 이 PC의
+  // 공유 업로드에 자동으로 쓰인다.
+  useEffect(() => {
+    setCurrentMemberOnMain(currentMember?.id).catch(() => {});
+  }, [currentMember]);
 
   // 구역별 현황 등 다른 화면에서 특정 측정일을 클릭하면 월별 모니터링 일정으로
   // 이동해 그 날짜를 선택하고 깜빡여 보여준다. 로그인 계정에 그 메뉴가 허용되지

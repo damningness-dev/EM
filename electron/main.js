@@ -386,6 +386,19 @@ function saveSyncConfig(cfg) {
   try { fs.writeFileSync(syncConfigPath(), JSON.stringify(cfg, null, 2), 'utf-8'); } catch { /* ignore */ }
 }
 
+// 로그인 계정별 GitHub 토큰 — 관리자가 "사용자 계정 관리"에서 각 계정에 미리
+// 발급해 붙여두면 memberAccounts(공유 데이터)에 함께 저장되어 다른 PC로도
+// 동기화된다. 그 계정으로 로그인한 PC는 별도 설정 없이 그 토큰을 자동으로 쓴다.
+// currentMemberId는 이 PC에서 지금 로그인한 계정을 렌더러가 알려준 값(비로그인 시 null).
+let currentMemberId = null;
+function effectiveToken(cfg) {
+  if (currentMemberId) {
+    const m = (loadData().memberAccounts || []).find(mm => mm.id === currentMemberId);
+    if (m?.token) return m.token;
+  }
+  return cfg.token;
+}
+
 function sendSyncStatus(status) {
   BrowserWindow.getAllWindows().forEach(w => { if (!w.isDestroyed()) w.webContents.send('sync:status', status); });
 }
@@ -470,7 +483,7 @@ async function syncPull(force) {
   if (!cfg.gistId) return { ok: false, error: 'Gist ID가 설정되지 않았습니다' };
   sendSyncStatus({ type: 'checking' });
   try {
-    const r = await gistFetchData(cfg.gistId, cfg.token, cfg.etag);
+    const r = await gistFetchData(cfg.gistId, effectiveToken(cfg), cfg.etag);
     if (r.notModified) {
       if (r.etag && r.etag !== cfg.etag) { cfg.etag = r.etag; saveSyncConfig(cfg); }
       sendSyncStatus({ type: 'idle', lastSyncedAt: cfg.lastSyncedAt });
@@ -501,19 +514,20 @@ async function syncPull(force) {
 // 로컬 → 원격 업로드. gistId 없으면 새 secret gist 생성.
 async function syncUpload() {
   const cfg = loadSyncConfig();
-  if (!cfg.token) return { ok: false, error: '업로드하려면 GitHub 토큰이 필요합니다' };
+  const token = effectiveToken(cfg);
+  if (!token) return { ok: false, error: '업로드하려면 GitHub 토큰이 필요합니다' };
   sendSyncStatus({ type: 'uploading' });
   try {
     const content = fs.readFileSync(getDataPath(), 'utf-8');
     let gistId = cfg.gistId, updatedAt, etag;
     if (gistId) {
       const r = await ghRequest('PATCH', `https://api.github.com/gists/${gistId}`, {
-        token: cfg.token, body: { files: { [GIST_FILE]: { content } } },
+        token, body: { files: { [GIST_FILE]: { content } } },
       });
       updatedAt = r.json.updated_at; etag = r.etag;
     } else {
       const r = await ghRequest('POST', 'https://api.github.com/gists', {
-        token: cfg.token,
+        token,
         body: { description: '환경 모니터링 공유 일정 데이터', public: false, files: { [GIST_FILE]: { content } } },
       });
       gistId = r.json.id; updatedAt = r.json.updated_at; etag = r.etag;
@@ -872,7 +886,11 @@ function registerHandlers() {
   // ── 공유 동기화 (Gist) ──
   ipcMain.handle('sync:getConfig', () => {
     const c = loadSyncConfig();
-    return { gistId: c.gistId || '', hasToken: !!c.token, autoSync: c.autoSync !== false, intervalMin: c.intervalMin || 5, lastSyncedAt: c.lastSyncedAt || '', role: c.role || 'member', requesterName: c.requesterName || '' };
+    return {
+      gistId: c.gistId || '', hasToken: !!effectiveToken(c), hasSharedToken: !!c.token,
+      autoSync: c.autoSync !== false, intervalMin: c.intervalMin || 5, lastSyncedAt: c.lastSyncedAt || '',
+      role: c.role || 'member', requesterName: c.requesterName || '',
+    };
   });
   ipcMain.handle('sync:setConfig', (_e, patch = {}) => {
     const c = loadSyncConfig();
@@ -988,9 +1006,10 @@ function registerHandlers() {
     if (!attachGistIdCreation) {
       attachGistIdCreation = (async () => {
         const cfg = loadSyncConfig();
-        if (!cfg.token) throw new Error('첨부파일을 공유하려면 GitHub 토큰이 필요합니다');
+        const token = effectiveToken(cfg);
+        if (!token) throw new Error('첨부파일을 공유하려면 GitHub 토큰이 필요합니다');
         const r = await ghRequest('POST', 'https://api.github.com/gists', {
-          token: cfg.token,
+          token,
           body: {
             description: '환경 모니터링 첨부파일(교정 성적서 등) — 삭제하지 마세요',
             public: false,
@@ -1031,10 +1050,11 @@ function registerHandlers() {
     try {
       if (!gistKey || !dataBase64) return { ok: false, error: '잘못된 요청' };
       const cfg = loadSyncConfig();
-      if (!cfg.token) return { ok: false, error: '업로드하려면 GitHub 토큰이 필요합니다' };
+      const token = effectiveToken(cfg);
+      if (!token) return { ok: false, error: '업로드하려면 GitHub 토큰이 필요합니다' };
       const attachGistId = await ensureAttachGistId();
       await ghRequest('PATCH', `https://api.github.com/gists/${attachGistId}`, {
-        token: cfg.token,
+        token,
         body: { files: { [gistKey]: { content: dataBase64 } } },
       });
       return { ok: true };
@@ -1058,7 +1078,7 @@ function registerHandlers() {
       const data = loadData();
       if (!data.attachGistId) return { ok: false, error: '파일을 찾을 수 없습니다 (공유된 첨부파일 없음)' };
       const cfg = loadSyncConfig();
-      const r = await ghRequest('GET', `https://api.github.com/gists/${data.attachGistId}`, { token: cfg.token || undefined });
+      const r = await ghRequest('GET', `https://api.github.com/gists/${data.attachGistId}`, { token: effectiveToken(cfg) || undefined });
       const file = r.json.files && r.json.files[gistKey];
       if (!file) return { ok: false, error: '공유된 첨부파일을 찾을 수 없습니다' };
       let content = file.content;
@@ -1104,7 +1124,8 @@ function registerHandlers() {
     try {
       sendProgress('checking');
       const cfg = loadSyncConfig();
-      if (!cfg.token) return { ok: false, error: '업로드하려면 GitHub 토큰이 필요합니다' };
+      const token = effectiveToken(cfg);
+      if (!token) return { ok: false, error: '업로드하려면 GitHub 토큰이 필요합니다' };
       const data = loadData();
       const attachGistId = await ensureAttachGistId();
       // 이미 gistKey가 있어도 실제로 그 파일이 지금의 attachGistId 안에 있는지
@@ -1113,7 +1134,7 @@ function registerHandlers() {
       // 고친다. 목록 조회는 한 번만 한다(항목마다 조회하면 API 요청이 너무 많아짐).
       let existingKeys = new Set();
       try {
-        const g = await ghRequest('GET', `https://api.github.com/gists/${attachGistId}`, { token: cfg.token });
+        const g = await ghRequest('GET', `https://api.github.com/gists/${attachGistId}`, { token });
         existingKeys = new Set(Object.keys(g.json.files || {}));
       } catch { /* 조회 실패 시 안전하게 "전부 없다"고 보고 다시 올림 */ }
       const pending = [];
@@ -1142,7 +1163,7 @@ function registerHandlers() {
         }
         if (Object.keys(files).length) {
           try {
-            await ghRequest('PATCH', `https://api.github.com/gists/${attachGistId}`, { token: cfg.token, body: { files } });
+            await ghRequest('PATCH', `https://api.github.com/gists/${attachGistId}`, { token, body: { files } });
             batch.forEach(p => {
               if (files[p.gistKey]) { data.calibration[p.itemIdx].history[p.histIdx].gistKey = p.gistKey; uploaded++; }
             });
@@ -1213,7 +1234,7 @@ function registerHandlers() {
   // 로그인은 필수가 아니며, 로그인하지 않으면 지금까지처럼 전체 메뉴가 보인다.
   ipcMain.handle('members:getAll', () => {
     const data = loadData();
-    return (data.memberAccounts || []).map(m => ({ id: m.id, username: m.username, allowedTabs: m.allowedTabs || [] }));
+    return (data.memberAccounts || []).map(m => ({ id: m.id, username: m.username, allowedTabs: m.allowedTabs || [], hasToken: !!m.token }));
   });
   ipcMain.handle('members:upsert', (_e, member = {}) => {
     const data = loadData();
@@ -1230,6 +1251,9 @@ function registerHandlers() {
       data.memberAccounts[idx].username = username;
       data.memberAccounts[idx].allowedTabs = allowedTabs;
       if (member.password) data.memberAccounts[idx].passwordHash = hashPassword(member.password);
+      // 토큰: clearToken이면 삭제, token이 오면(빈 값 아니면) 교체, 안 오면 기존 값 유지.
+      if (member.clearToken) delete data.memberAccounts[idx].token;
+      else if (member.token) data.memberAccounts[idx].token = String(member.token).trim();
       saveData(data);
       return { ok: true, id: member.id };
     }
@@ -1238,7 +1262,9 @@ function registerHandlers() {
     }
     if (!member.password) return { ok: false, error: '비밀번호를 입력하세요' };
     const id = newId();
-    data.memberAccounts.push({ id, username, passwordHash: hashPassword(member.password), allowedTabs });
+    const newMember = { id, username, passwordHash: hashPassword(member.password), allowedTabs };
+    if (member.token) newMember.token = String(member.token).trim();
+    data.memberAccounts.push(newMember);
     saveData(data);
     return { ok: true, id };
   });
@@ -1253,6 +1279,12 @@ function registerHandlers() {
     const m = (data.memberAccounts || []).find(m => m.username === String(username || '').trim());
     if (!m || hashPassword(password) !== m.passwordHash) return { ok: false, error: '사용자이름 또는 비밀번호가 올바르지 않습니다' };
     return { ok: true, member: { id: m.id, username: m.username, allowedTabs: m.allowedTabs || [] } };
+  });
+  // 렌더러가 로그인 상태를 알려주면(로그인·로그아웃·앱 시작 시 재수화 포함) 이 PC의
+  // 공유 업로드에 그 계정 전용 토큰(있다면)을 자동으로 쓴다.
+  ipcMain.handle('members:setCurrent', (_e, memberId) => {
+    currentMemberId = memberId || null;
+    return { ok: true };
   });
 
   // ── 할일(반복 일정) — 설치본 공유 데이터가 아닌 이 PC 로컬 파일에서 관리 ──

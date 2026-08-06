@@ -258,6 +258,11 @@ export async function deleteMember(id) {
 export async function memberLogin(username, password) {
   return api.invoke('members:login', { username, password });
 }
+// 이 PC에 지금 로그인된 계정을 main 프로세스에 알려, 그 계정에 저장된 토큰이
+// 있으면 공유 업로드에 자동으로 쓰이게 한다(로그인·로그아웃·앱 시작 시 호출).
+export async function setCurrentMemberOnMain(memberId) {
+  return api.invoke('members:setCurrent', memberId || null);
+}
 
 // ─── 공유 동기화 (Gist) ───────────────────────────────────────────────────────
 

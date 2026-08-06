@@ -7,7 +7,7 @@ export default function MemberManager({ menu, onClose }) {
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState(null); // null이면 새 계정 추가 폼 숨김, 'new'면 추가 폼
-  const [form, setForm] = useState({ username: '', password: '', allowedTabs: [] });
+  const [form, setForm] = useState({ username: '', password: '', allowedTabs: [], token: '' });
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -19,12 +19,12 @@ export default function MemberManager({ menu, onClose }) {
 
   function startAdd() {
     setEditingId('new');
-    setForm({ username: '', password: '', allowedTabs: menu.map(m => m.id) });
+    setForm({ username: '', password: '', allowedTabs: menu.map(m => m.id), token: '' });
     setError('');
   }
   function startEdit(m) {
     setEditingId(m.id);
-    setForm({ username: m.username, password: '', allowedTabs: [...(m.allowedTabs || [])] });
+    setForm({ username: m.username, password: '', allowedTabs: [...(m.allowedTabs || [])], token: '' });
     setError('');
   }
   function toggleTab(tabId) {
@@ -42,6 +42,7 @@ export default function MemberManager({ menu, onClose }) {
     try {
       const payload = { username: form.username.trim(), allowedTabs: form.allowedTabs };
       if (form.password) payload.password = form.password;
+      if (form.token) payload.token = form.token;
       if (editingId !== 'new') payload.id = editingId;
       const r = await upsertMember(payload);
       if (!r?.ok) { setError(r?.error || '저장 실패'); return; }
@@ -57,6 +58,13 @@ export default function MemberManager({ menu, onClose }) {
     reload();
   }
 
+  async function clearToken(id) {
+    if (!confirm('이 계정의 토큰을 삭제하시겠습니까?')) return;
+    setBusy(true);
+    try { await upsertMember({ id, clearToken: true }); reload(); }
+    finally { setBusy(false); }
+  }
+
   return (
     <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
@@ -70,6 +78,11 @@ export default function MemberManager({ menu, onClose }) {
             계정을 만들어 사용자이름·비밀번호와 허용할 탭 메뉴를 지정하세요. 로그인은 필수가
             아니며, 로그인하지 않으면 지금처럼 전체 메뉴가 보입니다.
           </p>
+          <p className="text-[11px] text-amber-600 mb-3">
+            ⚠ GitHub 토큰(선택)을 등록해두면 그 계정으로 로그인한 PC는 별도 설정 없이 자동으로
+            공유 업로드에 씁니다. 단, 토큰은 계정 정보와 함께 공유 데이터에 저장되어 다른 PC로도
+            동기화되니, 반드시 <b>gist 권한만 있는 Classic 토큰</b>을 발급해 등록하세요.
+          </p>
 
           {loading ? (
             <p className="text-sm text-gray-400 py-6 text-center">불러오는 중…</p>
@@ -82,11 +95,15 @@ export default function MemberManager({ menu, onClose }) {
                 <div key={m.id} className="border border-gray-200 rounded-lg">
                   {editingId === m.id ? (
                     <MemberForm menu={menu} form={form} setForm={setForm} onToggleTab={toggleTab}
-                      onSave={save} onCancel={() => setEditingId(null)} busy={busy} error={error} isNew={false} />
+                      onSave={save} onCancel={() => setEditingId(null)} busy={busy} error={error} isNew={false}
+                      hasToken={m.hasToken} onClearToken={() => clearToken(m.id)} />
                   ) : (
                     <div className="flex items-center justify-between px-3 py-2.5">
                       <div>
-                        <p className="text-sm font-medium text-gray-800">{m.username}</p>
+                        <p className="text-sm font-medium text-gray-800">
+                          {m.username}
+                          {m.hasToken && <span className="ml-1.5 text-[10px] font-normal text-green-600" title="GitHub 토큰이 등록되어 있습니다">🔑 토큰</span>}
+                        </p>
                         <p className="text-[11px] text-gray-400 mt-0.5">
                           {(m.allowedTabs || []).length === 0 ? '허용된 메뉴 없음'
                             : m.allowedTabs.map(t => menu.find(x => x.id === t)?.label || t).join(', ')}
@@ -120,7 +137,7 @@ export default function MemberManager({ menu, onClose }) {
   );
 }
 
-function MemberForm({ menu, form, setForm, onToggleTab, onSave, onCancel, busy, error, isNew }) {
+function MemberForm({ menu, form, setForm, onToggleTab, onSave, onCancel, busy, error, isNew, hasToken, onClearToken }) {
   return (
     <div className="p-3 space-y-2.5">
       <div className="flex gap-2">
@@ -129,6 +146,20 @@ function MemberForm({ menu, form, setForm, onToggleTab, onSave, onCancel, busy, 
         <input type="password" placeholder={isNew ? '비밀번호' : '변경 시에만 입력'} value={form.password}
           onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
           className="flex-1 border border-gray-200 rounded px-2 py-1.5 text-sm" />
+      </div>
+      <div>
+        <label className="text-[11px] text-gray-500">
+          GitHub 토큰 (gist 권한 · 이 계정으로 로그인한 PC가 자동으로 씁니다)
+          {hasToken && <span className="ml-1 text-green-600">✓ 등록됨</span>}
+        </label>
+        <div className="flex gap-2 mt-0.5">
+          <input type="password" placeholder={hasToken ? '변경 시에만 입력' : 'ghp_... (선택 사항)'} value={form.token}
+            onChange={e => setForm(f => ({ ...f, token: e.target.value }))}
+            className="flex-1 border border-gray-200 rounded px-2 py-1.5 text-sm" />
+          {hasToken && !isNew && (
+            <button onClick={onClearToken} type="button" className="text-xs px-2 text-red-500 hover:underline shrink-0">삭제</button>
+          )}
+        </div>
       </div>
       <div className="flex flex-wrap gap-x-3 gap-y-1.5">
         {menu.map(item => (
