@@ -201,7 +201,7 @@ function SettingsModal({ cfg, onClose, onStatus }) {
           Fine-grained 토큰은 Gist를 지원하지 않아 업로드 시 HTTP 403 오류가 납니다.
           (github.com → Settings → Developer settings → Personal access tokens → <b>Tokens (classic)</b>)
         </p>
-        <p className="text-[11px] text-gray-400 mb-3">일정 편집 권한은 사이드바의 "관리자 잠금 해제"에서 비밀번호로 관리합니다.</p>
+        <p className="text-[11px] text-gray-400 mb-3">일정 편집 권한은 사이드바의 "로그인"에서 관리자 계정으로 로그인하면 함께 열립니다.</p>
 
         <div className="flex items-center gap-3 mt-2 mb-1">
           <label className="flex items-center gap-1.5 text-sm">

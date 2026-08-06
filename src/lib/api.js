@@ -223,25 +223,11 @@ export async function setAutoStart(enabled) {
   return api.invoke('app:setAutoStart', enabled);
 }
 
-// ─── 관리자 잠금 (일정 편집 권한) ──────────────────────────────────────────────
+// ─── 관리자 권한 (일정 편집 권한) ──────────────────────────────────────────────
+// 로그인 계정의 isAdmin 여부로 결정된다 — 로그인 자체가 곧 관리자 권한이다.
 
-export async function adminHasPassword() {
-  return api.invoke('admin:hasPassword');
-}
 export async function adminIsUnlocked() {
   return api.invoke('admin:isUnlocked');
-}
-export async function adminSetPassword(password) {
-  return api.invoke('admin:setPassword', password);
-}
-export async function adminUnlock(password) {
-  return api.invoke('admin:unlock', password);
-}
-export async function adminLock() {
-  return api.invoke('admin:lock');
-}
-export async function adminChangePassword(oldPassword, newPassword) {
-  return api.invoke('admin:changePassword', { oldPassword, newPassword });
 }
 
 // ─── 사용자 계정(멤버) — 로그인 시 허용된 탭 메뉴만 표시 ───────────────────────────

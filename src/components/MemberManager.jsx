@@ -2,13 +2,14 @@ import { useState, useEffect } from 'react';
 import { fetchMembers, upsertMember, deleteMember, fetchGuestAccess, saveGuestAccess } from '../lib/api';
 
 // 관리자 전용 권한 설정 화면 — (1) 로그인하지 않았을 때 보이는 메뉴를 제한하고,
-// (2) 로그인 계정(멤버)을 만들어 계정마다 사이드바에 보일 탭 메뉴를 체크박스로
-// 골라 지정한다. 관리자 잠금 해제 상태에서만 열 수 있다.
+// (2) 로그인 계정(멤버)을 만들어 계정마다 사이드바에 보일 탭 메뉴와 관리자 권한
+// 여부를 지정한다. 로그인이 곧 관리자 권한을 겸하므로(isAdmin 계정으로 로그인하면
+// 그 자체로 편집 권한이 열림) 이 화면 자체도 관리자로 로그인했을 때만 열 수 있다.
 export default function MemberManager({ menu, onClose }) {
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState(null); // null이면 새 계정 추가 폼 숨김, 'new'면 추가 폼
-  const [form, setForm] = useState({ username: '', password: '', allowedTabs: [], token: '' });
+  const [form, setForm] = useState({ username: '', password: '', allowedTabs: [], token: '', isAdmin: false });
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -20,12 +21,12 @@ export default function MemberManager({ menu, onClose }) {
 
   function startAdd() {
     setEditingId('new');
-    setForm({ username: '', password: '', allowedTabs: menu.map(m => m.id), token: '' });
+    setForm({ username: '', password: '', allowedTabs: menu.map(m => m.id), token: '', isAdmin: false });
     setError('');
   }
   function startEdit(m) {
     setEditingId(m.id);
-    setForm({ username: m.username, password: '', allowedTabs: [...(m.allowedTabs || [])], token: '' });
+    setForm({ username: m.username, password: '', allowedTabs: [...(m.allowedTabs || [])], token: '', isAdmin: !!m.isAdmin });
     setError('');
   }
   function toggleTab(tabId) {
@@ -41,7 +42,7 @@ export default function MemberManager({ menu, onClose }) {
     if (editingId === 'new' && !form.password) { setError('비밀번호를 입력하세요.'); return; }
     setBusy(true);
     try {
-      const payload = { username: form.username.trim(), allowedTabs: form.allowedTabs };
+      const payload = { username: form.username.trim(), allowedTabs: form.allowedTabs, isAdmin: form.isAdmin };
       if (form.password) payload.password = form.password;
       if (form.token) payload.token = form.token;
       if (editingId !== 'new') payload.id = editingId;
@@ -105,7 +106,8 @@ export default function MemberManager({ menu, onClose }) {
                     <div className="flex items-center justify-between px-3 py-2.5">
                       <div>
                         <p className="text-sm font-medium text-gray-800">
-                          {m.username}
+                          {m.isAdmin ? '👑' : '👤'} {m.username}
+                          {m.isAdmin && <span className="ml-1.5 text-[10px] font-normal text-amber-600">관리자</span>}
                           {m.hasToken && <span className="ml-1.5 text-[10px] font-normal text-green-600" title="GitHub 토큰이 등록되어 있습니다">🔑 토큰</span>}
                         </p>
                         <p className="text-[11px] text-gray-400 mt-0.5">
@@ -215,6 +217,10 @@ function MemberForm({ menu, form, setForm, onToggleTab, onSave, onCancel, busy, 
           onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
           className="flex-1 border border-gray-200 rounded px-2 py-1.5 text-sm" />
       </div>
+      <label className="flex items-center gap-1.5 text-xs text-amber-700 cursor-pointer select-none">
+        <input type="checkbox" checked={form.isAdmin} onChange={e => setForm(f => ({ ...f, isAdmin: e.target.checked }))} />
+        👑 관리자 권한 (이 계정으로 로그인하면 편집 권한도 함께 열립니다)
+      </label>
       <div>
         <label className="text-[11px] text-gray-500">
           GitHub 토큰 (gist 권한 · 이 계정으로 로그인한 PC가 자동으로 씁니다)

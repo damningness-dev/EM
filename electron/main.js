@@ -254,6 +254,9 @@ const DEFAULT_AHUS = ['AHU-01', 'AHU-02', 'AHU-15', 'AHU-16', 'AHU-19', 'AHU-31'
 // 사용점 관리 대분류별 소분류 기본 목록 — 관리자가 화면에서 추가·수정할 수 있다.
 const DEFAULT_USAGE_POINT_CATEGORIES = { '공조': [], '가스': [], '용수': [], '기타': [] };
 
+// 기본 관리자 계정을 처음 만들 때 허용할 탭 — App.jsx의 MENU와 같은 id 목록.
+const DEFAULT_ADMIN_TABS = ['dashboard', 'todo', 'calendar', 'status', 'gantt', 'annual', 'calibration', 'usagepoints'];
+
 function getDataPath() {
   return path.join(app.getPath('userData'), 'em-data.json');
 }
@@ -309,6 +312,26 @@ function migrateLegacyTodosOnce() {
   saveTodos(legacy);
 }
 
+// 로그인이 곧 관리자 권한을 겸하는 구조라, 관리자 계정이 하나도 없으면 아무도
+// 관리자로 로그인할 수 없어 앱이 잠긴 채로 막힌다. 그런 계정이 전혀 없을 때만
+// 기본 관리자 계정을 한 번 만들어 둔다(이미 있으면 손대지 않음).
+function seedDefaultAdminOnce() {
+  const data = loadData();
+  if (!data.memberAccounts) data.memberAccounts = [];
+  if (data.memberAccounts.some(m => m.isAdmin)) return;
+  const existing = data.memberAccounts.find(m => m.username === '최기훈');
+  if (existing) {
+    existing.isAdmin = true;
+    if (!existing.allowedTabs || !existing.allowedTabs.length) existing.allowedTabs = [...DEFAULT_ADMIN_TABS];
+  } else {
+    data.memberAccounts.push({
+      id: newId(), username: '최기훈', passwordHash: hashPassword('123456'),
+      allowedTabs: [...DEFAULT_ADMIN_TABS], isAdmin: true,
+    });
+  }
+  saveData(data);
+}
+
 function saveData(data) {
   const clean = { ...data };
   delete clean.todos; // 할일은 todos-local.json에서 별도 관리
@@ -320,16 +343,17 @@ function newId() {
   return crypto.randomUUID();
 }
 
-// ─── 관리자 잠금 (일정 편집 권한) ──────────────────────────────────────────────
-// 사용자 명부 대신 단일 관리자 비밀번호로 일정 편집 권한을 게이트한다.
-// 비밀번호 해시는 공유 데이터(em-data.json)에 저장되어 여러 PC가 같은 비밀번호를 쓴다.
-// 잠금 해제 상태(adminUnlocked)는 프로세스 메모리에만 있어 앱을 새로 시작하면 항상 잠김.
-let adminUnlocked = false;
+// ─── 관리자 권한 (일정 편집 권한) ──────────────────────────────────────────────
+// 예전엔 로그인과 별개인 단일 공유 비밀번호로 편집 권한을 열었지만, 이제는 로그인
+// 계정 하나로 합쳐졌다 — 로그인한 계정에 isAdmin이 있으면 그 계정으로 로그인한
+// 것 자체가 곧 관리자 권한이다(로그아웃하면 자동으로 잠김). computeAdminUnlocked()는
+// 아래 currentMemberId 선언 이후에 실제로 정의된다.
 function hashPassword(pw) {
   return crypto.createHash('sha256').update(String(pw || '')).digest('hex');
 }
 function broadcastAdminUnlocked() {
-  BrowserWindow.getAllWindows().forEach(w => { if (!w.isDestroyed()) w.webContents.send('admin:unlockChanged', adminUnlocked); });
+  const unlocked = computeAdminUnlocked();
+  BrowserWindow.getAllWindows().forEach(w => { if (!w.isDestroyed()) w.webContents.send('admin:unlockChanged', unlocked); });
 }
 
 // ─── 앱 환경설정 / 부팅 시 자동 시작 ──────────────────────────────────────────
@@ -394,6 +418,11 @@ function saveSyncConfig(cfg) {
 // 동기화된다. 그 계정으로 로그인한 PC는 별도 설정 없이 그 토큰을 자동으로 쓴다.
 // currentMemberId는 이 PC에서 지금 로그인한 계정을 렌더러가 알려준 값(비로그인 시 null).
 let currentMemberId = null;
+function computeAdminUnlocked() {
+  if (!currentMemberId) return false;
+  const m = (loadData().memberAccounts || []).find(mm => mm.id === currentMemberId);
+  return !!m?.isAdmin;
+}
 function effectiveToken(cfg) {
   if (currentMemberId) {
     const m = (loadData().memberAccounts || []).find(mm => mm.id === currentMemberId);
@@ -858,6 +887,7 @@ if (applyUpdateArg) {
   // Normal startup
   app.whenReady().then(() => {
     migrateLegacyTodosOnce();
+    seedDefaultAdminOnce();
     registerHandlers();
     createWindow();
     createTray();
@@ -1196,48 +1226,16 @@ function registerHandlers() {
     return { ok: true, enabled: !!enabled };
   });
 
-  // ── 관리자 잠금 (일정 편집 권한) ──
-  ipcMain.handle('admin:hasPassword', () => !!loadData().adminPasswordHash);
-  ipcMain.handle('admin:isUnlocked', () => adminUnlocked);
-  ipcMain.handle('admin:setPassword', (_e, password) => {
-    if (!password) return { ok: false, error: '비밀번호를 입력하세요' };
-    const data = loadData();
-    data.adminPasswordHash = hashPassword(password);
-    saveData(data);
-    adminUnlocked = true;
-    broadcastAdminUnlocked();
-    return { ok: true };
-  });
-  ipcMain.handle('admin:unlock', (_e, password) => {
-    const data = loadData();
-    if (!data.adminPasswordHash) return { ok: false, error: '설정된 관리자 비밀번호가 없습니다' };
-    if (hashPassword(password) !== data.adminPasswordHash) return { ok: false, error: '비밀번호가 올바르지 않습니다' };
-    adminUnlocked = true;
-    broadcastAdminUnlocked();
-    return { ok: true };
-  });
-  ipcMain.handle('admin:lock', () => {
-    adminUnlocked = false;
-    broadcastAdminUnlocked();
-    return { ok: true };
-  });
-  ipcMain.handle('admin:changePassword', (_e, { oldPassword, newPassword } = {}) => {
-    if (!newPassword) return { ok: false, error: '새 비밀번호를 입력하세요' };
-    const data = loadData();
-    if (data.adminPasswordHash && hashPassword(oldPassword) !== data.adminPasswordHash) {
-      return { ok: false, error: '현재 비밀번호가 올바르지 않습니다' };
-    }
-    data.adminPasswordHash = hashPassword(newPassword);
-    saveData(data);
-    return { ok: true };
-  });
+  // ── 관리자 권한 — 로그인 계정의 isAdmin 여부로 결정된다(아래 members:* 참고) ──
+  ipcMain.handle('admin:isUnlocked', () => computeAdminUnlocked());
 
-  // ── 사용자 계정(멤버) — 관리자가 만든 로그인 계정별로 보이는 탭 메뉴가 다르다.
-  // 기존 "관리자 잠금"(비밀번호 하나로 편집 권한을 여는 것)과는 별개 개념이다.
-  // 로그인은 필수가 아니며, 로그인하지 않으면 지금까지처럼 전체 메뉴가 보인다.
+  // ── 사용자 계정(멤버) — 로그인 계정별로 보이는 탭 메뉴가 다르다. isAdmin이 있는
+  // 계정으로 로그인하면 그 자체로 관리자 권한(편집 권한)도 함께 열린다 — 로그인과
+  // 관리자 권한이 하나로 합쳐진 것이다. 로그인은 필수가 아니며, 로그인하지 않으면
+  // "권한 설정"에서 정한 게스트 메뉴(guestAllowedTabs)가 보인다.
   ipcMain.handle('members:getAll', () => {
     const data = loadData();
-    return (data.memberAccounts || []).map(m => ({ id: m.id, username: m.username, allowedTabs: m.allowedTabs || [], hasToken: !!m.token }));
+    return (data.memberAccounts || []).map(m => ({ id: m.id, username: m.username, allowedTabs: m.allowedTabs || [], hasToken: !!m.token, isAdmin: !!m.isAdmin }));
   });
   ipcMain.handle('members:upsert', (_e, member = {}) => {
     const data = loadData();
@@ -1251,13 +1249,20 @@ function registerHandlers() {
       if (data.memberAccounts.some(m => m.id !== member.id && m.username === username)) {
         return { ok: false, error: '이미 사용 중인 사용자이름입니다' };
       }
+      const wasAdmin = !!data.memberAccounts[idx].isAdmin;
+      const willBeAdmin = member.isAdmin !== undefined ? !!member.isAdmin : wasAdmin;
+      if (wasAdmin && !willBeAdmin && !data.memberAccounts.some((m, i) => i !== idx && m.isAdmin)) {
+        return { ok: false, error: '마지막 관리자 계정입니다. 다른 계정에 먼저 관리자 권한을 부여하세요.' };
+      }
       data.memberAccounts[idx].username = username;
       data.memberAccounts[idx].allowedTabs = allowedTabs;
+      data.memberAccounts[idx].isAdmin = willBeAdmin;
       if (member.password) data.memberAccounts[idx].passwordHash = hashPassword(member.password);
       // 토큰: clearToken이면 삭제, token이 오면(빈 값 아니면) 교체, 안 오면 기존 값 유지.
       if (member.clearToken) delete data.memberAccounts[idx].token;
       else if (member.token) data.memberAccounts[idx].token = String(member.token).trim();
       saveData(data);
+      broadcastAdminUnlocked();
       return { ok: true, id: member.id };
     }
     if (data.memberAccounts.some(m => m.username === username)) {
@@ -1265,7 +1270,7 @@ function registerHandlers() {
     }
     if (!member.password) return { ok: false, error: '비밀번호를 입력하세요' };
     const id = newId();
-    const newMember = { id, username, passwordHash: hashPassword(member.password), allowedTabs };
+    const newMember = { id, username, passwordHash: hashPassword(member.password), allowedTabs, isAdmin: !!member.isAdmin };
     if (member.token) newMember.token = String(member.token).trim();
     data.memberAccounts.push(newMember);
     saveData(data);
@@ -1273,6 +1278,10 @@ function registerHandlers() {
   });
   ipcMain.handle('members:delete', (_e, id) => {
     const data = loadData();
+    const target = (data.memberAccounts || []).find(m => m.id === id);
+    if (target?.isAdmin && !data.memberAccounts.some(m => m.id !== id && m.isAdmin)) {
+      return { ok: false, error: '마지막 관리자 계정은 삭제할 수 없습니다.' };
+    }
     data.memberAccounts = (data.memberAccounts || []).filter(m => m.id !== id);
     saveData(data);
     return { ok: true };
@@ -1281,7 +1290,7 @@ function registerHandlers() {
     const data = loadData();
     const m = (data.memberAccounts || []).find(m => m.username === String(username || '').trim());
     if (!m || hashPassword(password) !== m.passwordHash) return { ok: false, error: '사용자이름 또는 비밀번호가 올바르지 않습니다' };
-    return { ok: true, member: { id: m.id, username: m.username, allowedTabs: m.allowedTabs || [] } };
+    return { ok: true, member: { id: m.id, username: m.username, allowedTabs: m.allowedTabs || [], isAdmin: !!m.isAdmin } };
   });
   // 로그인한 본인이 관리자 도움 없이 직접 비밀번호를 바꾼다(현재 비밀번호 확인 필요).
   // 관리자가 MemberManager에서 바꿔주는 것(members:upsert)과는 별개 경로.
@@ -1301,6 +1310,7 @@ function registerHandlers() {
   // 공유 업로드에 그 계정 전용 토큰(있다면)을 자동으로 쓴다.
   ipcMain.handle('members:setCurrent', (_e, memberId) => {
     currentMemberId = memberId || null;
+    broadcastAdminUnlocked();
     return { ok: true };
   });
 

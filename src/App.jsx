@@ -10,11 +10,10 @@ import CalendarView from './components/CalendarView';
 import UpdateNotifier from './components/UpdateNotifier';
 import SyncChangeNotifier from './components/SyncChangeNotifier';
 import SyncControl from './components/SyncControl';
-import AdminLock from './components/AdminLock';
 import Login from './components/Login';
 import MemberManager from './components/MemberManager';
 import ChangePasswordModal from './components/ChangePasswordModal';
-import { seedInitialData, fetchScheduleConfig, getAutoStart, setAutoStart, adminIsUnlocked, adminLock, adminChangePassword, setCurrentMemberOnMain, fetchGuestAccess, memberChangePassword } from './lib/api';
+import { seedInitialData, fetchScheduleConfig, getAutoStart, setAutoStart, adminIsUnlocked, setCurrentMemberOnMain, fetchGuestAccess, memberChangePassword } from './lib/api';
 import { setScheduleConfig } from './lib/schedule';
 import { INITIAL_CALIBRATION, MONITORING_ZONES } from './data/initialData';
 
@@ -36,14 +35,14 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [autoStart, setAutoStartState] = useState(false);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
-  const [showAdminLock, setShowAdminLock] = useState(false);
-  const [showAdminChangePassword, setShowAdminChangePassword] = useState(false);
   const [showMemberChangePassword, setShowMemberChangePassword] = useState(false);
   const [scheduleJumpTarget, setScheduleJumpTarget] = useState(null); // {date, zoneId, num} — 구역별 현황 등에서 특정 일정으로 이동
 
-  // 로그인(선택 사항) — 로그인하지 않으면 지금까지처럼 전체 메뉴가 보인다.
-  // 로그인하면 관리자가 그 계정에 허용한 탭만 보이도록 사이드바 메뉴가 좁혀진다.
-  // 재로그인 번거로움을 줄이려고 이 PC에 로그인 상태를 기억해둔다(비밀번호는 저장 안 함).
+  // 로그인(선택 사항) — 로그인하지 않으면 "권한 설정"에서 정한 게스트 메뉴(또는
+  // 전체 메뉴)가 보인다. 로그인하면 그 계정에 허용한 탭만 보이도록 사이드바 메뉴가
+  // 좁혀지고, 계정에 관리자 권한(isAdmin)이 있으면 로그인 자체로 편집 권한도 함께
+  // 열린다 — 예전의 별도 "관리자 잠금 해제"는 로그인 하나로 합쳐졌다.
+  // "이 PC에서 자동 로그인"을 체크했을 때만 localStorage에 남겨 다음 실행 때도 유지한다.
   const [currentMember, setCurrentMember] = useState(() => {
     try { return JSON.parse(localStorage.getItem('em-current-member')) || null; } catch { return null; }
   });
@@ -62,9 +61,12 @@ export default function App() {
     ? MENU.filter(m => (currentMember.allowedTabs || []).includes(m.id))
     : (guestAllowedTabs ? MENU.filter(m => guestAllowedTabs.includes(m.id)) : MENU);
 
-  function handleLoggedIn(member) {
+  function handleLoggedIn(member, remember) {
     setCurrentMember(member);
-    try { localStorage.setItem('em-current-member', JSON.stringify(member)); } catch { /* ignore */ }
+    try {
+      if (remember) localStorage.setItem('em-current-member', JSON.stringify(member));
+      else localStorage.removeItem('em-current-member');
+    } catch { /* ignore */ }
     setShowLogin(false);
     if (!(member.allowedTabs || []).includes(page)) setPage((member.allowedTabs || [])[0] || 'dashboard');
   }
@@ -108,10 +110,6 @@ export default function App() {
       return window.electronAPI.onAdminUnlockChanged(setAdminUnlocked);
     }
   }, []);
-
-  async function handleLockAdmin() {
-    await adminLock();
-  }
 
   async function toggleAutoStart(enabled) {
     setAutoStartState(enabled);
@@ -168,11 +166,13 @@ export default function App() {
         <UpdateNotifier />
         <SyncChangeNotifier />
 
-        {/* 로그인(선택) — 로그인하면 계정에 허용된 메뉴만 보인다. 안 하면 전체 메뉴. */}
+        {/* 로그인 — 관리자 계정으로 로그인하면 그 자체로 편집 권한(관리자 잠금)도 함께 열린다. */}
         <div className="px-4 pt-3">
           {currentMember ? (
             <div className="flex items-center gap-2">
-              <span className="flex-1 text-xs text-gray-300 truncate">👤 {currentMember.username}</span>
+              <span className="flex-1 text-xs text-gray-300 truncate">
+                {currentMember.isAdmin ? '👑' : '👤'} {currentMember.username}
+              </span>
               <button onClick={() => setShowMemberChangePassword(true)} title="비밀번호 변경"
                 className="text-[11px] px-1.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300">🔑</button>
               <button onClick={handleLogout} className="text-[11px] px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300">로그아웃</button>
@@ -180,35 +180,19 @@ export default function App() {
           ) : (
             <button onClick={() => setShowLogin(true)}
               className="w-full py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-xs text-gray-300">
-              👤 로그인
+              🔒 로그인
             </button>
           )}
         </div>
 
-        {/* 관리자 잠금 — 비밀번호를 입력해야 일정 변경/일정 관리가 가능 */}
-        <div className="px-4 py-3 border-t border-gray-700 space-y-1.5">
-          {adminUnlocked ? (
-            <>
-              <button onClick={handleLockAdmin}
-                className="w-full py-1.5 rounded bg-emerald-700 hover:bg-emerald-600 text-xs text-white font-medium">
-                🔓 관리자 모드 (클릭하여 잠그기)
-              </button>
-              <button onClick={() => setShowMemberManager(true)}
-                className="w-full py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-xs text-gray-300">
-                🔐 권한 설정
-              </button>
-              <button onClick={() => setShowAdminChangePassword(true)}
-                className="w-full py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-xs text-gray-300">
-                🔑 관리자 비밀번호 변경
-              </button>
-            </>
-          ) : (
-            <button onClick={() => setShowAdminLock(true)}
+        {adminUnlocked && (
+          <div className="px-4 py-3 border-t border-gray-700 space-y-1.5">
+            <button onClick={() => setShowMemberManager(true)}
               className="w-full py-1.5 rounded bg-gray-800 hover:bg-gray-700 text-xs text-gray-300">
-              🔒 관리자 잠금 해제
+              🔐 권한 설정
             </button>
-          )}
-        </div>
+          </div>
+        )}
 
         {window.electronAPI && (
           <label className="mx-4 mb-2 flex items-center gap-2 text-xs text-gray-400 cursor-pointer select-none">
@@ -220,25 +204,10 @@ export default function App() {
         <SyncControl adminUnlocked={adminUnlocked} />
       </aside>
 
-      {showAdminLock && (
-        <AdminLock
-          onClose={() => setShowAdminLock(false)}
-          onUnlocked={() => setShowAdminLock(false)}
-        />
-      )}
-
       {showLogin && <Login onClose={() => setShowLogin(false)} onLoggedIn={handleLoggedIn} />}
 
       {showMemberManager && adminUnlocked && (
         <MemberManager menu={MENU} onClose={() => { setShowMemberManager(false); reloadGuestAccess(); }} />
-      )}
-
-      {showAdminChangePassword && adminUnlocked && (
-        <ChangePasswordModal
-          title="관리자 비밀번호 변경"
-          onSubmit={(oldPassword, newPassword) => adminChangePassword(oldPassword, newPassword)}
-          onClose={ok => { setShowAdminChangePassword(false); if (ok) alert('관리자 비밀번호가 변경되었습니다.'); }}
-        />
       )}
 
       {showMemberChangePassword && currentMember && (
