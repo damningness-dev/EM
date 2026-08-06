@@ -167,7 +167,7 @@ export default function App() {
         <SyncChangeNotifier />
 
         {/* 로그인 — 관리자 계정으로 로그인하면 그 자체로 편집 권한(관리자 잠금)도 함께 열린다. */}
-        <div className="px-4 pt-3">
+        <div className="px-4 pt-1.5 pb-3">
           {currentMember ? (
             <div className="flex items-center gap-2">
               <span className="flex-1 text-xs text-gray-300 truncate">
