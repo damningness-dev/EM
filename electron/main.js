@@ -957,22 +957,39 @@ function registerHandlers() {
   // 응답이 커져 느려지고 rate limit도 더 쉽게 소진되므로, 별도 Gist에 두고 "열기"를
   // 누를 때만 필요한 파일 하나만 내려받는다. attachGistId는 짧은 문자열이라 일반
   // em-data.json 동기화에 얹혀도 부담이 없다.
+  // 짧은 시간 안에 여러 파일을 연달아 첨부하면 ensureAttachGistId()가 동시에 여러
+  // 번 호출될 수 있다. 매번 loadData()로 "아직 없음"을 확인하고 각자 새 Gist를
+  // 만들면, 나중에 saveData()하는 쪽이 이기면서 먼저 만든 Gist(와 그 안의 파일)가
+  // attachGistId 참조를 잃어 "파일을 찾을 수 없습니다" 오류로 이어진다 — 진행 중인
+  // 생성 작업을 재사용해 항상 하나의 Gist만 쓰도록 한다.
+  let attachGistIdCreation = null;
   async function ensureAttachGistId() {
     const data = loadData();
     if (data.attachGistId) return data.attachGistId;
-    const cfg = loadSyncConfig();
-    if (!cfg.token) throw new Error('첨부파일을 공유하려면 GitHub 토큰이 필요합니다');
-    const r = await ghRequest('POST', 'https://api.github.com/gists', {
-      token: cfg.token,
-      body: {
-        description: '환경 모니터링 첨부파일(교정 성적서 등) — 삭제하지 마세요',
-        public: false,
-        files: { 'README.md': { content: '이 Gist는 환경 모니터링 앱의 교정 성적서 등 첨부파일 저장용입니다.' } },
-      },
-    });
-    data.attachGistId = r.json.id;
-    saveData(data);
-    return data.attachGistId;
+    if (!attachGistIdCreation) {
+      attachGistIdCreation = (async () => {
+        const cfg = loadSyncConfig();
+        if (!cfg.token) throw new Error('첨부파일을 공유하려면 GitHub 토큰이 필요합니다');
+        const r = await ghRequest('POST', 'https://api.github.com/gists', {
+          token: cfg.token,
+          body: {
+            description: '환경 모니터링 첨부파일(교정 성적서 등) — 삭제하지 마세요',
+            public: false,
+            files: { 'README.md': { content: '이 Gist는 환경 모니터링 앱의 교정 성적서 등 첨부파일 저장용입니다.' } },
+          },
+        });
+        // 생성이 끝나길 기다리는 동안 다른 경로로 이미 attachGistId가 저장됐을 수
+        // 있으니, 최신 데이터를 다시 읽어 그 값이 없을 때만 지금 만든 것을 쓴다.
+        const fresh = loadData();
+        if (!fresh.attachGistId) { fresh.attachGistId = r.json.id; saveData(fresh); }
+        return fresh.attachGistId;
+      })();
+    }
+    try {
+      return await attachGistIdCreation;
+    } finally {
+      attachGistIdCreation = null;
+    }
   }
 
   ipcMain.handle('calibFile:save', (_e, { name, dataBase64 } = {}) => {
@@ -1070,19 +1087,30 @@ function registerHandlers() {
       const cfg = loadSyncConfig();
       if (!cfg.token) return { ok: false, error: '업로드하려면 GitHub 토큰이 필요합니다' };
       const data = loadData();
+      const attachGistId = await ensureAttachGistId();
+      // 이미 gistKey가 있어도 실제로 그 파일이 지금의 attachGistId 안에 있는지
+      // 확인한다 — 예전 동시 업로드 버그로 다른(고아가 된) Gist를 가리키는 항목이
+      // 있으면 "파일을 찾을 수 없습니다" 오류로 이어지므로, 그런 것도 다시 올려
+      // 고친다. 목록 조회는 한 번만 한다(항목마다 조회하면 API 요청이 너무 많아짐).
+      let existingKeys = new Set();
+      try {
+        const g = await ghRequest('GET', `https://api.github.com/gists/${attachGistId}`, { token: cfg.token });
+        existingKeys = new Set(Object.keys(g.json.files || {}));
+      } catch { /* 조회 실패 시 안전하게 "전부 없다"고 보고 다시 올림 */ }
       const pending = [];
       (data.calibration || []).forEach((item, itemIdx) => {
         (item.history || []).forEach((h, histIdx) => {
-          if (h.filePath && !h.gistKey && fs.existsSync(h.filePath)) {
-            const dot = h.filePath.lastIndexOf('.');
-            const ext = dot > 0 ? h.filePath.slice(dot) : '';
-            pending.push({ itemIdx, histIdx, filePath: h.filePath, gistKey: `attach_${h.id}${ext}.b64` });
+          if (!h.filePath || !fs.existsSync(h.filePath)) return;
+          const dot = h.filePath.lastIndexOf('.');
+          const ext = dot > 0 ? h.filePath.slice(dot) : '';
+          const gistKey = h.gistKey || `attach_${h.id}${ext}.b64`;
+          if (!existingKeys.has(gistKey)) {
+            pending.push({ itemIdx, histIdx, filePath: h.filePath, gistKey });
           }
         });
       });
       if (!pending.length) return { ok: true, uploaded: 0, total: 0, failed: [] };
       sendProgress('uploading', { done: 0, total: pending.length });
-      const attachGistId = await ensureAttachGistId();
       const BATCH = 10;
       let uploaded = 0;
       const failed = [];
