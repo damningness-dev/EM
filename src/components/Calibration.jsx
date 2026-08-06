@@ -2,18 +2,33 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { calcDDay, getDDayLabel, getDDayColor, formatDate } from '../utils/dateUtils';
 import { nextCalibDate, latestCalibHistory as latestHistory, effectiveCalib } from '../utils/calibUtils';
 import { fetchCalibration, upsertCalibration, deleteCalibration, saveCalibFile, uploadCalibAttachment, openCalibFile, revealCalibFile, syncGetConfig, syncUpload, backfillCalibAttachments } from '../lib/api';
+import CalibExport from './CalibExport';
 
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
 let hid = 0;
 function newHistoryId() { return `h${Date.now()}_${hid++}`; }
 
-// 컬럼 순서(고정) + 기본 너비(px) — 헤더 사이 구분선을 드래그해 너비 조절
-const CALIB_COL_ORDER = ['expand', 'idx', 'no', 'sn', 'cert_no', 'name', 'calib_date', 'next_calib_date', 'dday', 'calibNote', 'note', 'manage'];
+// 기본 너비(px) — 헤더 사이 구분선을 드래그해 너비 조절
 const CALIB_COL_DEFAULT_W = {
   expand: 28, idx: 40, no: 110, sn: 100, cert_no: 110, name: 140,
   calib_date: 100, next_calib_date: 100, dday: 70, calibNote: 140, note: 140, manage: 140,
 };
 const CALIB_COL_STORE_KEY = 'em-calib-table-cols';
+
+// 순서를 바꿀 수 있는 가운데 컬럼들 — 앞(펼치기·No.)과 뒤(관리)는 고정.
+const CALIB_MID_COLS = [
+  { key: 'no', label: '관리번호', sortable: true },
+  { key: 'sn', label: 'S/N', sortable: true },
+  { key: 'cert_no', label: '성적서번호', sortable: true },
+  { key: 'name', label: '장비명', sortable: true },
+  { key: 'calib_date', label: '교정일', sortable: true },
+  { key: 'next_calib_date', label: '차기교정일', sortable: true },
+  { key: 'dday', label: 'D-Day', sortable: true },
+  { key: 'calibNote', label: '교정내역', sortable: false },
+  { key: 'note', label: '비고', sortable: false },
+];
+const CALIB_MID_KEYS = CALIB_MID_COLS.map(c => c.key);
+const CALIB_COL_ORDER_STORE_KEY = 'em-calib-table-col-order';
 
 function dotDate(s) { return s ? s.replaceAll('-', '.') : ''; }
 // 기존 첨부파일 이관 진행 상황을 버튼에 보여줄 짧은 텍스트로 변환
@@ -39,6 +54,7 @@ export default function Calibration({ adminUnlocked }) {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({});
   const [showAdd, setShowAdd] = useState(false);
+  const [showExport, setShowExport] = useState(false);
   const [openingItemId, setOpeningItemId] = useState(null); // 로컬에 없어 첨부파일 Gist에서 내려받는 중인 항목 id
   const [notice, setNotice] = useState(null); // 안내/오류 토스트 (네이티브 alert 대신 사용 — alert는 인쇄/입력 포커스를 먹통으로 만듦)
   const noticeTimer = useRef(null);
@@ -56,6 +72,19 @@ export default function Calibration({ adminUnlocked }) {
     return {};
   });
   useEffect(() => { try { localStorage.setItem(CALIB_COL_STORE_KEY, JSON.stringify(colW)); } catch { /* ignore */ } }, [colW]);
+  const [midColOrder, setMidColOrder] = useState(() => {
+    try {
+      const s = JSON.parse(localStorage.getItem(CALIB_COL_ORDER_STORE_KEY));
+      if (Array.isArray(s)) { const valid = s.filter(k => CALIB_MID_KEYS.includes(k)); CALIB_MID_KEYS.forEach(k => { if (!valid.includes(k)) valid.push(k); }); return valid; }
+    } catch { /* ignore */ }
+    return [...CALIB_MID_KEYS];
+  });
+  const [dragColKey, setDragColKey] = useState(null);
+  useEffect(() => { try { localStorage.setItem(CALIB_COL_ORDER_STORE_KEY, JSON.stringify(midColOrder)); } catch { /* ignore */ } }, [midColOrder]);
+  function reorderMidCol(fromKey, toKey) {
+    if (!fromKey || fromKey === toKey) return;
+    setMidColOrder(prev => { const arr = prev.filter(k => k !== fromKey); const ti = arr.indexOf(toKey); if (ti < 0) return prev; arr.splice(ti, 0, fromKey); return arr; });
+  }
   useEffect(() => {
     if (!window.electronAPI?.onCalibBackfillProgress) return;
     return window.electronAPI.onCalibBackfillProgress(setBackfillProgress);
@@ -263,16 +292,38 @@ export default function Calibration({ adminUnlocked }) {
   if (loading) return <LoadingSpinner />;
 
   const canDrag = !sortKey && !search && filter === 'all';
-  const COLS = [
-    { key: null, label: 'No.', sortable: false },
-    { key: 'no', label: '관리번호', sortable: true },
-    { key: 'sn', label: 'S/N', sortable: true },
-    { key: 'cert_no', label: '성적서번호', sortable: true },
-    { key: 'name', label: '장비명', sortable: true },
-    { key: 'calib_date', label: '교정일', sortable: true },
-    { key: 'next_calib_date', label: '차기교정일', sortable: true },
-    { key: 'dday', label: 'D-Day', sortable: true },
-  ];
+  const fullColOrder = ['expand', 'idx', ...midColOrder, 'manage'];
+
+  // 순서를 바꿀 수 있는 가운데 컬럼 한 칸(수정 중/보기 모드 각각의 셀 내용).
+  function renderMidCell(key, item, idx) {
+    const eff = item.eff || item;
+    if (editingId === item.id) {
+      switch (key) {
+        case 'no': return <td key={key} className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm text-center" value={form.no || ''} onChange={e => setForm(f => ({ ...f, no: e.target.value }))} /></td>;
+        case 'sn': return <td key={key} className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm text-center" value={form.sn || ''} onChange={e => setForm(f => ({ ...f, sn: e.target.value }))} /></td>;
+        case 'cert_no': return <td key={key} className="px-4 py-2 text-center text-gray-400 text-xs">{eff.cert_no || '—'}</td>;
+        case 'name': return <td key={key} className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm text-center" value={form.name || ''} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></td>;
+        case 'calib_date': return <td key={key} className="px-4 py-2 text-center text-gray-400 text-xs">{formatDate(eff.calib_date)}</td>;
+        case 'next_calib_date': return <td key={key} className="px-4 py-2 text-center text-gray-400 text-xs">{formatDate(eff.next_calib_date)}</td>;
+        case 'dday': return <td key={key} className="px-4 py-2 text-center text-gray-300">—</td>;
+        case 'calibNote': return <td key={key} className="px-4 py-2 text-center text-gray-400 text-xs truncate" title={latestHistory(item)?.note || ''}>{latestHistory(item)?.note || '—'}</td>;
+        case 'note': return <td key={key} className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm text-center" placeholder="비고" value={form.note || ''} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} /></td>;
+        default: return null;
+      }
+    }
+    switch (key) {
+      case 'no': return <td key={key} className="px-4 py-3 text-center font-medium text-gray-800">{item.no}</td>;
+      case 'sn': return <td key={key} className="px-4 py-3 text-center text-gray-600">{item.sn}</td>;
+      case 'cert_no': return <td key={key} className="px-4 py-3 text-center text-gray-500 text-xs">{eff.cert_no}</td>;
+      case 'name': return <td key={key} className="px-4 py-3 text-center text-gray-600">{item.name}</td>;
+      case 'calib_date': return <td key={key} className="px-4 py-3 text-center text-gray-500 text-xs">{formatDate(eff.calib_date)}</td>;
+      case 'next_calib_date': return <td key={key} className="px-4 py-3 text-center text-gray-500 text-xs">{eff.next_calib_date === '미사용' ? '미사용' : formatDate(eff.next_calib_date)}</td>;
+      case 'dday': return <td key={key} className={`px-4 py-3 text-center font-semibold text-sm ${getDDayColor(item.dday)}`}>{getDDayLabel(item.dday)}</td>;
+      case 'calibNote': return <td key={key} className="px-4 py-3 text-center text-xs text-gray-400 truncate" title={latestHistory(item)?.note || ''}>{latestHistory(item)?.note || ''}</td>;
+      case 'note': return <td key={key} className="px-4 py-3 text-center text-xs text-gray-400">{item.note}</td>;
+      default: return null;
+    }
+  }
 
   return (
     <div className="p-6 space-y-4">
@@ -286,6 +337,10 @@ export default function Calibration({ adminUnlocked }) {
             className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-50"
             title="첨부파일 공유 기능이 생기기 전에 로컬에만 저장된 기존 첨부파일들을 한 번에 공유용 Gist로 올립니다.">
             {backfilling ? `📎 ${backfillProgressLabel(backfillProgress)}` : adminUnlocked ? '📎 기존 첨부파일 공유' : '🔒 기존 첨부파일 공유'}
+          </button>
+          <button onClick={() => setShowExport(true)}
+            className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200">
+            📊 엑셀로 내보내기
           </button>
           <button onClick={() => { setShowAdd(true); setForm({}); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">+ 추가</button>
         </div>
@@ -305,42 +360,48 @@ export default function Calibration({ adminUnlocked }) {
       </div>
 
       <p className="text-xs text-gray-400">
-        {canDrag ? '행을 드래그해 순서를 바꾸거나, ' : ''}헤더를 클릭해 정렬 · 헤더 사이 경계를 드래그해 너비 조절 · ▶ 를 눌러 연도별 교정내역·첨부파일을 관리하세요.
+        {canDrag ? '행을 드래그해 순서를 바꾸거나, ' : ''}헤더를 드래그해 컬럼 순서를 바꾸거나 클릭해 정렬 · 헤더 사이 경계를 드래그해 너비 조절 · ▶ 를 눌러 연도별 교정내역·첨부파일을 관리하세요.
         {sortKey && <button onClick={() => setSortKey(null)} className="ml-2 text-blue-500 hover:underline">수동 순서로</button>}
       </p>
 
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="text-sm" style={{ tableLayout: 'fixed', width: CALIB_COL_ORDER.reduce((s, k) => s + colWidth(k), 0) }}>
-            <colgroup>{CALIB_COL_ORDER.map(k => <col key={k} style={{ width: colWidth(k) }} />)}</colgroup>
+          <table className="text-sm" style={{ tableLayout: 'fixed', width: fullColOrder.reduce((s, k) => s + colWidth(k), 0) }}>
+            <colgroup>{fullColOrder.map(k => <col key={k} style={{ width: colWidth(k) }} />)}</colgroup>
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
                 <th className="relative border-r border-gray-200">
                   <span onMouseDown={e => startColResize(e, 'expand')} draggable={false} onDragStart={e => e.preventDefault()}
                     className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
                 </th>
-                {COLS.map(c => {
-                  const wKey = c.key || 'idx';
+                <th className="relative px-4 py-3 text-gray-500 font-medium truncate text-center border-r border-gray-200">
+                  No.
+                  <span onMouseDown={e => startColResize(e, 'idx')} draggable={false} onDragStart={e => e.preventDefault()}
+                    className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                </th>
+                {midColOrder.map(key => {
+                  const meta = CALIB_MID_COLS.find(c => c.key === key);
                   return (
-                    <th key={c.label} className={`relative px-4 py-3 text-gray-500 font-medium truncate text-center border-r border-gray-200 ${c.sortable ? 'cursor-pointer select-none hover:text-gray-800' : ''}`}
-                      onClick={c.sortable ? () => toggleSort(c.key) : undefined}>
-                      {c.label} {c.sortable && sortArrow(c.key)}
-                      <span onMouseDown={e => startColResize(e, wKey)} draggable={false} onDragStart={e => e.preventDefault()}
+                    <th key={key}
+                      onDragOver={e => { if (dragColKey) e.preventDefault(); }}
+                      onDrop={e => { const fk = e.dataTransfer.getData('col'); if (fk) { e.preventDefault(); reorderMidCol(fk, key); } setDragColKey(null); }}
+                      className={`relative px-4 py-3 text-gray-500 font-medium truncate text-center border-r border-gray-200 ${dragColKey === key ? 'opacity-40' : ''}`}
+                    >
+                      <span draggable
+                        onDragStart={e => { e.dataTransfer.setData('col', key); e.dataTransfer.effectAllowed = 'move'; setDragColKey(key); }}
+                        onDragEnd={() => setDragColKey(null)}
+                        onClick={meta.sortable ? () => toggleSort(key) : undefined}
+                        className={`cursor-move select-none ${meta.sortable ? 'hover:text-gray-800' : ''}`}
+                        title="드래그하여 순서 변경"
+                      >
+                        {meta.label} {meta.sortable && sortArrow(key)}
+                      </span>
+                      <span onMouseDown={e => startColResize(e, key)} draggable={false} onDragStart={e => e.preventDefault()}
                         className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }}
                         onClick={e => e.stopPropagation()} title="드래그하여 너비 조절" />
                     </th>
                   );
                 })}
-                <th className="relative text-center px-4 py-3 text-gray-500 font-medium border-r border-gray-200">
-                  교정내역
-                  <span onMouseDown={e => startColResize(e, 'calibNote')} draggable={false} onDragStart={e => e.preventDefault()}
-                    className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
-                </th>
-                <th className="relative text-center px-4 py-3 text-gray-500 font-medium border-r border-gray-200">
-                  비고
-                  <span onMouseDown={e => startColResize(e, 'note')} draggable={false} onDragStart={e => e.preventDefault()}
-                    className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
-                </th>
                 <th className="text-center px-4 py-3 text-gray-500 font-medium">관리</th>
               </tr>
             </thead>
@@ -364,15 +425,7 @@ export default function Calibration({ adminUnlocked }) {
                       {editingId === item.id ? (
                         <>
                           <td className="px-4 py-2 text-center text-gray-400">{idx + 1}</td>
-                          <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm text-center" value={form.no || ''} onChange={e => setForm(f => ({ ...f, no: e.target.value }))} /></td>
-                          <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm text-center" value={form.sn || ''} onChange={e => setForm(f => ({ ...f, sn: e.target.value }))} /></td>
-                          <td className="px-4 py-2 text-center text-gray-400 text-xs">{(item.eff || item).cert_no || '—'}</td>
-                          <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm text-center" value={form.name || ''} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></td>
-                          <td className="px-4 py-2 text-center text-gray-400 text-xs">{formatDate((item.eff || item).calib_date)}</td>
-                          <td className="px-4 py-2 text-center text-gray-400 text-xs">{formatDate((item.eff || item).next_calib_date)}</td>
-                          <td className="px-4 py-2 text-center text-gray-300">—</td>
-                          <td className="px-4 py-2 text-center text-gray-400 text-xs truncate" title={latestHistory(item)?.note || ''}>{latestHistory(item)?.note || '—'}</td>
-                          <td className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm text-center" placeholder="비고" value={form.note || ''} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} /></td>
+                          {midColOrder.map(key => renderMidCell(key, item, idx))}
                           <td className="px-4 py-2 text-center whitespace-nowrap">
                             <button onClick={saveEdit} disabled={saving} className="px-2 py-1 bg-blue-600 text-white rounded text-xs mr-1 disabled:opacity-50">저장</button>
                             <button onClick={() => setEditingId(null)} className="px-2 py-1 bg-gray-200 rounded text-xs">취소</button>
@@ -381,15 +434,7 @@ export default function Calibration({ adminUnlocked }) {
                       ) : (
                         <>
                           <td className="px-4 py-3 text-center text-gray-400">{idx + 1}</td>
-                          <td className="px-4 py-3 text-center font-medium text-gray-800">{item.no}</td>
-                          <td className="px-4 py-3 text-center text-gray-600">{item.sn}</td>
-                          <td className="px-4 py-3 text-center text-gray-500 text-xs">{(item.eff || item).cert_no}</td>
-                          <td className="px-4 py-3 text-center text-gray-600">{item.name}</td>
-                          <td className="px-4 py-3 text-center text-gray-500 text-xs">{formatDate((item.eff || item).calib_date)}</td>
-                          <td className="px-4 py-3 text-center text-gray-500 text-xs">{(item.eff || item).next_calib_date === '미사용' ? '미사용' : formatDate((item.eff || item).next_calib_date)}</td>
-                          <td className={`px-4 py-3 text-center font-semibold text-sm ${getDDayColor(item.dday)}`}>{getDDayLabel(item.dday)}</td>
-                          <td className="px-4 py-3 text-center text-xs text-gray-400 truncate" title={latestHistory(item)?.note || ''}>{latestHistory(item)?.note || ''}</td>
-                          <td className="px-4 py-3 text-center text-xs text-gray-400">{item.note}</td>
+                          {midColOrder.map(key => renderMidCell(key, item, idx))}
                           <td className="px-4 py-3 text-center whitespace-nowrap">
                             {(() => {
                               const lf = latestHistory(item);
@@ -469,6 +514,10 @@ export default function Calibration({ adminUnlocked }) {
             </div>
           </div>
         </div>
+      )}
+
+      {showExport && (
+        <CalibExport data={data} onClose={() => setShowExport(false)} onNotice={showNotice} />
       )}
 
       {notice && (
