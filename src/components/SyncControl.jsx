@@ -57,7 +57,13 @@ export default function SyncControl({ adminUnlocked }) {
   async function doPull() {
     if (busy || onCooldown) return;
     setBusy(true);
-    try { const r = await syncPull(); if (!r?.ok && r?.error) setStatus({ type: 'error', message: r.error }); }
+    try {
+      const r = await syncPull();
+      if (!r?.ok && r?.error) setStatus({ type: 'error', message: r.error });
+      // 일정 동기화와 함께 앱 자체의 새 버전(업데이트 내역)도 같이 확인한다 —
+      // 그동안 자동 확인(3분 주기)을 기다리지 않아도 바로 알 수 있게.
+      window.electronAPI?.invoke?.('update:check');
+    }
     finally {
       setBusy(false);
       setCooldownUntil(Date.now() + PULL_COOLDOWN_MS);

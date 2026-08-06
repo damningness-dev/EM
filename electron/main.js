@@ -948,10 +948,19 @@ function registerHandlers() {
     try { fs.mkdirSync(d, { recursive: true }); } catch { /* ignore */ }
     return d;
   };
-  // gistKey(예: attach_h1735000000_5.pdf.b64)로 첨부파일 전용 캐시 내 로컬 경로를 정한다.
-  // gistKey 자체가 고유해서 같은 파일이면 항상 같은 경로가 나오므로, 한 번 내려받으면
-  // 이후에는 다시 내려받지 않고 이 경로에서 바로 연다.
-  const attachCachePath = (gistKey) => path.join(calibFilesDir(), gistKey.replace(/\.b64$/, ''));
+  // gistKey(예: attach_h1735000000_5.pdf.b64)마다 고유한 캐시 하위 폴더를 두고,
+  // 그 안에는 업로드했을 때의 원래 파일명 그대로 저장한다. gistKey로 폴더 위치가
+  // 정해지니(같은 파일이면 항상 같은 폴더) 한 번 내려받으면 이후엔 다시 내려받지
+  // 않고 이 경로에서 바로 열되, 실제 저장 파일명은 원본과 동일하게 유지된다.
+  const attachCacheDir = (gistKey) => {
+    const dir = path.join(calibFilesDir(), 'gist-cache', gistKey.replace(/[^\w.\-]/g, '_'));
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
+    return dir;
+  };
+  function attachCachePath(gistKey, fileName) {
+    const safeName = String(fileName || gistKey.replace(/\.b64$/, '')).replace(/[^\w.\-가-힣 ()]/g, '_');
+    return path.join(attachCacheDir(gistKey), safeName);
+  }
 
   // 첨부파일 전용 Gist ID 확보(없으면 새로 만들어 공유 데이터에 저장).
   // 성적서 PDF 등 첨부파일을 일정 데이터와 같은 Gist에 넣으면 매번 자동 동기화되는
@@ -1025,13 +1034,13 @@ function registerHandlers() {
 
   ipcMain.handle('calibFile:open', async (_e, arg) => {
     try {
-      const { filePath, gistKey } = typeof arg === 'string' ? { filePath: arg } : (arg || {});
+      const { filePath, gistKey, fileName } = typeof arg === 'string' ? { filePath: arg } : (arg || {});
       if (filePath && fs.existsSync(filePath)) {
         const r = await shell.openPath(filePath);
         return { ok: !r, error: r || undefined };
       }
       if (!gistKey) return { ok: false, error: '파일을 찾을 수 없습니다' };
-      const cachePath = attachCachePath(gistKey);
+      const cachePath = attachCachePath(gistKey, fileName);
       if (fs.existsSync(cachePath)) {
         const r = await shell.openPath(cachePath);
         return { ok: !r, error: r || undefined, newPath: cachePath };
@@ -1061,10 +1070,10 @@ function registerHandlers() {
 
   ipcMain.handle('calibFile:reveal', (_e, arg) => {
     try {
-      const { filePath, gistKey } = typeof arg === 'string' ? { filePath: arg } : (arg || {});
+      const { filePath, gistKey, fileName } = typeof arg === 'string' ? { filePath: arg } : (arg || {});
       let target = filePath;
       if ((!target || !fs.existsSync(target)) && gistKey) {
-        const cachePath = attachCachePath(gistKey);
+        const cachePath = attachCachePath(gistKey, fileName);
         if (fs.existsSync(cachePath)) target = cachePath;
       }
       if (!target || !fs.existsSync(target)) return { ok: false, error: '파일을 찾을 수 없습니다 (먼저 "열기"로 내려받으세요)' };

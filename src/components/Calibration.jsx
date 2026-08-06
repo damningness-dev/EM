@@ -39,6 +39,7 @@ export default function Calibration({ adminUnlocked }) {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({});
   const [showAdd, setShowAdd] = useState(false);
+  const [openingItemId, setOpeningItemId] = useState(null); // 로컬에 없어 첨부파일 Gist에서 내려받는 중인 항목 id
   const [notice, setNotice] = useState(null); // 안내/오류 토스트 (네이티브 alert 대신 사용 — alert는 인쇄/입력 포커스를 먹통으로 만듦)
   const noticeTimer = useRef(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
@@ -392,9 +393,20 @@ export default function Calibration({ adminUnlocked }) {
                           <td className="px-4 py-3 text-center whitespace-nowrap">
                             {(() => {
                               const lf = latestHistory(item);
+                              const isOpening = openingItemId === item.id;
                               return (lf?.filePath || lf?.gistKey) ? (
-                                <button onClick={async () => { const r = await openCalibFile(lf.filePath, lf.gistKey); if (r && !r.ok) showNotice('열기 실패: ' + (r.error || ''), true); }}
-                                  className="px-1.5 py-1 rounded text-sm mr-1 hover:bg-emerald-50" title={`최근 성적서 열기: ${lf.fileName || ''}`}>📄</button>
+                                <button
+                                  onClick={async () => {
+                                    setOpeningItemId(item.id);
+                                    try {
+                                      const r = await openCalibFile(lf.filePath, lf.gistKey, lf.fileName);
+                                      if (r && !r.ok) showNotice('열기 실패: ' + (r.error || ''), true);
+                                    } finally { setOpeningItemId(null); }
+                                  }}
+                                  disabled={isOpening}
+                                  className="px-1.5 py-1 rounded text-sm mr-1 hover:bg-emerald-50 disabled:opacity-60"
+                                  title={isOpening ? '다운로드 중…' : `최근 성적서 열기: ${lf.fileName || ''}`}
+                                >{isOpening ? '⏳' : '📄'}</button>
                               ) : null;
                             })()}
                             {adminUnlocked && (
@@ -477,6 +489,7 @@ function HistoryPanel({ item, onSave, onNotice, adminUnlocked }) {
   const [rows, setRows] = useState(() => (item.history || []).map(h => ({ ...h })));
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [openingIdx, setOpeningIdx] = useState(null); // 로컬에 없어 첨부파일 Gist에서 내려받는 중인 행 인덱스
 
   function requireAdmin() {
     if (!adminUnlocked) { onNotice('관리자 잠금 해제가 필요합니다.', true); return false; }
@@ -520,7 +533,13 @@ function HistoryPanel({ item, onSave, onNotice, adminUnlocked }) {
     try { await onSave(toSave); setDirty(false); } catch (e) { onNotice('저장 실패: ' + e.message, true); } finally { setBusy(false); }
   }
 
-  async function open(filePath, gistKey) { const r = await openCalibFile(filePath, gistKey); if (r && !r.ok) onNotice('열기 실패: ' + (r.error || ''), true); }
+  async function open(idx, filePath, gistKey, fileName) {
+    setOpeningIdx(idx);
+    try {
+      const r = await openCalibFile(filePath, gistKey, fileName);
+      if (r && !r.ok) onNotice('열기 실패: ' + (r.error || ''), true);
+    } finally { setOpeningIdx(null); }
+  }
 
   // 교정일이 최신인 내역이 가장 위로 오도록 정렬(대표값 계산에 쓰는 latestCalibHistory와
   // 동일한 기준: calib_date 내림차순, 동률이면 연도 내림차순). 교정일을 아직 입력하지
@@ -565,8 +584,12 @@ function HistoryPanel({ item, onSave, onNotice, adminUnlocked }) {
                 className="flex-1 min-w-24 border border-gray-200 rounded px-1.5 py-1 text-xs disabled:bg-gray-50 disabled:text-gray-400" placeholder="교정내역" />
               {(h.filePath || h.gistKey) ? (
                 <span className="flex items-center gap-1">
-                  <button onClick={() => open(h.filePath, h.gistKey)} className="text-xs px-2 py-1 bg-emerald-50 text-emerald-600 rounded hover:bg-emerald-100" title={h.fileName}>📄 열기</button>
-                  <button onClick={() => revealCalibFile(h.filePath, h.gistKey)} className="text-xs px-1.5 py-1 text-gray-400 hover:text-gray-700" title="폴더에서 보기">📂</button>
+                  <button onClick={() => open(idx, h.filePath, h.gistKey, h.fileName)} disabled={openingIdx === idx}
+                    className="text-xs px-2 py-1 bg-emerald-50 text-emerald-600 rounded hover:bg-emerald-100 disabled:opacity-60"
+                    title={openingIdx === idx ? '다운로드 중…' : h.fileName}>
+                    {openingIdx === idx ? '⏳ 다운로드 중…' : '📄 열기'}
+                  </button>
+                  <button onClick={() => revealCalibFile(h.filePath, h.gistKey, h.fileName)} className="text-xs px-1.5 py-1 text-gray-400 hover:text-gray-700" title="폴더에서 보기">📂</button>
                   {adminUnlocked && (
                     <button onClick={() => edit(idx, { fileName: '', filePath: '', gistKey: '' })} className="text-xs text-gray-300 hover:text-red-500" title="첨부 제거">✕</button>
                   )}

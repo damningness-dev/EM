@@ -22,11 +22,11 @@ export async function saveCalibFile(name, dataBase64) {
 export async function uploadCalibAttachment(gistKey, dataBase64) {
   return api.invoke('calibFile:uploadAttachment', { gistKey, dataBase64 });
 }
-export async function openCalibFile(filePath, gistKey) {
-  return api.invoke('calibFile:open', { filePath, gistKey });
+export async function openCalibFile(filePath, gistKey, fileName) {
+  return api.invoke('calibFile:open', { filePath, gistKey, fileName });
 }
-export async function revealCalibFile(filePath, gistKey) {
-  return api.invoke('calibFile:reveal', { filePath, gistKey });
+export async function revealCalibFile(filePath, gistKey, fileName) {
+  return api.invoke('calibFile:reveal', { filePath, gistKey, fileName });
 }
 // 첨부파일 공유 기능이 생기기 전에 로컬에만 있던 기존 첨부파일들을 한 번에
 // 첨부파일 전용 Gist로 올려 다른 PC와 공유되게 하는 일회성 이관 기능.
