@@ -283,6 +283,9 @@ export async function fetchWeeklyDuty() {
 export async function saveWeeklyDuty(weeklyDuty) {
   return api.invoke('weeklyDuty:set', weeklyDuty);
 }
+export async function syncWeeklyDutyTodosNow() {
+  return api.invoke('weeklyDuty:syncTodosNow');
+}
 
 // ─── 공유 동기화 (Gist) ───────────────────────────────────────────────────────
 

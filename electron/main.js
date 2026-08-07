@@ -261,6 +261,13 @@ const DEFAULT_ADMIN_TABS = ['dashboard', 'todo', 'calendar', 'status', 'gantt', 
 // 처음부터 실제 로테이션이 채워진 상태로 시작한다. 이후 관리자가 화면에서
 // 업무·주차·담당자를 자유롭게 추가·수정·삭제할 수 있다.
 const DEFAULT_WEEKLY_DUTY = {
+  // 관리자가 추가·삭제하는 직원 목록 — 담당자 배정은 이 목록에서 골라서 지정한다.
+  staff: ['김찬일', '이동현', '박지연'],
+  // "1주차"가 시작하는 월요일(기준일). 오늘이 기준일로부터 몇 주 지났는지 계산해
+  // weeks.length로 나눈 나머지로 "이번 주가 몇 주차인지" 자동 판정한다.
+  referenceDate: '2026-08-03',
+  alarmTime: '09:00',
+  autoAlarm: true, // 켜두면 매일 자동으로 오늘 담당자의 할일에 알람을 등록한다
   weeks: ['1주차', '2주차', '3주차', '4주차', '5주차'],
   dailyTasks: [
     { id: 'd1', name: '모니터링 라벨 일지 출력', assignments: ['김찬일', '이동현', '박지연', '김찬일', '이동현'] },
@@ -309,6 +316,12 @@ function loadData() {
     // 배열이면 그 탭들만 보인다(계정별 allowedTabs와 같은 방식, 로그인 전 상태에 적용).
     if (!('guestAllowedTabs' in data)) data.guestAllowedTabs = null;
     if (!data.weeklyDuty) data.weeklyDuty = JSON.parse(JSON.stringify(DEFAULT_WEEKLY_DUTY));
+    // 이전 버전에서 이미 weeklyDuty가 있었지만 직원 목록·기준일 같은 새 필드가
+    // 없을 수 있다 — 없는 필드만 기본값으로 채운다(기존 업무·배정은 그대로 둠).
+    if (!Array.isArray(data.weeklyDuty.staff)) data.weeklyDuty.staff = [...DEFAULT_WEEKLY_DUTY.staff];
+    if (!data.weeklyDuty.referenceDate) data.weeklyDuty.referenceDate = DEFAULT_WEEKLY_DUTY.referenceDate;
+    if (!data.weeklyDuty.alarmTime) data.weeklyDuty.alarmTime = DEFAULT_WEEKLY_DUTY.alarmTime;
+    if (typeof data.weeklyDuty.autoAlarm !== 'boolean') data.weeklyDuty.autoAlarm = true;
     return data;
   } catch {
     return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES }, guestAllowedTabs: null, weeklyDuty: JSON.parse(JSON.stringify(DEFAULT_WEEKLY_DUTY)) };
@@ -793,6 +806,72 @@ function showNextAlarm() {
   } catch { currentAlarmWin = null; }
 }
 
+// ─── 주간근무 → 할일 알람 자동 등록 ────────────────────────────────────────────
+// 주간근무에서 오늘 담당인 업무·담당자를 매일 자동으로 "할일"에 반영해 알람이
+// 울리게 한다. 할일은 PC별 로컬 파일(todos-local.json)이라 이 동기화도 PC마다
+// 각자 돌아간다 — 그 PC를 쓰는 사람이 오늘 담당자 알람을 보게 하려는 목적.
+function computeCurrentWeekIndex(duty, now) {
+  if (!duty?.referenceDate || !duty.weeks?.length) return null;
+  const ref = new Date(duty.referenceDate + 'T00:00:00');
+  const today = new Date(now); today.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((today - ref) / 86400000);
+  if (diffDays < 0) return null; // 기준일 이전이면 아직 로테이션 시작 전
+  const weekNum = Math.floor(diffDays / 7);
+  return weekNum % duty.weeks.length;
+}
+let lastWeeklyDutySyncDate = null;
+function syncWeeklyDutyTodos() {
+  const data = loadData();
+  const duty = data.weeklyDuty;
+  if (!duty || duty.autoAlarm === false) return;
+  const now = new Date();
+  const wi = computeCurrentWeekIndex(duty, now);
+  if (wi == null) return;
+  const todayStr = ymd(now);
+  const isMonday = now.getDay() === 1;
+  const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const isMonthEdge = now.getDate() === 1 || now.getDate() === lastDayOfMonth;
+  const alarmTime = duty.alarmTime || '09:00';
+
+  let todos;
+  try { todos = loadTodos(); } catch { return; }
+  const activeSources = new Set();
+
+  function upsertDutyTodo(sourceId, taskName, assigneeField) {
+    const names = String(assigneeField || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (!names.length) return;
+    activeSources.add(sourceId);
+    const title = `[${names.join(', ')}] ${taskName}`;
+    const idx = todos.findIndex(t => t.weeklyDutySource === sourceId && t.date === todayStr);
+    const alarm = { enabled: true, mode: 'atTime', time: alarmTime, base: 'each' };
+    if (idx >= 0) {
+      todos[idx] = { ...todos[idx], title, alarm, alarmEnabled: true, time: alarmTime };
+    } else {
+      todos.push({
+        id: newId(), title, date: todayStr, due: '', note: '주간근무에서 자동 등록됨',
+        repeat: 'none', interval: 1,
+        alarm, alarmEnabled: true, time: alarmTime,
+        completedDates: [],
+        weeklyDutySource: sourceId,
+      });
+    }
+  }
+
+  (duty.dailyTasks || []).forEach(t => upsertDutyTodo(`wd_daily_${t.id}`, t.name, t.assignments?.[wi]));
+  if (isMonday) (duty.weeklyTasks || []).forEach(t => upsertDutyTodo(`wd_weekly_${t.id}`, t.name, t.assignments?.[wi]));
+  if (isMonthEdge) (duty.monthlyTasks || []).forEach(t => upsertDutyTodo(`wd_monthly_${t.id}`, t.name, t.assignee));
+
+  // 오늘 자동 생성됐던 항목인데 더는 대상이 아니면(업무 삭제·담당자 해제) 정리한다.
+  const cleaned = todos.filter(t => !t.weeklyDutySource || t.date !== todayStr || activeSources.has(t.weeklyDutySource));
+  saveTodos(cleaned);
+}
+function maybeSyncWeeklyDutyTodos() {
+  const today = ymd(new Date());
+  if (today === lastWeeklyDutySyncDate) return;
+  lastWeeklyDutySyncDate = today;
+  syncWeeklyDutyTodos();
+}
+
 const firedAlarms = new Map(); // `${id}_${occDay}_${mode}` → 마지막으로 울린 시각(ms). 리마인드 간격 계산에 씀.
 let alarmTimer = null;
 let alarmBlockerId = null;
@@ -839,6 +918,7 @@ function startAlarmScheduler() {
   // 매 틱마다 실제 시계 기준으로 다음 분까지 남은 시간을 다시 계산해 드리프트를 보정.
   if (alarmTimer) { clearTimeout(alarmTimer); alarmTimer = null; }
   const tick = () => {
+    try { maybeSyncWeeklyDutyTodos(); } catch { /* ignore */ }
     try { checkAlarms(); } catch { /* ignore */ }
     const msToNextMinute = 60000 - (Date.now() % 60000) + 200; // 다음 분 + 0.2초 여유
     alarmTimer = setTimeout(tick, Math.min(Math.max(msToNextMinute, 1000), 60200));
@@ -1415,7 +1495,13 @@ function registerHandlers() {
     const data = loadData();
     data.weeklyDuty = weeklyDuty;
     saveData(data);
+    try { syncWeeklyDutyTodos(); } catch { /* ignore */ } // 저장 직후 이 PC의 오늘 할일도 바로 반영
     return { ok: true };
+  });
+  // 오늘 담당자 할일을 지금 바로 다시 계산해 반영한다(설정을 막 바꿨을 때 확인용).
+  ipcMain.handle('weeklyDuty:syncTodosNow', () => {
+    try { syncWeeklyDutyTodos(); return { ok: true }; }
+    catch (e) { return { ok: false, error: e.message }; }
   });
 
   // ── 할일(반복 일정) — 설치본 공유 데이터가 아닌 이 PC 로컬 파일에서 관리 ──
