@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { fetchWeeklyDuty, saveWeeklyDuty, syncWeeklyDutyTodosNow, syncGetConfig, syncUpload } from '../lib/api';
 
 let uid = 0;
@@ -18,7 +19,7 @@ function computeCurrentWeekIndex(duty, now) {
 
 // 관리자가 업무·주차·직원을 자유롭게 추가·수정·삭제할 수 있는 업무 로테이션
 // 담당표. 담당자는 직원 목록에서 선택해서 지정하고(자유 입력 아님), 오늘 담당인
-// 업무는 매일 자동으로 "오늘의 할일"에 알람으로 등록된다.
+// 업무는 매일 자동으로 그 사람이 로그인했을 때만 보이는 "할일" 알람으로 등록된다.
 export default function WeeklyDuty({ adminUnlocked }) {
   const [duty, setDuty] = useState(null);
   const [dirty, setDirty] = useState(false);
@@ -70,10 +71,11 @@ export default function WeeklyDuty({ adminUnlocked }) {
   function addTask(section) {
     if (!requireAdmin()) return;
     setDuty(prev => {
+      const alarmTime = prev.alarmTime || '09:00';
       if (section === 'monthlyTasks') {
-        return { ...prev, monthlyTasks: [...prev.monthlyTasks, { id: newTaskId(), name: '', assignee: '' }] };
+        return { ...prev, monthlyTasks: [...prev.monthlyTasks, { id: newTaskId(), name: '', assignee: '', alarmTime }] };
       }
-      return { ...prev, [section]: [...prev[section], { id: newTaskId(), name: '', assignments: prev.weeks.map(() => '') }] };
+      return { ...prev, [section]: [...prev[section], { id: newTaskId(), name: '', alarmTime, assignments: prev.weeks.map(() => '') }] };
     });
     setDirty(true);
   }
@@ -86,6 +88,11 @@ export default function WeeklyDuty({ adminUnlocked }) {
   function updateTaskName(section, id, value) {
     if (!requireAdmin()) return;
     setDuty(prev => ({ ...prev, [section]: prev[section].map(t => t.id === id ? { ...t, name: value } : t) }));
+    setDirty(true);
+  }
+  function updateTaskAlarmTime(section, id, value) {
+    if (!requireAdmin()) return;
+    setDuty(prev => ({ ...prev, [section]: prev[section].map(t => t.id === id ? { ...t, alarmTime: value } : t) }));
     setDirty(true);
   }
   function updateAssignment(section, id, weekIdx, value) {
@@ -186,8 +193,11 @@ export default function WeeklyDuty({ adminUnlocked }) {
       {!adminUnlocked && (
         <p className="text-xs text-gray-400">🔒 읽기 전용 — 담당자를 바꾸려면 관리자로 로그인하세요.</p>
       )}
+      <p className="text-xs text-gray-400">
+        담당자로 지정된 계정이 로그인했을 때만 그 사람의 "오늘의 할일"에 알람이 뜹니다.
+      </p>
 
-      {/* 설정 — 기준일·알람시각·자동등록 여부, 이번 주 표시 */}
+      {/* 설정 — 기준일·자동등록 여부, 이번 주 표시 */}
       <div className="bg-white rounded-xl border border-gray-200 p-4 flex flex-wrap items-center gap-x-5 gap-y-2" onClick={e => e.stopPropagation()}>
         <span className="text-sm font-semibold text-blue-600 whitespace-nowrap">
           {weekIdx == null ? '기준일 이후부터 자동 계산됩니다' : `📌 이번 주: ${duty.weeks[weekIdx] || `${weekIdx + 1}주차`}`}
@@ -199,7 +209,7 @@ export default function WeeklyDuty({ adminUnlocked }) {
             className="border border-gray-200 rounded px-2 py-1 disabled:bg-gray-50 disabled:text-gray-400" />
         </label>
         <label className="flex items-center gap-1.5 text-xs text-gray-600">
-          알람 시각
+          새 업무 기본 알람 시각
           <input type="time" value={duty.alarmTime || '09:00'} disabled={!adminUnlocked}
             onChange={e => updateSetting({ alarmTime: e.target.value })}
             className="border border-gray-200 rounded px-2 py-1 disabled:bg-gray-50 disabled:text-gray-400" />
@@ -231,7 +241,7 @@ export default function WeeklyDuty({ adminUnlocked }) {
         </div>
         {adminUnlocked && (
           <div className="flex gap-2">
-            <input value={newStaffName} onChange={e => setNewStaffName(e.target.value)} placeholder="이름 입력"
+            <input value={newStaffName} onChange={e => setNewStaffName(e.target.value)} placeholder="이름 입력" spellCheck={false}
               onKeyDown={e => { if (e.key === 'Enter') addStaff(); }}
               className="border border-gray-200 rounded px-2 py-1 text-sm flex-1 max-w-[160px]" />
             <button onClick={addStaff} className="text-xs px-3 py-1.5 bg-gray-800 text-white rounded-lg hover:bg-gray-700 font-medium">+ 추가</button>
@@ -243,6 +253,7 @@ export default function WeeklyDuty({ adminUnlocked }) {
         openPicker={openPicker} setOpenPicker={setOpenPicker}
         onAddTask={() => addTask('dailyTasks')} onRemoveTask={id => removeTask('dailyTasks', id)}
         onUpdateName={(id, v) => updateTaskName('dailyTasks', id, v)}
+        onUpdateAlarmTime={(id, v) => updateTaskAlarmTime('dailyTasks', id, v)}
         onUpdateAssignment={(id, wi, v) => updateAssignment('dailyTasks', id, wi, v)}
         onUpdateWeekLabel={updateWeekLabel} onAddWeek={addWeek} onRemoveWeek={removeWeek} showWeekControls
       />
@@ -251,6 +262,7 @@ export default function WeeklyDuty({ adminUnlocked }) {
         openPicker={openPicker} setOpenPicker={setOpenPicker}
         onAddTask={() => addTask('weeklyTasks')} onRemoveTask={id => removeTask('weeklyTasks', id)}
         onUpdateName={(id, v) => updateTaskName('weeklyTasks', id, v)}
+        onUpdateAlarmTime={(id, v) => updateTaskAlarmTime('weeklyTasks', id, v)}
         onUpdateAssignment={(id, wi, v) => updateAssignment('weeklyTasks', id, wi, v)}
         onUpdateWeekLabel={updateWeekLabel} onAddWeek={addWeek} onRemoveWeek={removeWeek} showWeekControls={false}
       />
@@ -258,6 +270,7 @@ export default function WeeklyDuty({ adminUnlocked }) {
       <MonthlySection duty={duty} staff={staff} adminUnlocked={adminUnlocked}
         onAddTask={() => addTask('monthlyTasks')} onRemoveTask={id => removeTask('monthlyTasks', id)}
         onUpdateName={(id, v) => updateTaskName('monthlyTasks', id, v)} onUpdateAssignee={updateMonthlyAssignee}
+        onUpdateAlarmTime={(id, v) => updateTaskAlarmTime('monthlyTasks', id, v)}
       />
 
       <NotesSection notes={duty.notes} adminUnlocked={adminUnlocked} onChange={updateNotes} />
@@ -275,23 +288,36 @@ export default function WeeklyDuty({ adminUnlocked }) {
 }
 
 // 담당자 셀 — 직원 목록 중에서 체크박스로 골라 배정한다(여러 명 가능, 쉼표로 저장).
+// 드롭다운은 document.body에 포털로 그려서, 표를 감싼 가로 스크롤 영역(overflow-x)에
+// 세로로 잘리거나 스크롤이 생기지 않게 한다.
 function AssignCell({ pickerKey, value, staff, adminUnlocked, openPicker, setOpenPicker, onChange }) {
+  const btnRef = useRef(null);
+  const [pos, setPos] = useState(null);
   const names = String(value || '').split(',').map(s => s.trim()).filter(Boolean);
   const isOpen = openPicker === pickerKey;
+
   function toggleName(n) {
     const next = names.includes(n) ? names.filter(x => x !== n) : [...names, n];
     onChange(next.join(', '));
   }
+  function handleToggleOpen(e) {
+    e.stopPropagation();
+    if (isOpen) { setOpenPicker(null); return; }
+    const r = btnRef.current.getBoundingClientRect();
+    setPos({ top: r.bottom + 4, left: r.left + r.width / 2 });
+    setOpenPicker(pickerKey);
+  }
+
   return (
     <div className="relative">
-      <button type="button" disabled={!adminUnlocked}
-        onClick={e => { e.stopPropagation(); setOpenPicker(isOpen ? null : pickerKey); }}
+      <button ref={btnRef} type="button" disabled={!adminUnlocked} onClick={handleToggleOpen}
         className={`w-full text-center text-sm truncate ${names.length ? 'text-gray-700' : 'text-gray-300'} disabled:cursor-default`}
         title={names.join(', ') || undefined}>
         {names.length ? names.join(', ') : (adminUnlocked ? '선택' : '—')}
       </button>
-      {isOpen && adminUnlocked && (
-        <div className="absolute z-20 top-full left-1/2 -translate-x-1/2 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-2 w-40 max-h-52 overflow-y-auto"
+      {isOpen && adminUnlocked && pos && createPortal(
+        <div className="fixed z-[500] bg-white border border-gray-200 rounded-lg shadow-lg p-2 w-40 max-h-52 overflow-y-auto"
+          style={{ top: pos.top, left: pos.left, transform: 'translateX(-50%)' }}
           onClick={e => e.stopPropagation()}>
           {staff.length === 0 ? (
             <p className="text-xs text-gray-400 px-1 py-1">등록된 직원이 없습니다.</p>
@@ -301,7 +327,8 @@ function AssignCell({ pickerKey, value, staff, adminUnlocked, openPicker, setOpe
               {n}
             </label>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -309,9 +336,9 @@ function AssignCell({ pickerKey, value, staff, adminUnlocked, openPicker, setOpe
 
 // 업무 × 주차 배정표 — 일일점검·주간점검 둘 다 이 구조를 쓴다. 주차 열(weeks)은
 // 두 표가 공유하므로, 열 추가/삭제 버튼은 showWeekControls가 true인 표에서만 보여준다.
-function DutyGrid({ title, section, tasks, weeks, staff, adminUnlocked, openPicker, setOpenPicker, onAddTask, onRemoveTask, onUpdateName, onUpdateAssignment, onUpdateWeekLabel, onAddWeek, onRemoveWeek, showWeekControls }) {
+function DutyGrid({ title, section, tasks, weeks, staff, adminUnlocked, openPicker, setOpenPicker, onAddTask, onRemoveTask, onUpdateName, onUpdateAlarmTime, onUpdateAssignment, onUpdateWeekLabel, onAddWeek, onRemoveWeek, showWeekControls }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-visible" onClick={e => e.stopPropagation()}>
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden" onClick={e => e.stopPropagation()}>
       <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 bg-gray-50">
         <span className="font-semibold text-gray-800 text-sm">{title}</span>
         {adminUnlocked && (
@@ -327,11 +354,12 @@ function DutyGrid({ title, section, tasks, weeks, staff, adminUnlocked, openPick
         <table className="text-sm w-full">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200">
-              <th className="px-3 py-2 text-left text-gray-500 font-medium min-w-[220px]">업무</th>
+              <th className="px-3 py-2 text-left text-gray-500 font-medium min-w-[200px]">업무</th>
+              <th className="px-2 py-2 text-center text-gray-500 font-medium min-w-[90px]">⏰ 알람</th>
               {weeks.map((w, wi) => (
                 <th key={wi} className="px-2 py-2 text-center text-gray-500 font-medium min-w-[110px]">
                   <div className="flex items-center justify-center gap-1">
-                    <input value={w} disabled={!adminUnlocked} onChange={e => onUpdateWeekLabel(wi, e.target.value)}
+                    <input value={w} disabled={!adminUnlocked} spellCheck={false} onChange={e => onUpdateWeekLabel(wi, e.target.value)}
                       className="w-full text-center bg-transparent outline-none disabled:text-gray-500" />
                     {showWeekControls && adminUnlocked && weeks.length > 1 && (
                       <button onClick={() => onRemoveWeek(wi)} className="text-gray-300 hover:text-red-500 text-xs shrink-0" title="이 주차 삭제">✕</button>
@@ -346,8 +374,12 @@ function DutyGrid({ title, section, tasks, weeks, staff, adminUnlocked, openPick
             {tasks.map(t => (
               <tr key={t.id} className="hover:bg-gray-50">
                 <td className="px-3 py-2">
-                  <input value={t.name} disabled={!adminUnlocked} onChange={e => onUpdateName(t.id, e.target.value)}
+                  <input value={t.name} disabled={!adminUnlocked} spellCheck={false} onChange={e => onUpdateName(t.id, e.target.value)}
                     className="w-full bg-transparent outline-none text-gray-800 disabled:text-gray-700" placeholder="업무명" />
+                </td>
+                <td className="px-2 py-2 text-center">
+                  <input type="time" value={t.alarmTime || ''} disabled={!adminUnlocked} onChange={e => onUpdateAlarmTime(t.id, e.target.value)}
+                    className="w-full bg-transparent outline-none text-xs text-gray-600 disabled:text-gray-400" />
                 </td>
                 {weeks.map((_, wi) => (
                   <td key={wi} className="px-2 py-2 text-center">
@@ -364,7 +396,7 @@ function DutyGrid({ title, section, tasks, weeks, staff, adminUnlocked, openPick
               </tr>
             ))}
             {tasks.length === 0 && (
-              <tr><td colSpan={weeks.length + 2} className="px-3 py-6 text-center text-gray-400 text-sm">등록된 업무가 없습니다.</td></tr>
+              <tr><td colSpan={weeks.length + 3} className="px-3 py-6 text-center text-gray-400 text-sm">등록된 업무가 없습니다.</td></tr>
             )}
           </tbody>
         </table>
@@ -374,7 +406,7 @@ function DutyGrid({ title, section, tasks, weeks, staff, adminUnlocked, openPick
 }
 
 // 월간점검 — 항목마다 담당자 한 명(주차 개념 없음)이라 표 구조가 달라 별도로 그린다.
-function MonthlySection({ duty, staff, adminUnlocked, onAddTask, onRemoveTask, onUpdateName, onUpdateAssignee }) {
+function MonthlySection({ duty, staff, adminUnlocked, onAddTask, onRemoveTask, onUpdateName, onUpdateAssignee, onUpdateAlarmTime }) {
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden" onClick={e => e.stopPropagation()}>
       <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 bg-gray-50">
@@ -386,8 +418,10 @@ function MonthlySection({ duty, staff, adminUnlocked, onAddTask, onRemoveTask, o
       <div className="divide-y divide-gray-50">
         {duty.monthlyTasks.map(t => (
           <div key={t.id} className="flex items-center gap-3 px-5 py-2.5">
-            <input value={t.name} disabled={!adminUnlocked} onChange={e => onUpdateName(t.id, e.target.value)}
+            <input value={t.name} disabled={!adminUnlocked} spellCheck={false} onChange={e => onUpdateName(t.id, e.target.value)}
               className="flex-1 bg-transparent outline-none text-sm text-gray-800 disabled:text-gray-700" placeholder="점검 항목" />
+            <input type="time" value={t.alarmTime || ''} disabled={!adminUnlocked} onChange={e => onUpdateAlarmTime(t.id, e.target.value)}
+              className="w-24 text-center bg-transparent outline-none text-xs text-gray-600 disabled:text-gray-400 border-l border-gray-100 pl-3" />
             <select value={t.assignee || ''} disabled={!adminUnlocked} onChange={e => onUpdateAssignee(t.id, e.target.value)}
               className="w-32 text-center bg-transparent outline-none text-sm text-gray-600 disabled:text-gray-500 border-l border-gray-100 pl-3">
               <option value="">선택</option>
@@ -413,7 +447,7 @@ function NotesSection({ notes, adminUnlocked, onChange }) {
         <span className="font-semibold text-gray-800 text-sm">📝 분기점검, 해야할일, 특이사항 및 기타</span>
       </div>
       <div className="p-4">
-        <textarea value={notes || ''} disabled={!adminUnlocked} onChange={e => onChange(e.target.value)}
+        <textarea value={notes || ''} disabled={!adminUnlocked} spellCheck={false} onChange={e => onChange(e.target.value)}
           rows={5} placeholder="분기점검 계획, 해야 할 일, 특이사항 등을 자유롭게 적어두세요."
           className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-blue-400 disabled:bg-gray-50 disabled:text-gray-500" />
       </div>

@@ -697,10 +697,20 @@ function todoAlarm(todo) {
   return null;
 }
 
+// 현재 로그인한 계정의 사용자이름 — 주간근무 담당자 전용 할일을 그 사람에게만
+// 울리게 하는 데 쓴다. 로그인 안 했으면 null(그런 할일은 아무한테도 안 울림).
+function currentLoggedInUsername() {
+  if (!currentMemberId) return null;
+  const m = (loadData().memberAccounts || []).find(mm => mm.id === currentMemberId);
+  return m?.username || null;
+}
+
 // 지금(now) 이 todo의 알람을 울려야 하면 { key, occDay } 반환, 아니면 null.
-function todoAlarmDueNow(todo, now) {
+function todoAlarmDueNow(todo, now, currentUsername) {
   const a = todoAlarm(todo);
   if (!a || !a.enabled || !a.time) return null;
+  // 주간근무에서 자동 등록된 할일은 배정된 본인이 로그인해 있을 때만 울린다.
+  if (todo.weeklyDutyAssignee && todo.weeklyDutyAssignee !== currentUsername) return null;
   const todayStr = ymd(now);
   const nowHM = hm(now);
   const mode = a.mode || 'atTime';
@@ -831,35 +841,40 @@ function syncWeeklyDutyTodos() {
   const isMonday = now.getDay() === 1;
   const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const isMonthEdge = now.getDate() === 1 || now.getDate() === lastDayOfMonth;
-  const alarmTime = duty.alarmTime || '09:00';
+  const defaultAlarmTime = duty.alarmTime || '09:00';
 
   let todos;
   try { todos = loadTodos(); } catch { return; }
   const activeSources = new Set();
 
-  function upsertDutyTodo(sourceId, taskName, assigneeField) {
+  // 담당자별로 각각 따로 할일을 만든다 — 제목엔 이름 대신 분류만 넣고
+  // (weeklyDutyAssignee로 표시해두면) 로그인한 본인에게만 보이고 울리게 할 수 있다.
+  function upsertDutyTodo(sourceId, category, taskName, assigneeField, alarmTime) {
     const names = String(assigneeField || '').split(',').map(s => s.trim()).filter(Boolean);
-    if (!names.length) return;
-    activeSources.add(sourceId);
-    const title = `[${names.join(', ')}] ${taskName}`;
-    const idx = todos.findIndex(t => t.weeklyDutySource === sourceId && t.date === todayStr);
-    const alarm = { enabled: true, mode: 'atTime', time: alarmTime, base: 'each' };
-    if (idx >= 0) {
-      todos[idx] = { ...todos[idx], title, alarm, alarmEnabled: true, time: alarmTime };
-    } else {
-      todos.push({
-        id: newId(), title, date: todayStr, due: '', note: '주간근무에서 자동 등록됨',
-        repeat: 'none', interval: 1,
-        alarm, alarmEnabled: true, time: alarmTime,
-        completedDates: [],
-        weeklyDutySource: sourceId,
-      });
-    }
+    const time = alarmTime || defaultAlarmTime;
+    names.forEach(name => {
+      const src = `${sourceId}_${name}`;
+      activeSources.add(src);
+      const title = `[${category}] ${taskName}`;
+      const idx = todos.findIndex(t => t.weeklyDutySource === src && t.date === todayStr);
+      const alarm = { enabled: true, mode: 'atTime', time, base: 'each' };
+      if (idx >= 0) {
+        todos[idx] = { ...todos[idx], title, alarm, alarmEnabled: true, time, weeklyDutyAssignee: name };
+      } else {
+        todos.push({
+          id: newId(), title, date: todayStr, due: '', note: '주간근무에서 자동 등록됨',
+          repeat: 'none', interval: 1,
+          alarm, alarmEnabled: true, time,
+          completedDates: [],
+          weeklyDutySource: src, weeklyDutyAssignee: name,
+        });
+      }
+    });
   }
 
-  (duty.dailyTasks || []).forEach(t => upsertDutyTodo(`wd_daily_${t.id}`, t.name, t.assignments?.[wi]));
-  if (isMonday) (duty.weeklyTasks || []).forEach(t => upsertDutyTodo(`wd_weekly_${t.id}`, t.name, t.assignments?.[wi]));
-  if (isMonthEdge) (duty.monthlyTasks || []).forEach(t => upsertDutyTodo(`wd_monthly_${t.id}`, t.name, t.assignee));
+  (duty.dailyTasks || []).forEach(t => upsertDutyTodo(`wd_daily_${t.id}`, '일일점검', t.name, t.assignments?.[wi], t.alarmTime));
+  if (isMonday) (duty.weeklyTasks || []).forEach(t => upsertDutyTodo(`wd_weekly_${t.id}`, '주간점검', t.name, t.assignments?.[wi], t.alarmTime));
+  if (isMonthEdge) (duty.monthlyTasks || []).forEach(t => upsertDutyTodo(`wd_monthly_${t.id}`, '월간점검', t.name, t.assignee, t.alarmTime));
 
   // 오늘 자동 생성됐던 항목인데 더는 대상이 아니면(업무 삭제·담당자 해제) 정리한다.
   const cleaned = todos.filter(t => !t.weeklyDutySource || t.date !== todayStr || activeSources.has(t.weeklyDutySource));
@@ -880,13 +895,14 @@ function checkAlarms() {
   try { todos = loadTodos(); } catch { return; }
   if (!todos.length) return;
   const now = new Date();
+  const currentUsername = currentLoggedInUsername();
   // 앱이 꺼져 있다가 다시 켜지는 등, 같은 확인 틱에 서로 다른 할일 알람이 한꺼번에
   // 밀려서 울릴 차례가 되면 전부 순서대로 띄우지 않는다 — 가장 최근(마지막) 것만
   // 실제로 알리고, 나머지는 확인 처리만 해서 조용히 넘어간다(팝업이 줄줄이 쌓여
   // "확인"을 여러 번 눌러야 하는 상황 방지).
   const due = [];
   todos.forEach(t => {
-    const fire = todoAlarmDueNow(t, now);
+    const fire = todoAlarmDueNow(t, now, currentUsername);
     if (fire) due.push({ todo: t, fire });
   });
   if (!due.length) return;

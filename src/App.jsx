@@ -248,7 +248,7 @@ export default function App() {
 
         <main className="flex-1 overflow-y-auto">
           {page === 'dashboard' && <Dashboard year={year} />}
-          {page === 'todo' && <TodoToday />}
+          {page === 'todo' && <TodoToday currentMember={currentMember} />}
           {page === 'calendar' && (
             <CalendarView year={year} onYearChange={setYear} adminUnlocked={adminUnlocked}
               jumpTarget={scheduleJumpTarget} onJumpTargetConsumed={() => setScheduleJumpTarget(null)} />

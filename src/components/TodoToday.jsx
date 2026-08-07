@@ -311,7 +311,7 @@ function Section({ title, icon, count, countColor, children }) {
   );
 }
 
-export default function TodoToday() {
+export default function TodoToday({ currentMember }) {
   const today = new Date();
   const year = today.getFullYear();
   const month = today.getMonth() + 1;
@@ -713,10 +713,13 @@ export default function TodoToday() {
 
       {/* 할일 목록 — 일간/주간/월간 (더블클릭으로 완료) */}
       {(() => {
+        // 주간근무에서 자동 등록된 할일(weeklyDutyAssignee)은 배정된 본인이
+        // 로그인해 있을 때만 보이게 한다. 일반 할일은 그대로 전부 보인다.
+        const visibleTodos = todos.filter(t => !t.weeklyDutyAssignee || t.weeklyDutyAssignee === currentMember?.username);
         // 날짜별 발생 할일 그룹
         const groups = todoDates.map(d => {
           const ds = fmtDate(d);
-          const items = todos.filter(t => todoOccursOn(t, ds))
+          const items = visibleTodos.filter(t => todoOccursOn(t, ds))
             .sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
           return { ds, d, items };
         }).filter(g => g.items.length > 0);
