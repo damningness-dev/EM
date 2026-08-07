@@ -132,8 +132,6 @@ function fmtNoteTime(ts) {
 
 const NOTE_DEFAULT_W = 220;
 const NOTE_DEFAULT_H = 240;
-const NOTE_MIN_W = 160;
-const NOTE_MIN_H = 160;
 
 const NOTE_SNAP_TOLERANCE = 6; // px — 이 이내로 가까우면 "크기가 같다"고 보고 보조선을 보여준다
 
@@ -217,9 +215,13 @@ function NoteCard({ note, dragId, setDragId, reorderNotes, openPaletteId, setOpe
   useEffect(() => {
     const el = cardRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(entries => {
-      const { width, height } = entries[0].contentRect;
-      const w = Math.round(width), h = Math.round(height);
+    // offsetWidth/offsetHeight(테두리 상자)를 쓴다 — Tailwind preflight가 전역
+    // box-sizing:border-box를 적용해 인라인 style.width/height도 테두리 상자
+    // 기준인데, ResizeObserver의 contentRect는 항상 내용 상자(패딩 제외) 크기라
+    // 그걸 그대로 저장하면 다시 렌더링될 때마다 패딩만큼 작아져서 "늘려도
+    // 자꾸 줄어드는" 것처럼 보였다.
+    const ro = new ResizeObserver(() => {
+      const w = el.offsetWidth, h = el.offsetHeight;
       // 실시간 보조선 갱신 — 잠시(350ms) 크기 변화가 없으면 조절이 끝난 것으로 보고 끈다.
       onLiveResize(w, h);
       if (liveEndTimer.current) clearTimeout(liveEndTimer.current);
@@ -249,7 +251,6 @@ function NoteCard({ note, dragId, setDragId, reorderNotes, openPaletteId, setOpe
       style={{
         backgroundColor: note.color,
         width: note.w || NOTE_DEFAULT_W, height: note.h || NOTE_DEFAULT_H,
-        minWidth: NOTE_MIN_W, minHeight: NOTE_MIN_H,
         resize: 'both', overflow: 'auto',
       }}>
       {/* 폭이 맞으면 오른쪽 세로 보조선, 높이가 맞으면 아래쪽 가로 보조선 */}
