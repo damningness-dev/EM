@@ -3,7 +3,7 @@ import { formatDate } from '../utils/dateUtils';
 import {
   fetchUsagePoints, upsertUsagePoint, deleteUsagePoint,
   fetchUsagePointCategories, saveUsagePointCategories,
-  saveCalibFile, uploadCalibAttachment, openCalibFile, revealCalibFile, syncGetConfig, syncUpload,
+  saveCalibFile, uploadCalibAttachment, revealCalibFile, resolveCalibImage, syncGetConfig, syncUpload,
 } from '../lib/api';
 
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
@@ -71,7 +71,8 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [notice, setNotice] = useState(null);
   const [lightbox, setLightbox] = useState(null);
-  const [openingId, setOpeningId] = useState(null);
+  const [hqUrl, setHqUrl] = useState(null);
+  const [hqLoading, setHqLoading] = useState(false);
   const [expanded, setExpanded] = useState(() => new Set());
   const [showCatManager, setShowCatManager] = useState(false);
   const [catDraft, setCatDraft] = useState(null);
@@ -83,6 +84,24 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  // 미리보기(사진)를 클릭해 확대창을 열면, 로컬/캐시에 없으면 공유 Gist에서
+  // 원본을 받아 캐시에 저장한 뒤 항상 고화질(최대 2000px 저장본)로 보여준다.
+  // 받는 동안에는 압축된 작은 미리보기를 대신 보여준다.
+  useEffect(() => {
+    setHqUrl(null);
+    if (!lightbox || !isElectron) return;
+    if (!lightbox.photoFilePath && !lightbox.photoGistKey) return;
+    setHqLoading(true);
+    resolveCalibImage(lightbox.photoFilePath, lightbox.photoGistKey, lightbox.photoFileName, 'usagepoints')
+      .then(r => {
+        if (r?.ok) setHqUrl(r.dataUrl);
+        else showNotice('고화질 이미지를 불러오지 못했습니다: ' + (r?.error || ''), true);
+      })
+      .catch(e => showNotice('고화질 이미지를 불러오지 못했습니다: ' + e.message, true))
+      .finally(() => setHqLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lightbox?.id]);
 
   function showNotice(text, isError) {
     setNotice({ text, isError });
@@ -248,17 +267,6 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
       showNotice('진행상황이 저장되었습니다.');
     } catch (e) {
       showNotice('저장 실패: ' + e.message, true);
-    }
-  }
-
-  async function openOriginal(item) {
-    if (!item.photoFilePath && !item.photoGistKey) return;
-    setOpeningId(item.id);
-    try {
-      const r = await openCalibFile(item.photoFilePath, item.photoGistKey, item.photoFileName, 'usagepoints');
-      if (r && !r.ok) showNotice('열기 실패: ' + (r.error || ''), true);
-    } finally {
-      setOpeningId(null);
     }
   }
 
@@ -516,20 +524,23 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
       {lightbox && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[300] p-6" onClick={() => setLightbox(null)}>
           <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-4 space-y-3" onClick={e => e.stopPropagation()}>
-            <img src={lightbox.photoThumb} alt="사진" className="w-full max-h-[70vh] object-contain rounded-lg" />
-            <p className="text-[11px] text-gray-400">위 미리보기는 더 작게 압축되어 있습니다. "고화질로 열기"로 저장된 사진(최대 2000px)을 확인하세요.</p>
+            <div className="relative">
+              <img src={hqUrl || lightbox.photoThumb} alt="사진" className="w-full max-h-[70vh] object-contain rounded-lg" />
+              {hqLoading && !hqUrl && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/30 rounded-lg">
+                  <span className="text-white text-xs bg-black/50 px-3 py-1.5 rounded-full">⏳ 고화질 사진 받는 중…</span>
+                </div>
+              )}
+            </div>
+            <p className="text-[11px] text-gray-400">
+              {hqUrl ? '고화질 사진(최대 2000px)입니다.' : hqLoading ? '' : '작게 압축된 미리보기입니다.'}
+            </p>
             <div className="flex justify-between items-center">
               <p className="text-xs text-gray-400 truncate">{lightbox.photoFileName || ''}</p>
               <div className="flex gap-2">
                 {(lightbox.photoFilePath || lightbox.photoGistKey) && isElectron && (
-                  <>
-                    <button onClick={() => openOriginal(lightbox)} disabled={openingId === lightbox.id}
-                      className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs disabled:opacity-50">
-                      {openingId === lightbox.id ? '⏳ 다운로드 중…' : '📄 고화질로 열기'}
-                    </button>
-                    <button onClick={() => revealCalibFile(lightbox.photoFilePath, lightbox.photoGistKey, lightbox.photoFileName, 'usagepoints')}
-                      className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs">📁 폴더 열기</button>
-                  </>
+                  <button onClick={() => revealCalibFile(lightbox.photoFilePath, lightbox.photoGistKey, lightbox.photoFileName, 'usagepoints')}
+                    className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs">📁 폴더 열기</button>
                 )}
                 <button onClick={() => setLightbox(null)} className="px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50">닫기</button>
               </div>

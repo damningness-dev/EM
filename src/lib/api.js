@@ -30,6 +30,11 @@ export async function openCalibFile(filePath, gistKey, fileName, category = 'cal
 export async function revealCalibFile(filePath, gistKey, fileName, category = 'calibration') {
   return api.invoke('calibFile:reveal', { filePath, gistKey, fileName, category });
 }
+// 외부 뷰어를 띄우지 않고, 로컬/캐시/공유 Gist에서 원본 파일을 받아 앱 안에서
+// 바로 보여줄 수 있는 data URL로 돌려준다(사용점 사진 미리보기 고화질 표시용).
+export async function resolveCalibImage(filePath, gistKey, fileName, category = 'calibration') {
+  return api.invoke('calibFile:resolveImage', { filePath, gistKey, fileName, category });
+}
 // 첨부파일 공유 기능이 생기기 전에 로컬에만 있던 기존 첨부파일들을 한 번에
 // 첨부파일 전용 Gist로 올려 다른 PC와 공유되게 하는 일회성 이관 기능.
 export async function backfillCalibAttachments() {

@@ -1043,6 +1043,41 @@ function registerHandlers() {
     return path.join(attachCacheDir(category, gistKey), safeName);
   }
 
+  // filePath(로컬 원본) → 이 PC 캐시 → 공유 첨부파일 Gist(다운로드+캐시 저장) 순으로
+  // 실제 파일을 찾아 로컬 경로를 반환한다. calibFile:open(외부 뷰어로 열기)과
+  // calibFile:resolveImage(앱 안에서 바로 보여주기) 둘 다 이 로직을 함께 쓴다.
+  async function resolveAttachmentLocalPath({ filePath, gistKey, fileName, category }) {
+    if (filePath && fs.existsSync(filePath)) return { ok: true, path: filePath };
+    if (!gistKey) return { ok: false, error: '파일을 찾을 수 없습니다' };
+    const cachePath = attachCachePath(category, gistKey, fileName);
+    if (fs.existsSync(cachePath)) return { ok: true, path: cachePath };
+    const data = loadData();
+    if (!data.attachGistId) return { ok: false, error: '파일을 찾을 수 없습니다 (공유된 첨부파일 없음)' };
+    const cfg = loadSyncConfig();
+    const r = await ghRequest('GET', `https://api.github.com/gists/${data.attachGistId}`, { token: effectiveToken(cfg) || undefined });
+    const file = r.json.files && r.json.files[gistKey];
+    if (!file) return { ok: false, error: '공유된 첨부파일을 찾을 수 없습니다' };
+    let content = file.content;
+    if (file.truncated && file.raw_url) {
+      const res = await httpGet(file.raw_url);
+      content = await new Promise((resolve, reject) => {
+        const chunks = [];
+        res.on('data', c => chunks.push(c));
+        res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+        res.on('error', reject);
+      });
+    }
+    fs.writeFileSync(cachePath, Buffer.from(content, 'base64'));
+    return { ok: true, path: cachePath };
+  }
+  function guessImageMime(name) {
+    const ext = String(name || '').split('.').pop().toLowerCase();
+    if (ext === 'png') return 'image/png';
+    if (ext === 'gif') return 'image/gif';
+    if (ext === 'webp') return 'image/webp';
+    return 'image/jpeg';
+  }
+
   // 첨부파일 전용 Gist ID 확보(없으면 새로 만들어 공유 데이터에 저장).
   // 성적서 PDF 등 첨부파일을 일정 데이터와 같은 Gist에 넣으면 매번 자동 동기화되는
   // 응답이 커져 느려지고 rate limit도 더 쉽게 소진되므로, 별도 Gist에 두고 "열기"를
@@ -1118,36 +1153,23 @@ function registerHandlers() {
   ipcMain.handle('calibFile:open', async (_e, arg) => {
     try {
       const { filePath, gistKey, fileName, category } = typeof arg === 'string' ? { filePath: arg } : (arg || {});
-      if (filePath && fs.existsSync(filePath)) {
-        const r = await shell.openPath(filePath);
-        return { ok: !r, error: r || undefined };
-      }
-      if (!gistKey) return { ok: false, error: '파일을 찾을 수 없습니다' };
-      const cachePath = attachCachePath(category, gistKey, fileName);
-      if (fs.existsSync(cachePath)) {
-        const r = await shell.openPath(cachePath);
-        return { ok: !r, error: r || undefined, newPath: cachePath };
-      }
-      // 로컬(원본 PC·이 PC 캐시 모두)에 없으면 첨부파일 전용 Gist에서 내려받는다.
-      const data = loadData();
-      if (!data.attachGistId) return { ok: false, error: '파일을 찾을 수 없습니다 (공유된 첨부파일 없음)' };
-      const cfg = loadSyncConfig();
-      const r = await ghRequest('GET', `https://api.github.com/gists/${data.attachGistId}`, { token: effectiveToken(cfg) || undefined });
-      const file = r.json.files && r.json.files[gistKey];
-      if (!file) return { ok: false, error: '공유된 첨부파일을 찾을 수 없습니다' };
-      let content = file.content;
-      if (file.truncated && file.raw_url) {
-        const res = await httpGet(file.raw_url);
-        content = await new Promise((resolve, reject) => {
-          const chunks = [];
-          res.on('data', c => chunks.push(c));
-          res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
-          res.on('error', reject);
-        });
-      }
-      fs.writeFileSync(cachePath, Buffer.from(content, 'base64'));
-      const r2 = await shell.openPath(cachePath);
-      return { ok: !r2, error: r2 || undefined, newPath: cachePath };
+      const resolved = await resolveAttachmentLocalPath({ filePath, gistKey, fileName, category });
+      if (!resolved.ok) return resolved;
+      const r = await shell.openPath(resolved.path);
+      return { ok: !r, error: r || undefined, newPath: resolved.path };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  // 사용점 사진처럼 앱 안에서 바로(외부 뷰어 없이) 고화질로 보여줄 때 쓴다 —
+  // 로컬/캐시에 없으면 공유 Gist에서 받아 캐시에 저장한 뒤, 그 파일을 읽어
+  // data URL로 돌려준다(렌더러가 file:// 접근 없이 바로 <img>에 넣을 수 있게).
+  ipcMain.handle('calibFile:resolveImage', async (_e, arg) => {
+    try {
+      const { filePath, gistKey, fileName, category } = typeof arg === 'string' ? { filePath: arg } : (arg || {});
+      const resolved = await resolveAttachmentLocalPath({ filePath, gistKey, fileName, category });
+      if (!resolved.ok) return resolved;
+      const b64 = fs.readFileSync(resolved.path).toString('base64');
+      return { ok: true, dataUrl: `data:${guessImageMime(fileName || resolved.path)};base64,${b64}`, path: resolved.path };
     } catch (e) { return { ok: false, error: e.message }; }
   });
 
