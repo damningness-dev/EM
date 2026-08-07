@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, fetchTodos, upsertTodo, deleteTodo, toggleTodoDone, fetchHolidays, getTodoReminderInterval, setTodoReminderInterval } from '../lib/api';
 import { effectiveCalib } from '../utils/calibUtils';
 import { buildHolidayMap } from '../lib/schedule';
@@ -130,6 +130,11 @@ function fmtNoteTime(ts) {
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+const NOTE_DEFAULT_W = 220;
+const NOTE_DEFAULT_H = 240;
+const NOTE_MIN_W = 160;
+const NOTE_MIN_H = 160;
+
 function StickyNotesBoard() {
   const [notes, setNotes] = useState(() => {
     try { const s = JSON.parse(localStorage.getItem(NOTE_STORE_KEY)); return Array.isArray(s) ? s : []; } catch { return []; }
@@ -143,10 +148,11 @@ function StickyNotesBoard() {
 
   function addNote() {
     const now = Date.now();
-    setNotes(prev => [{ id: `n${now}`, title: '', text: '', color: NOTE_COLORS[0], createdAt: now, updatedAt: now }, ...prev]);
+    setNotes(prev => [{ id: `n${now}`, title: '', text: '', color: NOTE_COLORS[0], createdAt: now, updatedAt: now, w: NOTE_DEFAULT_W, h: NOTE_DEFAULT_H }, ...prev]);
   }
-  function updateNote(id, patch) {
-    setNotes(prev => prev.map(n => n.id === id ? { ...n, ...patch, updatedAt: Date.now() } : n));
+  // silent=true면 작성/수정 시각을 갱신하지 않는다 (크기 조절처럼 내용 편집이 아닌 변경용).
+  function updateNote(id, patch, silent) {
+    setNotes(prev => prev.map(n => n.id === id ? { ...n, ...patch, ...(silent ? {} : { updatedAt: Date.now() }) } : n));
   }
   function removeNote(id) {
     if (!confirm('이 메모를 삭제하시겠습니까?')) return;
@@ -178,54 +184,94 @@ function StickyNotesBoard() {
           아직 메모가 없습니다.<br />"+ 메모"로 포스트잇을 붙여보세요.
         </p>
       ) : (
-        <div className="grid grid-cols-2 gap-3 content-start max-h-[calc(100vh-160px)] overflow-y-auto pr-0.5">
+        <div className="flex flex-wrap content-start gap-3 max-h-[calc(100vh-160px)] overflow-y-auto pr-0.5">
           {notes.map(note => (
-            <div key={note.id}
-              onDragOver={e => { if (dragId) e.preventDefault(); }}
-              onDrop={e => { e.preventDefault(); reorderNotes(dragId, note.id); setDragId(null); }}
-              className={`rounded-lg shadow-sm p-3 transition-opacity ${dragId === note.id ? 'opacity-40' : ''}`}
-              style={{ backgroundColor: note.color }}>
-              <div className="flex items-center justify-between mb-1.5">
-                <span draggable
-                  onDragStart={e => { e.dataTransfer.setData('text/plain', note.id); e.dataTransfer.effectAllowed = 'move'; setDragId(note.id); }}
-                  onDragEnd={() => setDragId(null)}
-                  className="cursor-move text-black/40 hover:text-black/70 text-xs select-none" title="드래그해서 순서 변경">⠿</span>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => setOpenPaletteId(p => p === note.id ? null : note.id)}
-                    className="text-xs opacity-60 hover:opacity-100" title="색상 변경">🎨</button>
-                  <button onClick={() => removeNote(note.id)} className="text-black/30 hover:text-black/60 text-xs leading-none" title="메모 삭제">✕</button>
-                </div>
-              </div>
-              {openPaletteId === note.id && (
-                <div className="flex items-center gap-1.5 mb-2 bg-white/60 rounded-lg p-1.5 flex-wrap">
-                  {NOTE_COLORS.map(c => (
-                    <button key={c} onClick={() => { updateNote(note.id, { color: c }); setOpenPaletteId(null); }}
-                      className={`w-5 h-5 rounded-full border-2 ${note.color === c ? 'border-gray-700' : 'border-transparent'}`}
-                      style={{ backgroundColor: c }} title={c} />
-                  ))}
-                </div>
-              )}
-              <input
-                value={note.title || ''}
-                onChange={e => updateNote(note.id, { title: e.target.value })}
-                placeholder="제목"
-                className="w-full bg-transparent text-sm font-bold text-gray-800 outline-none placeholder:text-gray-500/50 placeholder:font-normal"
-              />
-              <hr className="border-t border-black/10 my-1.5" />
-              <textarea
-                value={note.text}
-                onChange={e => updateNote(note.id, { text: e.target.value })}
-                placeholder="메모를 입력하세요..."
-                rows={4}
-                className="w-full bg-transparent text-sm text-gray-800 resize-none outline-none placeholder:text-gray-500/60"
-              />
-              <p className="text-[10px] text-black/35 mt-1 text-right">
-                {note.updatedAt && note.updatedAt !== note.createdAt ? `수정 ${fmtNoteTime(note.updatedAt)}` : `작성 ${fmtNoteTime(note.createdAt)}`}
-              </p>
-            </div>
+            <NoteCard key={note.id} note={note} dragId={dragId} setDragId={setDragId} reorderNotes={reorderNotes}
+              openPaletteId={openPaletteId} setOpenPaletteId={setOpenPaletteId}
+              updateNote={updateNote} removeNote={removeNote} />
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// 카드 오른쪽 아래 모서리를 드래그해 크기를 조절할 수 있는(resize:both) 포스트잇 한 장.
+// 제목칸은 입력할 때마다 내용에 맞춰 높이를 늘려 항상 전부 보이게 한다.
+function NoteCard({ note, dragId, setDragId, reorderNotes, openPaletteId, setOpenPaletteId, updateNote, removeNote }) {
+  const cardRef = useRef(null);
+  const titleRef = useRef(null);
+  const resizeTimer = useRef(null);
+
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(entries => {
+      const { width, height } = entries[0].contentRect;
+      if (resizeTimer.current) clearTimeout(resizeTimer.current);
+      resizeTimer.current = setTimeout(() => {
+        updateNote(note.id, { w: Math.round(width), h: Math.round(height) }, true);
+      }, 250);
+    });
+    ro.observe(el);
+    return () => { ro.disconnect(); if (resizeTimer.current) clearTimeout(resizeTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [note.id]);
+
+  useEffect(() => {
+    const el = titleRef.current;
+    if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; }
+  }, [note.title]);
+
+  return (
+    <div ref={cardRef}
+      onDragOver={e => { if (dragId) e.preventDefault(); }}
+      onDrop={e => { e.preventDefault(); reorderNotes(dragId, note.id); setDragId(null); }}
+      className={`rounded-lg shadow-sm p-3 flex flex-col transition-opacity ${dragId === note.id ? 'opacity-40' : ''}`}
+      style={{
+        backgroundColor: note.color,
+        width: note.w || NOTE_DEFAULT_W, height: note.h || NOTE_DEFAULT_H,
+        minWidth: NOTE_MIN_W, minHeight: NOTE_MIN_H,
+        resize: 'both', overflow: 'auto',
+      }}>
+      <div className="flex items-center justify-between mb-1.5 shrink-0">
+        <span draggable
+          onDragStart={e => { e.dataTransfer.setData('text/plain', note.id); e.dataTransfer.effectAllowed = 'move'; setDragId(note.id); }}
+          onDragEnd={() => setDragId(null)}
+          className="cursor-move text-black/40 hover:text-black/70 text-xs select-none" title="드래그해서 순서 변경">⠿</span>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setOpenPaletteId(p => p === note.id ? null : note.id)}
+            className="text-xs opacity-60 hover:opacity-100" title="색상 변경">🎨</button>
+          <button onClick={() => removeNote(note.id)} className="text-black/30 hover:text-black/60 text-xs leading-none" title="메모 삭제">✕</button>
+        </div>
+      </div>
+      {openPaletteId === note.id && (
+        <div className="flex items-center gap-1.5 mb-2 bg-white/60 rounded-lg p-1.5 flex-wrap shrink-0">
+          {NOTE_COLORS.map(c => (
+            <button key={c} onClick={() => { updateNote(note.id, { color: c }); setOpenPaletteId(null); }}
+              className={`w-5 h-5 rounded-full border-2 ${note.color === c ? 'border-gray-700' : 'border-transparent'}`}
+              style={{ backgroundColor: c }} title={c} />
+          ))}
+        </div>
+      )}
+      <textarea
+        ref={titleRef}
+        value={note.title || ''}
+        onChange={e => updateNote(note.id, { title: e.target.value })}
+        placeholder="제목"
+        rows={1}
+        className="w-full bg-transparent text-sm font-bold text-gray-800 outline-none resize-none overflow-hidden shrink-0 placeholder:text-gray-500/50 placeholder:font-normal"
+      />
+      <hr className="border-t border-black/10 my-1.5 shrink-0" />
+      <textarea
+        value={note.text}
+        onChange={e => updateNote(note.id, { text: e.target.value })}
+        placeholder="메모를 입력하세요..."
+        className="w-full flex-1 bg-transparent text-sm text-gray-800 resize-none outline-none placeholder:text-gray-500/60"
+      />
+      <p className="text-[10px] text-black/35 mt-1 text-right shrink-0">
+        {note.updatedAt && note.updatedAt !== note.createdAt ? `수정 ${fmtNoteTime(note.updatedAt)}` : `작성 ${fmtNoteTime(note.createdAt)}`}
+      </p>
     </div>
   );
 }
@@ -457,8 +503,8 @@ export default function TodoToday() {
   const ahuDone = ahuTasks.filter(t => t.done).length;
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
-    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_420px] gap-6 items-start">
+    <div className="p-6 max-w-7xl mx-auto">
+    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_560px] gap-6 items-start">
     <div className="space-y-5 min-w-0">
       {/* 헤더 */}
       <div className="flex items-end justify-between flex-wrap gap-3">
