@@ -772,23 +772,30 @@ function checkAlarms() {
   try { todos = loadTodos(); } catch { return; }
   if (!todos.length) return;
   const now = new Date();
+  // 앱이 꺼져 있다가 다시 켜지는 등, 같은 확인 틱에 서로 다른 할일 알람이 한꺼번에
+  // 밀려서 울릴 차례가 되면 전부 순서대로 띄우지 않는다 — 가장 최근(마지막) 것만
+  // 실제로 알리고, 나머지는 확인 처리만 해서 조용히 넘어간다(팝업이 줄줄이 쌓여
+  // "확인"을 여러 번 눌러야 하는 상황 방지).
+  const due = [];
   todos.forEach(t => {
     const fire = todoAlarmDueNow(t, now);
-    if (!fire) return;
-    firedAlarms.set(fire.key, now.getTime());
-    // 1) 데스크톱 팝업 창 (항상 위) — 한 번에 하나씩, 확인 전까지 유지 + 대기열
-    enqueueAlarm(t);
-    // 2) 작업표시줄 깜빡임
-    try { if (mainWin && !mainWin.isDestroyed()) mainWin.flashFrame(true); } catch { /* ignore */ }
-    // 3) 윈도우 네이티브 토스트 알림 (환경에 따라 표시)
-    try {
-      if (Notification.isSupported()) {
-        const n = new Notification({ title: '⏰ 할일 알림', body: (t.title || '할일') + (t.note ? `\n${t.note}` : ''), silent: false });
-        n.on('click', () => { if (mainWin && !mainWin.isDestroyed()) { mainWin.show(); mainWin.focus(); } });
-        n.show();
-      }
-    } catch { /* ignore */ }
+    if (fire) due.push({ todo: t, fire });
   });
+  if (!due.length) return;
+  due.forEach(({ fire }) => firedAlarms.set(fire.key, now.getTime()));
+  const t = due[due.length - 1].todo;
+  // 1) 데스크톱 팝업 창 (항상 위) — 한 번에 하나씩, 확인 전까지 유지 + 대기열
+  enqueueAlarm(t);
+  // 2) 작업표시줄 깜빡임
+  try { if (mainWin && !mainWin.isDestroyed()) mainWin.flashFrame(true); } catch { /* ignore */ }
+  // 3) 윈도우 네이티브 토스트 알림 (환경에 따라 표시)
+  try {
+    if (Notification.isSupported()) {
+      const n = new Notification({ title: '⏰ 할일 알림', body: (t.title || '할일') + (t.note ? `\n${t.note}` : ''), silent: false });
+      n.on('click', () => { if (mainWin && !mainWin.isDestroyed()) { mainWin.show(); mainWin.focus(); } });
+      n.show();
+    }
+  } catch { /* ignore */ }
 }
 function startAlarmScheduler() {
   // 윈도우가 백그라운드 앱을 절전 스로틀링하면 타이머가 멈춰 알람이 밀린다.
