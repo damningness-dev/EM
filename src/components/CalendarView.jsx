@@ -245,6 +245,20 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   }, []);
   const [optimizePopup, setOptimizePopup] = useState(false);
   const [viewMode, setViewMode] = useState('calendar'); // 'calendar' | 'table'
+
+  // 인쇄 배율 — 기본은 자동 맞춤(달력은 실측 후 글씨를 줄여 한 페이지에 맞춤,
+  // 표는 자연스럽게 흐름). 수동으로 켜면 자동 계산을 건너뛰고 사용자가 고른
+  // 배율(zoom)을 그대로 적용한다. 이 PC에 마지막 선택을 기억해둔다.
+  const [showPrintScale, setShowPrintScale] = useState(false);
+  const [printScaleMode, setPrintScaleMode] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('em-print-scale'))?.mode === 'manual' ? 'manual' : 'auto'; } catch { return 'auto'; }
+  });
+  const [printScalePercent, setPrintScalePercent] = useState(() => {
+    try { const s = JSON.parse(localStorage.getItem('em-print-scale')); return Number.isFinite(s?.percent) ? s.percent : 100; } catch { return 100; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('em-print-scale', JSON.stringify({ mode: printScaleMode, percent: printScalePercent })); } catch { /* ignore */ }
+  }, [printScaleMode, printScalePercent]);
   const [optimizeCapacities, setOptimizeCapacities] = useState(() => {
     try {
       const saved = localStorage.getItem('em-daily-capacities');
@@ -642,6 +656,10 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     const isTable = viewMode === 'table';
     const styleEl = document.createElement('style');
     document.head.appendChild(styleEl);
+    // 수동 배율 — 켜져 있으면 아래 자동 맞춤(실측 후 글씨 축소)을 건너뛰고
+    // 사용자가 고른 배율(zoom)을 그대로 적용한다. zoom은 레이아웃 자체를
+    // 비례 확대/축소하므로 내부 flex 비율은 그대로 유지된다.
+    const manualZoom = printScaleMode === 'manual' ? printScalePercent : null;
 
     if (isTable) {
       styleEl.textContent = `
@@ -650,8 +668,11 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
           height: auto !important;
           max-height: none !important;
           overflow: visible !important;
+          ${manualZoom ? `zoom: ${manualZoom}% !important;` : ''}
         }
       `;
+    } else if (manualZoom) {
+      styleEl.textContent = `.print-portal .print-area { zoom: ${manualZoom}% !important; }`;
     } else {
       // 미리 계산한 공식은 실제 렌더링 여백과 어긋나 잘리거나(부족) 반대로 다른
       // 주까지 불필요하게 작아질 수 있어(과함) 믿을 수 없다 — 화면 밖에 실제로
@@ -1991,15 +2012,53 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
             <button onClick={() => setViewMode('calendar')} className={`px-3 py-1.5 font-medium ${viewMode === 'calendar' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>📅 달력</button>
             <button onClick={() => setViewMode('table')} className={`px-3 py-1.5 font-medium ${viewMode === 'table' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>☰ 표</button>
           </div>
-          <button
-            onClick={handlePrint}
-            title={viewMode === 'table'
-              ? '이번 달 일정 표를 세로 PDF로 열기 (뷰어에서 인쇄하면 세로로 출력)'
-              : '이번 달 일정을 가로 PDF로 열기 (뷰어에서 인쇄하면 항상 가로로 출력)'}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-xl border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition-colors"
-          >
-            🖨 인쇄({viewMode === 'table' ? '세로' : '가로'} PDF)
-          </button>
+          <div className="relative">
+            <div className="flex rounded-xl border border-gray-200 overflow-hidden bg-white text-sm">
+              <button
+                onClick={handlePrint}
+                title={viewMode === 'table'
+                  ? '이번 달 일정 표를 세로 PDF로 열기 (뷰어에서 인쇄하면 세로로 출력)'
+                  : '이번 달 일정을 가로 PDF로 열기 (뷰어에서 인쇄하면 항상 가로로 출력)'}
+                className="flex items-center gap-1.5 px-3 py-1.5 font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                🖨 인쇄({viewMode === 'table' ? '세로' : '가로'} PDF)
+              </button>
+              <button
+                onClick={() => setShowPrintScale(v => !v)}
+                title="인쇄 배율 설정"
+                className="px-2 border-l border-gray-200 text-gray-500 hover:bg-gray-50 font-medium"
+              >
+                {printScaleMode === 'manual' ? `${printScalePercent}%` : '⚙'}
+              </button>
+            </div>
+            {showPrintScale && (
+              <>
+                <div className="fixed inset-0 z-20" onClick={() => setShowPrintScale(false)} />
+                <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-gray-200 rounded-xl shadow-lg p-3 w-60">
+                  <p className="text-xs font-semibold text-gray-500 mb-2">🖨 인쇄 배율</p>
+                  <label className="flex items-center gap-1.5 text-xs text-gray-600 mb-1.5 cursor-pointer select-none">
+                    <input type="radio" checked={printScaleMode === 'auto'} onChange={() => setPrintScaleMode('auto')} />
+                    자동 맞춤 (기본 — 한 페이지에 맞게 글씨 크기 자동 조절)
+                  </label>
+                  <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
+                    <input type="radio" checked={printScaleMode === 'manual'} onChange={() => setPrintScaleMode('manual')} />
+                    수동 배율
+                  </label>
+                  {printScaleMode === 'manual' && (
+                    <div className="flex items-center gap-2 pl-5 mt-1.5">
+                      <input type="range" min="50" max="150" step="5" value={printScalePercent}
+                        onChange={e => setPrintScalePercent(parseInt(e.target.value))}
+                        className="flex-1" />
+                      <span className="text-xs font-semibold text-gray-700 w-10 text-right">{printScalePercent}%</span>
+                    </div>
+                  )}
+                  {printScaleMode === 'manual' && (
+                    <p className="text-[11px] text-gray-400 mt-2 leading-relaxed">배율이 너무 크면 인쇄 영역을 벗어나 잘릴 수 있습니다.</p>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
           <button
             onClick={handleExportExcel}
             title="이번 달 일정을 엑셀 표 서식(표 스타일 보통 16)으로 저장"
