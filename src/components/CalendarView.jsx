@@ -1584,7 +1584,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
             />
             <label className="block text-xs text-gray-500 mb-2">측정 포인트 수</label>
             <div className="grid grid-cols-4 gap-2 mb-5">
-              {[['surface','표면균'],['float','부유균'],['fall','낙하균'],['particle','부유입자']].map(([key, label]) => (
+              {[['float','부유균'],['fall','낙하균'],['surface','표면균'],['particle','부유입자']].map(([key, label]) => (
                 <div key={key} className="flex flex-col items-center gap-1">
                   <span className="text-[10px] text-gray-400">{label}</span>
                   <input
@@ -1670,7 +1670,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
         }));
         if (caps.comb>0) Object.values(combDay).forEach(v => { if(v>caps.comb) violations++; });
 
-        const CAP_FIELDS = [['surface','표면균','green'],['float','부유균','blue'],['fall','낙하균','orange'],['particle','부유입자(공조)','pink']];
+        const CAP_FIELDS = [['float','부유균','blue'],['fall','낙하균','orange'],['surface','표면균','green'],['particle','부유입자(공조)','pink']];
         return (
           <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/40" onClick={() => !optimizing && setOptimizePopup(false)}>
             <div className="bg-white rounded-2xl shadow-2xl w-[420px] p-6" onClick={e => e.stopPropagation()}>
@@ -2289,9 +2289,9 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                       const majorChipCls = { '질소가스': 'bg-purple-100 text-purple-700', '압축공기': 'bg-yellow-100 text-yellow-700', '용수': 'bg-teal-100 text-teal-700' };
                       const ptsChips = hasPts ? (
                         <div className={`flex flex-wrap gap-0.5 ${isOther ? 'opacity-50' : ''}`}>
-                          {catPts.nonComb.s > 0 && <span className="text-[9px] leading-none bg-green-50 text-green-700 px-0.5 py-0.5 rounded">표{catPts.nonComb.s}</span>}
                           {catPts.nonComb.f > 0 && <span className="text-[9px] leading-none bg-blue-50 text-blue-700 px-0.5 py-0.5 rounded">부{catPts.nonComb.f}</span>}
                           {catPts.nonComb.l > 0 && <span className="text-[9px] leading-none bg-orange-50 text-orange-700 px-0.5 py-0.5 rounded">낙{catPts.nonComb.l}</span>}
+                          {catPts.nonComb.s > 0 && <span className="text-[9px] leading-none bg-green-50 text-green-700 px-0.5 py-0.5 rounded">표{catPts.nonComb.s}</span>}
                           {catPts.nonComb.p > 0 && <span className="text-[9px] leading-none bg-pink-50 text-pink-700 px-0.5 py-0.5 rounded">입{catPts.nonComb.p}</span>}
                           {Object.entries(catPts.combined).map(([major, v]) => v > 0 && (
                             <span key={major} className={`text-[9px] leading-none px-0.5 py-0.5 rounded ${majorChipCls[major] || 'bg-purple-100 text-purple-700'}`}>{majorAbbr[major] || major.slice(0, 1)}{v}</span>
@@ -2553,9 +2553,9 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                         )}
                         {(t.points_surface || t.points_float || t.points_fall || t.points_particle) ? (
                           <div className="flex gap-1 mt-1 flex-wrap">
-                            {t.points_surface > 0 && <span className="text-[10px] bg-green-50 text-green-600 px-1 py-0.5 rounded">표면균 {t.points_surface}pt</span>}
                             {t.points_float > 0 && <span className="text-[10px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">부유균 {t.points_float}pt</span>}
                             {t.points_fall > 0 && <span className="text-[10px] bg-orange-50 text-orange-600 px-1 py-0.5 rounded">낙하균 {t.points_fall}pt</span>}
+                            {t.points_surface > 0 && <span className="text-[10px] bg-green-50 text-green-600 px-1 py-0.5 rounded">표면균 {t.points_surface}pt</span>}
                             {t.points_particle > 0 && <span className="text-[10px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">부유입자 {t.points_particle}pt</span>}
                           </div>
                         ) : null}
@@ -2633,9 +2633,9 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                                 </span>
                               ) : (
                                 <>
-                                  {zone.points_surface > 0 && <span className="text-[10px] bg-green-50 text-green-600 px-1 py-0.5 rounded">표면균 {zone.points_surface}pt</span>}
                                   {zone.points_float > 0 && <span className="text-[10px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">부유균 {zone.points_float}pt</span>}
                                   {zone.points_fall > 0 && <span className="text-[10px] bg-orange-50 text-orange-600 px-1 py-0.5 rounded">낙하균 {zone.points_fall}pt</span>}
+                                  {zone.points_surface > 0 && <span className="text-[10px] bg-green-50 text-green-600 px-1 py-0.5 rounded">표면균 {zone.points_surface}pt</span>}
                                   {zone.points_particle > 0 && <span className="text-[10px] bg-pink-50 text-pink-600 px-1 py-0.5 rounded">부유입자 {zone.points_particle}pt</span>}
                                 </>
                               )}
