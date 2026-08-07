@@ -275,6 +275,15 @@ export async function saveGuestAccess(allowedTabs) {
   return api.invoke('guestAccess:set', allowedTabs);
 }
 
+// ─── 주간근무 (업무 로테이션 담당표) ───────────────────────────────────────────
+
+export async function fetchWeeklyDuty() {
+  return api.invoke('weeklyDuty:get');
+}
+export async function saveWeeklyDuty(weeklyDuty) {
+  return api.invoke('weeklyDuty:set', weeklyDuty);
+}
+
 // ─── 공유 동기화 (Gist) ───────────────────────────────────────────────────────
 
 export async function syncGetConfig() {

@@ -255,7 +255,35 @@ const DEFAULT_AHUS = ['AHU-01', 'AHU-02', 'AHU-15', 'AHU-16', 'AHU-19', 'AHU-31'
 const DEFAULT_USAGE_POINT_CATEGORIES = { '공조': [], '가스': [], '용수': [], '기타': [] };
 
 // 기본 관리자 계정을 처음 만들 때 허용할 탭 — App.jsx의 MENU와 같은 id 목록.
-const DEFAULT_ADMIN_TABS = ['dashboard', 'todo', 'calendar', 'status', 'gantt', 'annual', 'calibration', 'usagepoints'];
+const DEFAULT_ADMIN_TABS = ['dashboard', 'todo', 'calendar', 'status', 'gantt', 'annual', 'calibration', 'usagepoints', 'weeklyduty'];
+
+// 주간근무 화면 기본값 — 사용자가 올려준 "주간근무" 시트 내용을 그대로 옮겨 심어
+// 처음부터 실제 로테이션이 채워진 상태로 시작한다. 이후 관리자가 화면에서
+// 업무·주차·담당자를 자유롭게 추가·수정·삭제할 수 있다.
+const DEFAULT_WEEKLY_DUTY = {
+  weeks: ['1주차', '2주차', '3주차', '4주차', '5주차'],
+  dailyTasks: [
+    { id: 'd1', name: '모니터링 라벨 일지 출력', assignments: ['김찬일', '이동현', '박지연', '김찬일', '이동현'] },
+    { id: 'd2', name: '세탁일지 작성', assignments: ['김찬일', '이동현', '박지연', '김찬일', '이동현'] },
+    { id: 'd3', name: '배지 준비하기(라벨 붙이기)', assignments: ['김찬일, 박지연', '이동현, 김찬일', '박지연, 이동현', '김찬일, 박지연', '이동현, 김찬일'] },
+    { id: 'd4', name: '기기사용기록서 작성(부유입자측정기, 부유균포집기)', assignments: ['김찬일, 박지연', '이동현, 김찬일', '박지연, 이동현', '김찬일, 박지연', '이동현, 김찬일'] },
+    { id: 'd5', name: '개인위생점검표 작성', assignments: ['박지연', '김찬일', '이동현', '박지연', '김찬일'] },
+    { id: 'd6', name: 'Rawdata 파일 정리', assignments: ['박지연', '김찬일', '이동현', '박지연', '김찬일'] },
+    { id: 'd7', name: '인큐베이터 온습도 작성 오전/오후(2회)', assignments: ['이동현', '박지연', '김찬일', '이동현', '박지연'] },
+    { id: 'd8', name: '제조용수 모니터링 일지 출력 채취 및 회수', assignments: ['이동현', '박지연', '김찬일', '이동현', '박지연'] },
+    { id: 'd9', name: '다음날 용수일정 준비하기', assignments: ['이동현', '박지연', '김찬일', '이동현', '박지연'] },
+    { id: 'd10', name: '준비실 청소 및 정리정돈(전기코드)', assignments: ['이동현', '박지연', '김찬일', '이동현', '박지연'] },
+  ],
+  weeklyTasks: [
+    { id: 'w1', name: '인큐베이터 데이터 출력', assignments: ['박지연', '김찬일', '이동현', '박지연', '김찬일'] },
+  ],
+  monthlyTasks: [
+    { id: 'm1', name: '인큐베이터 온습도 일지확인 후 출력', assignee: '이동현' },
+    { id: 'm2', name: '소독제 교체일지 확인', assignee: '박지연' },
+    { id: 'm3', name: '개인위생점검표, 기기사용기록서, 세탁일지 출력', assignee: '김찬일' },
+  ],
+  notes: '',
+};
 
 function getDataPath() {
   return path.join(app.getPath('userData'), 'em-data.json');
@@ -264,7 +292,7 @@ function getDataPath() {
 function loadData() {
   const p = getDataPath();
   if (!fs.existsSync(p)) {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES }, guestAllowedTabs: null };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES }, guestAllowedTabs: null, weeklyDuty: JSON.parse(JSON.stringify(DEFAULT_WEEKLY_DUTY)) };
   }
   try {
     const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
@@ -280,9 +308,10 @@ function loadData() {
     // 로그인하지 않았을 때 보이는 메뉴 — null(기본값)이면 지금까지처럼 전체 메뉴가 보이고,
     // 배열이면 그 탭들만 보인다(계정별 allowedTabs와 같은 방식, 로그인 전 상태에 적용).
     if (!('guestAllowedTabs' in data)) data.guestAllowedTabs = null;
+    if (!data.weeklyDuty) data.weeklyDuty = JSON.parse(JSON.stringify(DEFAULT_WEEKLY_DUTY));
     return data;
   } catch {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES }, guestAllowedTabs: null };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES }, guestAllowedTabs: null, weeklyDuty: JSON.parse(JSON.stringify(DEFAULT_WEEKLY_DUTY)) };
   }
 }
 
@@ -1374,6 +1403,17 @@ function registerHandlers() {
   ipcMain.handle('guestAccess:set', (_e, allowedTabs) => {
     const data = loadData();
     data.guestAllowedTabs = Array.isArray(allowedTabs) ? allowedTabs : null;
+    saveData(data);
+    return { ok: true };
+  });
+
+  // ── 주간근무 (업무 로테이션 담당표) ──
+  ipcMain.handle('weeklyDuty:get', () => {
+    return loadData().weeklyDuty;
+  });
+  ipcMain.handle('weeklyDuty:set', (_e, weeklyDuty) => {
+    const data = loadData();
+    data.weeklyDuty = weeklyDuty;
     saveData(data);
     return { ok: true };
   });

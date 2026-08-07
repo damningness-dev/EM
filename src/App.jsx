@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import Dashboard from './components/Dashboard';
 import Calibration from './components/Calibration';
 import UsagePoints from './components/UsagePoints';
+import WeeklyDuty from './components/WeeklyDuty';
 import AnnualPlan from './components/AnnualPlan';
 import ZoneStatus from './components/ZoneStatus';
 import ZoneGantt from './components/ZoneGantt';
@@ -26,6 +27,7 @@ const MENU = [
   { id: 'annual', label: '연간 계획 (AHU)', icon: '🔧' },
   { id: 'calibration', label: '교정 관리', icon: '⚙️' },
   { id: 'usagepoints', label: '사용점 관리', icon: '📍' },
+  { id: 'weeklyduty', label: '주간근무', icon: '🗓️' },
 ];
 
 export default function App() {
@@ -240,6 +242,7 @@ export default function App() {
           {page === 'annual' && <AnnualPlan year={year} onYearChange={setYear} />}
           {page === 'calibration' && <Calibration adminUnlocked={adminUnlocked} />}
           {page === 'usagepoints' && <UsagePoints adminUnlocked={adminUnlocked} currentMember={currentMember} />}
+          {page === 'weeklyduty' && <WeeklyDuty adminUnlocked={adminUnlocked} />}
         </main>
       </div>
     </div>
