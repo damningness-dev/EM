@@ -135,12 +135,17 @@ const NOTE_DEFAULT_H = 240;
 const NOTE_MIN_W = 160;
 const NOTE_MIN_H = 160;
 
+const NOTE_SNAP_TOLERANCE = 6; // px — 이 이내로 가까우면 "크기가 같다"고 보고 보조선을 보여준다
+
 function StickyNotesBoard() {
   const [notes, setNotes] = useState(() => {
     try { const s = JSON.parse(localStorage.getItem(NOTE_STORE_KEY)); return Array.isArray(s) ? s : []; } catch { return []; }
   });
   const [openPaletteId, setOpenPaletteId] = useState(null);
   const [dragId, setDragId] = useState(null);
+  // 지금 크기 조절 중인 메모의 실시간 크기 — 다른 메모들과 폭/높이가 맞는지
+  // 비교해 보조선(테두리 강조)을 보여주는 데 쓴다. 조절이 멈추면 null로 돌아간다.
+  const [liveResize, setLiveResize] = useState(null); // { id, w, h } | null
 
   useEffect(() => {
     try { localStorage.setItem(NOTE_STORE_KEY, JSON.stringify(notes)); } catch { /* ignore */ }
@@ -185,11 +190,17 @@ function StickyNotesBoard() {
         </p>
       ) : (
         <div className="flex flex-wrap content-start gap-3 max-h-[calc(100vh-160px)] overflow-y-auto pr-0.5">
-          {notes.map(note => (
-            <NoteCard key={note.id} note={note} dragId={dragId} setDragId={setDragId} reorderNotes={reorderNotes}
-              openPaletteId={openPaletteId} setOpenPaletteId={setOpenPaletteId}
-              updateNote={updateNote} removeNote={removeNote} />
-          ))}
+          {notes.map(note => {
+            const matchW = liveResize && liveResize.id !== note.id && Math.abs((note.w || NOTE_DEFAULT_W) - liveResize.w) <= NOTE_SNAP_TOLERANCE;
+            const matchH = liveResize && liveResize.id !== note.id && Math.abs((note.h || NOTE_DEFAULT_H) - liveResize.h) <= NOTE_SNAP_TOLERANCE;
+            return (
+              <NoteCard key={note.id} note={note} dragId={dragId} setDragId={setDragId} reorderNotes={reorderNotes}
+                openPaletteId={openPaletteId} setOpenPaletteId={setOpenPaletteId}
+                updateNote={updateNote} removeNote={removeNote}
+                isResizing={liveResize?.id === note.id} matchW={!!matchW} matchH={!!matchH}
+                onLiveResize={(w, h) => setLiveResize(w == null ? null : { id: note.id, w, h })} />
+            );
+          })}
         </div>
       )}
     </div>
@@ -197,43 +208,53 @@ function StickyNotesBoard() {
 }
 
 // 카드 오른쪽 아래 모서리를 드래그해 크기를 조절할 수 있는(resize:both) 포스트잇 한 장.
-// 제목칸은 입력할 때마다 내용에 맞춰 높이를 늘려 항상 전부 보이게 한다.
-function NoteCard({ note, dragId, setDragId, reorderNotes, openPaletteId, setOpenPaletteId, updateNote, removeNote }) {
+// 조절하는 동안 폭·높이가 다른 메모와 맞으면 그 메모 테두리에 보조선(강조 테두리)이 뜬다.
+function NoteCard({ note, dragId, setDragId, reorderNotes, openPaletteId, setOpenPaletteId, updateNote, removeNote, isResizing, matchW, matchH, onLiveResize }) {
   const cardRef = useRef(null);
-  const titleRef = useRef(null);
   const resizeTimer = useRef(null);
+  const liveEndTimer = useRef(null);
 
   useEffect(() => {
     const el = cardRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(entries => {
       const { width, height } = entries[0].contentRect;
+      const w = Math.round(width), h = Math.round(height);
+      // 실시간 보조선 갱신 — 잠시(350ms) 크기 변화가 없으면 조절이 끝난 것으로 보고 끈다.
+      onLiveResize(w, h);
+      if (liveEndTimer.current) clearTimeout(liveEndTimer.current);
+      liveEndTimer.current = setTimeout(() => onLiveResize(null, null), 350);
+
       if (resizeTimer.current) clearTimeout(resizeTimer.current);
       resizeTimer.current = setTimeout(() => {
-        updateNote(note.id, { w: Math.round(width), h: Math.round(height) }, true);
+        updateNote(note.id, { w, h }, true);
       }, 250);
     });
     ro.observe(el);
-    return () => { ro.disconnect(); if (resizeTimer.current) clearTimeout(resizeTimer.current); };
+    return () => {
+      ro.disconnect();
+      if (resizeTimer.current) clearTimeout(resizeTimer.current);
+      if (liveEndTimer.current) clearTimeout(liveEndTimer.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [note.id]);
 
-  useEffect(() => {
-    const el = titleRef.current;
-    if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; }
-  }, [note.title]);
+  const guideRing = (matchW || matchH) ? 'ring-2 ring-blue-500' : isResizing ? 'ring-2 ring-gray-400' : '';
 
   return (
     <div ref={cardRef}
       onDragOver={e => { if (dragId) e.preventDefault(); }}
       onDrop={e => { e.preventDefault(); reorderNotes(dragId, note.id); setDragId(null); }}
-      className={`rounded-lg shadow-sm p-3 flex flex-col transition-opacity ${dragId === note.id ? 'opacity-40' : ''}`}
+      className={`relative rounded-lg shadow-sm p-3 flex flex-col transition-opacity ${dragId === note.id ? 'opacity-40' : ''} ${guideRing}`}
       style={{
         backgroundColor: note.color,
         width: note.w || NOTE_DEFAULT_W, height: note.h || NOTE_DEFAULT_H,
         minWidth: NOTE_MIN_W, minHeight: NOTE_MIN_H,
         resize: 'both', overflow: 'auto',
       }}>
+      {/* 폭이 맞으면 오른쪽 세로 보조선, 높이가 맞으면 아래쪽 가로 보조선 */}
+      {matchW && <div className="absolute top-0 right-0 bottom-0 w-0.5 bg-blue-500 pointer-events-none" />}
+      {matchH && <div className="absolute left-0 right-0 bottom-0 h-0.5 bg-blue-500 pointer-events-none" />}
       <div className="flex items-center justify-between mb-1.5 shrink-0">
         <span draggable
           onDragStart={e => { e.dataTransfer.setData('text/plain', note.id); e.dataTransfer.effectAllowed = 'move'; setDragId(note.id); }}
@@ -254,13 +275,11 @@ function NoteCard({ note, dragId, setDragId, reorderNotes, openPaletteId, setOpe
           ))}
         </div>
       )}
-      <textarea
-        ref={titleRef}
+      <input
         value={note.title || ''}
         onChange={e => updateNote(note.id, { title: e.target.value })}
         placeholder="제목"
-        rows={1}
-        className="w-full bg-transparent text-sm font-bold text-gray-800 outline-none resize-none overflow-hidden shrink-0 placeholder:text-gray-500/50 placeholder:font-normal"
+        className="w-full bg-transparent text-sm font-bold text-gray-800 outline-none shrink-0 placeholder:text-gray-500/50 placeholder:font-normal"
       />
       <hr className="border-t border-black/10 my-1.5 shrink-0" />
       <textarea
