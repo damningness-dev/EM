@@ -1,5 +1,16 @@
 import { useState, useEffect } from 'react';
-import { fetchMembers, upsertMember, deleteMember, fetchGuestAccess, saveGuestAccess } from '../lib/api';
+import { fetchMembers, upsertMember, deleteMember, fetchGuestAccess, saveGuestAccess, syncGetConfig, syncUpload } from '../lib/api';
+
+// 권한 설정이 바뀌면(계정 추가·수정·삭제, 게스트 메뉴 제한) em-data.json에 저장된
+// 뒤, 공유 설정(Gist ID + 토큰)이 있으면 자동으로 Gist에 업로드해 다른 PC에도
+// 곧바로 반영되게 한다. 없으면 조용히 건너뛰고 다음 자동 동기화 때 반영된다.
+async function syncAfterChange() {
+  try {
+    const cfg = await syncGetConfig();
+    if (!cfg?.gistId || !cfg?.hasToken) return;
+    await syncUpload();
+  } catch { /* 조용히 건너뜀 — 로컬 저장은 이미 성공했으므로 */ }
+}
 
 // 관리자 전용 권한 설정 화면 — (1) 로그인하지 않았을 때 보이는 메뉴를 제한하고,
 // (2) 로그인 계정(멤버)을 만들어 계정마다 사이드바에 보일 탭 메뉴와 관리자 권한
@@ -50,6 +61,7 @@ export default function MemberManager({ menu, onClose }) {
       if (!r?.ok) { setError(r?.error || '저장 실패'); return; }
       setEditingId(null);
       reload();
+      syncAfterChange();
     } catch (e) { setError('오류: ' + e.message); }
     finally { setBusy(false); }
   }
@@ -58,12 +70,13 @@ export default function MemberManager({ menu, onClose }) {
     if (!confirm('이 계정을 삭제하시겠습니까?')) return;
     await deleteMember(id);
     reload();
+    syncAfterChange();
   }
 
   async function clearToken(id) {
     if (!confirm('이 계정의 토큰을 삭제하시겠습니까?')) return;
     setBusy(true);
-    try { await upsertMember({ id, clearToken: true }); reload(); }
+    try { await upsertMember({ id, clearToken: true }); reload(); syncAfterChange(); }
     finally { setBusy(false); }
   }
 
@@ -172,6 +185,7 @@ function GuestAccessSection({ menu }) {
     try {
       await saveGuestAccess(restrict ? tabs : null);
       setMsg({ ok: true, text: '저장되었습니다.' });
+      syncAfterChange();
     } catch (e) {
       setMsg({ ok: false, text: '저장 실패: ' + e.message });
     } finally {

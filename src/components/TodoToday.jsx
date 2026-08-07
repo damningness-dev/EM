@@ -124,26 +124,47 @@ function DayBadge({ days }) {
 // 포스트잇 메모 — 이 PC에만 저장되는 자유 메모장(할일과 무관, 색상 팔레트로 구분).
 const NOTE_STORE_KEY = 'em-todo-notes';
 const NOTE_COLORS = ['#fde68a', '#fbcfe8', '#bfdbfe', '#bbf7d0', '#e9d5ff', '#fed7aa', '#e5e7eb'];
+function fmtNoteTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
 
 function StickyNotesBoard() {
   const [notes, setNotes] = useState(() => {
     try { const s = JSON.parse(localStorage.getItem(NOTE_STORE_KEY)); return Array.isArray(s) ? s : []; } catch { return []; }
   });
   const [openPaletteId, setOpenPaletteId] = useState(null);
+  const [dragId, setDragId] = useState(null);
 
   useEffect(() => {
     try { localStorage.setItem(NOTE_STORE_KEY, JSON.stringify(notes)); } catch { /* ignore */ }
   }, [notes]);
 
   function addNote() {
-    setNotes(prev => [{ id: `n${Date.now()}`, text: '', color: NOTE_COLORS[0] }, ...prev]);
+    const now = Date.now();
+    setNotes(prev => [{ id: `n${now}`, title: '', text: '', color: NOTE_COLORS[0], createdAt: now, updatedAt: now }, ...prev]);
   }
   function updateNote(id, patch) {
-    setNotes(prev => prev.map(n => n.id === id ? { ...n, ...patch } : n));
+    setNotes(prev => prev.map(n => n.id === id ? { ...n, ...patch, updatedAt: Date.now() } : n));
   }
   function removeNote(id) {
+    if (!confirm('이 메모를 삭제하시겠습니까?')) return;
     setNotes(prev => prev.filter(n => n.id !== id));
     setOpenPaletteId(p => p === id ? null : p);
+  }
+  // 드래그한 메모(fromId)를 놓은 자리(toId)로 옮긴다 — 그 사이 메모들은 자동으로 밀림.
+  function reorderNotes(fromId, toId) {
+    if (!fromId || fromId === toId) return;
+    setNotes(prev => {
+      const arr = [...prev];
+      const fromIdx = arr.findIndex(n => n.id === fromId);
+      const toIdx = arr.findIndex(n => n.id === toId);
+      if (fromIdx < 0 || toIdx < 0) return prev;
+      const [moved] = arr.splice(fromIdx, 1);
+      arr.splice(toIdx, 0, moved);
+      return arr;
+    });
   }
 
   return (
@@ -157,13 +178,23 @@ function StickyNotesBoard() {
           아직 메모가 없습니다.<br />"+ 메모"로 포스트잇을 붙여보세요.
         </p>
       ) : (
-        <div className="space-y-3 max-h-[calc(100vh-160px)] overflow-y-auto pr-0.5">
+        <div className="grid grid-cols-2 gap-3 content-start max-h-[calc(100vh-160px)] overflow-y-auto pr-0.5">
           {notes.map(note => (
-            <div key={note.id} className="rounded-lg shadow-sm p-3" style={{ backgroundColor: note.color }}>
+            <div key={note.id}
+              onDragOver={e => { if (dragId) e.preventDefault(); }}
+              onDrop={e => { e.preventDefault(); reorderNotes(dragId, note.id); setDragId(null); }}
+              className={`rounded-lg shadow-sm p-3 transition-opacity ${dragId === note.id ? 'opacity-40' : ''}`}
+              style={{ backgroundColor: note.color }}>
               <div className="flex items-center justify-between mb-1.5">
-                <button onClick={() => setOpenPaletteId(p => p === note.id ? null : note.id)}
-                  className="text-xs opacity-60 hover:opacity-100" title="색상 변경">🎨</button>
-                <button onClick={() => removeNote(note.id)} className="text-black/30 hover:text-black/60 text-xs leading-none" title="메모 삭제">✕</button>
+                <span draggable
+                  onDragStart={e => { e.dataTransfer.setData('text/plain', note.id); e.dataTransfer.effectAllowed = 'move'; setDragId(note.id); }}
+                  onDragEnd={() => setDragId(null)}
+                  className="cursor-move text-black/40 hover:text-black/70 text-xs select-none" title="드래그해서 순서 변경">⠿</span>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setOpenPaletteId(p => p === note.id ? null : note.id)}
+                    className="text-xs opacity-60 hover:opacity-100" title="색상 변경">🎨</button>
+                  <button onClick={() => removeNote(note.id)} className="text-black/30 hover:text-black/60 text-xs leading-none" title="메모 삭제">✕</button>
+                </div>
               </div>
               {openPaletteId === note.id && (
                 <div className="flex items-center gap-1.5 mb-2 bg-white/60 rounded-lg p-1.5 flex-wrap">
@@ -174,6 +205,13 @@ function StickyNotesBoard() {
                   ))}
                 </div>
               )}
+              <input
+                value={note.title || ''}
+                onChange={e => updateNote(note.id, { title: e.target.value })}
+                placeholder="제목"
+                className="w-full bg-transparent text-sm font-bold text-gray-800 outline-none placeholder:text-gray-500/50 placeholder:font-normal"
+              />
+              <hr className="border-t border-black/10 my-1.5" />
               <textarea
                 value={note.text}
                 onChange={e => updateNote(note.id, { text: e.target.value })}
@@ -181,6 +219,9 @@ function StickyNotesBoard() {
                 rows={4}
                 className="w-full bg-transparent text-sm text-gray-800 resize-none outline-none placeholder:text-gray-500/60"
               />
+              <p className="text-[10px] text-black/35 mt-1 text-right">
+                {note.updatedAt && note.updatedAt !== note.createdAt ? `수정 ${fmtNoteTime(note.updatedAt)}` : `작성 ${fmtNoteTime(note.createdAt)}`}
+              </p>
             </div>
           ))}
         </div>
@@ -417,7 +458,7 @@ export default function TodoToday() {
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
-    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px] gap-6 items-start">
+    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_420px] gap-6 items-start">
     <div className="space-y-5 min-w-0">
       {/* 헤더 */}
       <div className="flex items-end justify-between flex-wrap gap-3">
