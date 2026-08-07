@@ -271,7 +271,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   // 달력 사본을 배율 설정 팝오버 안에 작게(transform:scale) 그려서, 인쇄해보지
   // 않고도 화면에서 바로 확인할 수 있게 한다. 배율을 바꿀 때마다 다시 그린다.
   const printPreviewRef = useRef(null);
-  const PRINT_PREVIEW_W = 1100, PRINT_PREVIEW_H = 760, PRINT_PREVIEW_BOX_W = 620;
+  const PRINT_PREVIEW_W = 1100, PRINT_PREVIEW_H = 760, PRINT_PREVIEW_BOX_W = 960;
   useEffect(() => {
     if (!showPrintScale || printScaleMode !== 'manual' || viewMode === 'table') return;
     const src = printAreaRef.current;
@@ -2083,11 +2083,12 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
               </button>
             </div>
             {showPrintScale && (
-              <>
-                <div className="fixed inset-0 z-20" onClick={() => setShowPrintScale(false)} />
-                <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-gray-200 rounded-xl shadow-lg p-3"
-                  style={{ width: printScaleMode === 'manual' && viewMode !== 'table' ? PRINT_PREVIEW_BOX_W + 24 : 256 }}>
-                  <p className="text-xs font-semibold text-gray-500 mb-2">🖨 인쇄 배율</p>
+              <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/50" onClick={() => setShowPrintScale(false)}>
+                <div className="bg-white border border-gray-200 rounded-2xl shadow-2xl p-4 max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm font-semibold text-gray-700">🖨 인쇄 배율</p>
+                    <button onClick={() => setShowPrintScale(false)} className="text-gray-400 hover:text-gray-700 text-lg leading-none">✕</button>
+                  </div>
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 mb-1.5 cursor-pointer select-none">
                     <input type="radio" checked={printScaleMode === 'auto'} onChange={() => setPrintScaleMode('auto')} />
                     자동 맞춤 (기본 — 한 페이지에 맞게 글씨 크기 자동 조절)
@@ -2097,7 +2098,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                     수동 배율 (전체 크기는 그대로, 글씨·일정박스만 조절)
                   </label>
                   {printScaleMode === 'manual' && (
-                    <div className="flex items-center gap-2 pl-5 mt-1.5">
+                    <div className="flex items-center gap-2 pl-5 mt-1.5" style={{ width: printScaleMode === 'manual' && viewMode !== 'table' ? PRINT_PREVIEW_BOX_W : 300 }}>
                       <input type="range" min="50" max="150" step="5" value={printScalePercent}
                         onChange={e => setPrintScalePercent(parseInt(e.target.value))}
                         className="flex-1" />
@@ -2122,7 +2123,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                     <p className="text-[11px] text-gray-400 mt-2 leading-relaxed">배율이 너무 크면 인쇄 영역을 벗어나 잘릴 수 있습니다.</p>
                   )}
                 </div>
-              </>
+              </div>
             )}
           </div>
           <button
