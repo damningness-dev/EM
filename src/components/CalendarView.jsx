@@ -97,6 +97,13 @@ function buildGrid(year, month, weekStart = 'mon') {
   return cells;
 }
 
+// 수동 인쇄 배율(%) → 달력 셀 글씨 크기(px). 자동 맞춤의 기본값(8px)을 기준으로
+// 비율만큼 늘리거나 줄인다 — .print-area 자체 크기(760px 고정)는 건드리지 않고
+// 그 안의 일정 박스·글씨만 커지거나 작아지게 한다.
+function manualScaleFontPx(percent) {
+  return Math.max(3, Math.min(16, 8 * (percent || 100) / 100));
+}
+
 export default function CalendarView({ year: initYear, onYearChange, adminUnlocked, jumpTarget, onJumpTargetConsumed }) {
   const today = new Date();
   const [year, setYear] = useState(initYear || today.getFullYear());
@@ -259,6 +266,37 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   useEffect(() => {
     try { localStorage.setItem('em-print-scale', JSON.stringify({ mode: printScaleMode, percent: printScalePercent })); } catch { /* ignore */ }
   }, [printScaleMode, printScalePercent]);
+
+  // 수동 배율 미리보기 — 실제 인쇄와 똑같은 .print-portal 레이아웃 규칙을 쓰는
+  // 달력 사본을 배율 설정 팝오버 안에 작게(transform:scale) 그려서, 인쇄해보지
+  // 않고도 화면에서 바로 확인할 수 있게 한다. 배율을 바꿀 때마다 다시 그린다.
+  const printPreviewRef = useRef(null);
+  const PRINT_PREVIEW_W = 1100, PRINT_PREVIEW_H = 760, PRINT_PREVIEW_BOX_W = 220;
+  useEffect(() => {
+    if (!showPrintScale || printScaleMode !== 'manual' || viewMode === 'table') return;
+    const src = printAreaRef.current;
+    const container = printPreviewRef.current;
+    if (!src || !container) return;
+    container.innerHTML = '';
+    const clone = src.cloneNode(true);
+    clone.style.transform = 'none';
+    const fontPx = manualScaleFontPx(printScalePercent);
+    const dotPx = Math.max(6, Math.round(fontPx * 1.6));
+    const styleTag = document.createElement('style');
+    styleTag.textContent = `
+      .print-portal.print-preview-box .cal-day,
+      .print-portal.print-preview-box .cal-day * {
+        font-size: ${fontPx}px !important;
+        line-height: 1.12 !important;
+      }
+      .print-portal.print-preview-box .cal-day .rounded-full {
+        width: ${dotPx}px !important;
+        height: ${dotPx}px !important;
+      }
+    `;
+    container.appendChild(styleTag);
+    container.appendChild(clone);
+  }, [showPrintScale, printScaleMode, viewMode, printScalePercent]);
   const [optimizeCapacities, setOptimizeCapacities] = useState(() => {
     try {
       const saved = localStorage.getItem('em-daily-capacities');
@@ -656,9 +694,10 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
     const isTable = viewMode === 'table';
     const styleEl = document.createElement('style');
     document.head.appendChild(styleEl);
-    // 수동 배율 — 켜져 있으면 아래 자동 맞춤(실측 후 글씨 축소)을 건너뛰고
-    // 사용자가 고른 배율(zoom)을 그대로 적용한다. zoom은 레이아웃 자체를
-    // 비례 확대/축소하므로 내부 flex 비율은 그대로 유지된다.
+    // 수동 배율 — 표는 zoom으로 전체를 비례 확대/축소(표는 여러 페이지로
+    // 자연스럽게 흐르므로 박스 크기 개념이 없음). 달력은 .print-area의 760px
+    // 고정 크기는 그대로 두고, 그 안의 일정 박스·글씨 크기만 바꾼다(자동 맞춤과
+    // 같은 방식 — manualScaleFontPx로 배율을 글씨 크기로 환산).
     const manualZoom = printScaleMode === 'manual' ? printScalePercent : null;
 
     if (isTable) {
@@ -672,7 +711,19 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
         }
       `;
     } else if (manualZoom) {
-      styleEl.textContent = `.print-portal .print-area { zoom: ${manualZoom}% !important; }`;
+      const fontPx = manualScaleFontPx(manualZoom);
+      const dotPx = Math.max(6, Math.round(fontPx * 1.6));
+      styleEl.textContent = `
+        .print-portal .cal-day,
+        .print-portal .cal-day * {
+          font-size: ${fontPx}px !important;
+          line-height: 1.12 !important;
+        }
+        .print-portal .cal-day .rounded-full {
+          width: ${dotPx}px !important;
+          height: ${dotPx}px !important;
+        }
+      `;
     } else {
       // 미리 계산한 공식은 실제 렌더링 여백과 어긋나 잘리거나(부족) 반대로 다른
       // 주까지 불필요하게 작아질 수 있어(과함) 믿을 수 없다 — 화면 밖에 실제로
@@ -2034,7 +2085,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
             {showPrintScale && (
               <>
                 <div className="fixed inset-0 z-20" onClick={() => setShowPrintScale(false)} />
-                <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-gray-200 rounded-xl shadow-lg p-3 w-60">
+                <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-gray-200 rounded-xl shadow-lg p-3 w-64">
                   <p className="text-xs font-semibold text-gray-500 mb-2">🖨 인쇄 배율</p>
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 mb-1.5 cursor-pointer select-none">
                     <input type="radio" checked={printScaleMode === 'auto'} onChange={() => setPrintScaleMode('auto')} />
@@ -2042,7 +2093,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                   </label>
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
                     <input type="radio" checked={printScaleMode === 'manual'} onChange={() => setPrintScaleMode('manual')} />
-                    수동 배율
+                    수동 배율 (전체 크기는 그대로, 글씨·일정박스만 조절)
                   </label>
                   {printScaleMode === 'manual' && (
                     <div className="flex items-center gap-2 pl-5 mt-1.5">
@@ -2052,7 +2103,21 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                       <span className="text-xs font-semibold text-gray-700 w-10 text-right">{printScalePercent}%</span>
                     </div>
                   )}
-                  {printScaleMode === 'manual' && (
+                  {printScaleMode === 'manual' && viewMode !== 'table' && (
+                    <div className="mt-2">
+                      <p className="text-[11px] text-gray-400 mb-1">미리보기 — 글씨가 잘려 보이면 배율을 낮추세요</p>
+                      <div className="border border-gray-200 rounded-lg overflow-hidden bg-white mx-auto"
+                        style={{ width: PRINT_PREVIEW_BOX_W, height: PRINT_PREVIEW_BOX_W * (PRINT_PREVIEW_H / PRINT_PREVIEW_W) }}>
+                        <div ref={printPreviewRef} className="print-portal print-preview-box"
+                          style={{
+                            display: 'block', width: PRINT_PREVIEW_W, height: PRINT_PREVIEW_H,
+                            transform: `scale(${PRINT_PREVIEW_BOX_W / PRINT_PREVIEW_W})`, transformOrigin: 'top left',
+                            pointerEvents: 'none',
+                          }} />
+                      </div>
+                    </div>
+                  )}
+                  {printScaleMode === 'manual' && viewMode === 'table' && (
                     <p className="text-[11px] text-gray-400 mt-2 leading-relaxed">배율이 너무 크면 인쇄 영역을 벗어나 잘릴 수 있습니다.</p>
                   )}
                 </div>
