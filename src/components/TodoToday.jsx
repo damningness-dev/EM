@@ -121,6 +121,74 @@ function DayBadge({ days }) {
   return <span className={`text-xs font-bold ${days <= 7 ? 'text-orange-600' : days <= 30 ? 'text-yellow-600' : 'text-gray-400'}`}>D-{days}</span>;
 }
 
+// 포스트잇 메모 — 이 PC에만 저장되는 자유 메모장(할일과 무관, 색상 팔레트로 구분).
+const NOTE_STORE_KEY = 'em-todo-notes';
+const NOTE_COLORS = ['#fde68a', '#fbcfe8', '#bfdbfe', '#bbf7d0', '#e9d5ff', '#fed7aa', '#e5e7eb'];
+
+function StickyNotesBoard() {
+  const [notes, setNotes] = useState(() => {
+    try { const s = JSON.parse(localStorage.getItem(NOTE_STORE_KEY)); return Array.isArray(s) ? s : []; } catch { return []; }
+  });
+  const [openPaletteId, setOpenPaletteId] = useState(null);
+
+  useEffect(() => {
+    try { localStorage.setItem(NOTE_STORE_KEY, JSON.stringify(notes)); } catch { /* ignore */ }
+  }, [notes]);
+
+  function addNote() {
+    setNotes(prev => [{ id: `n${Date.now()}`, text: '', color: NOTE_COLORS[0] }, ...prev]);
+  }
+  function updateNote(id, patch) {
+    setNotes(prev => prev.map(n => n.id === id ? { ...n, ...patch } : n));
+  }
+  function removeNote(id) {
+    setNotes(prev => prev.filter(n => n.id !== id));
+    setOpenPaletteId(p => p === id ? null : p);
+  }
+
+  return (
+    <div className="space-y-3 lg:sticky lg:top-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-bold text-gray-700">📌 메모</h2>
+        <button onClick={addNote} className="text-xs px-2.5 py-1 bg-gray-800 text-white rounded-lg hover:bg-gray-700 font-medium">+ 메모</button>
+      </div>
+      {notes.length === 0 ? (
+        <p className="text-xs text-gray-300 py-6 text-center border border-dashed border-gray-200 rounded-xl leading-relaxed">
+          아직 메모가 없습니다.<br />"+ 메모"로 포스트잇을 붙여보세요.
+        </p>
+      ) : (
+        <div className="space-y-3 max-h-[calc(100vh-160px)] overflow-y-auto pr-0.5">
+          {notes.map(note => (
+            <div key={note.id} className="rounded-lg shadow-sm p-3" style={{ backgroundColor: note.color }}>
+              <div className="flex items-center justify-between mb-1.5">
+                <button onClick={() => setOpenPaletteId(p => p === note.id ? null : note.id)}
+                  className="text-xs opacity-60 hover:opacity-100" title="색상 변경">🎨</button>
+                <button onClick={() => removeNote(note.id)} className="text-black/30 hover:text-black/60 text-xs leading-none" title="메모 삭제">✕</button>
+              </div>
+              {openPaletteId === note.id && (
+                <div className="flex items-center gap-1.5 mb-2 bg-white/60 rounded-lg p-1.5 flex-wrap">
+                  {NOTE_COLORS.map(c => (
+                    <button key={c} onClick={() => { updateNote(note.id, { color: c }); setOpenPaletteId(null); }}
+                      className={`w-5 h-5 rounded-full border-2 ${note.color === c ? 'border-gray-700' : 'border-transparent'}`}
+                      style={{ backgroundColor: c }} title={c} />
+                  ))}
+                </div>
+              )}
+              <textarea
+                value={note.text}
+                onChange={e => updateNote(note.id, { text: e.target.value })}
+                placeholder="메모를 입력하세요..."
+                rows={4}
+                className="w-full bg-transparent text-sm text-gray-800 resize-none outline-none placeholder:text-gray-500/60"
+              />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Section({ title, icon, count, countColor, children }) {
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -348,7 +416,9 @@ export default function TodoToday() {
   const ahuDone = ahuTasks.filter(t => t.done).length;
 
   return (
-    <div className="p-6 max-w-3xl mx-auto space-y-5">
+    <div className="p-6 max-w-6xl mx-auto">
+    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px] gap-6 items-start">
+    <div className="space-y-5 min-w-0">
       {/* 헤더 */}
       <div className="flex items-end justify-between flex-wrap gap-3">
         <div>
@@ -732,6 +802,10 @@ export default function TodoToday() {
           <div className="px-5 py-4 text-sm text-gray-400">이번달 예정된 AHU 유지보수 없음</div>
         </Section>
       )}
+    </div>
+
+    <StickyNotesBoard />
+    </div>
     </div>
   );
 }
