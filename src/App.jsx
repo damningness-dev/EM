@@ -14,7 +14,7 @@ import SyncControl from './components/SyncControl';
 import Login from './components/Login';
 import MemberManager from './components/MemberManager';
 import ChangePasswordModal from './components/ChangePasswordModal';
-import { seedInitialData, fetchScheduleConfig, getAutoStart, setAutoStart, adminIsUnlocked, setCurrentMemberOnMain, fetchGuestAccess, memberChangePassword } from './lib/api';
+import { seedInitialData, fetchScheduleConfig, getAutoStart, setAutoStart, adminIsUnlocked, setCurrentMemberOnMain, fetchGuestAccess, memberChangePassword, fetchMembers } from './lib/api';
 import { setScheduleConfig } from './lib/schedule';
 import { INITIAL_CALIBRATION, MONITORING_ZONES } from './data/initialData';
 
@@ -75,6 +75,22 @@ export default function App() {
   function handleLogout() {
     setCurrentMember(null);
     try { localStorage.removeItem('em-current-member'); } catch { /* ignore */ }
+  }
+
+  // 권한 설정에서 지금 로그인한 계정 자신의 allowedTabs/isAdmin을 바꿔도, 로그인할
+  // 때 저장해둔 currentMember는 자동으로 갱신되지 않아 메뉴가 그대로였다 —
+  // "권한 설정" 창을 닫을 때마다 서버 최신 값으로 다시 맞춰준다.
+  function refreshCurrentMember() {
+    if (!currentMember) return;
+    fetchMembers().then(list => {
+      const fresh = (list || []).find(m => m.id === currentMember.id);
+      if (!fresh) { handleLogout(); return; } // 계정이 삭제된 경우
+      const updated = { id: fresh.id, username: fresh.username, allowedTabs: fresh.allowedTabs || [], isAdmin: !!fresh.isAdmin };
+      setCurrentMember(updated);
+      try {
+        if (localStorage.getItem('em-current-member')) localStorage.setItem('em-current-member', JSON.stringify(updated));
+      } catch { /* ignore */ }
+    }).catch(() => {});
   }
 
   // 지금 보이는 메뉴(로그인 계정 권한 또는 비로그인 시 게스트 제한)에 현재 페이지가
@@ -209,7 +225,7 @@ export default function App() {
       {showLogin && <Login onClose={() => setShowLogin(false)} onLoggedIn={handleLoggedIn} />}
 
       {showMemberManager && adminUnlocked && (
-        <MemberManager menu={MENU} onClose={() => { setShowMemberManager(false); reloadGuestAccess(); }} />
+        <MemberManager menu={MENU} onClose={() => { setShowMemberManager(false); reloadGuestAccess(); refreshCurrentMember(); }} />
       )}
 
       {showMemberChangePassword && currentMember && (
