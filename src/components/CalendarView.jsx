@@ -271,7 +271,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   // 달력 사본을 배율 설정 팝오버 안에 작게(transform:scale) 그려서, 인쇄해보지
   // 않고도 화면에서 바로 확인할 수 있게 한다. 배율을 바꿀 때마다 다시 그린다.
   const printPreviewRef = useRef(null);
-  const PRINT_PREVIEW_W = 1100, PRINT_PREVIEW_H = 760, PRINT_PREVIEW_BOX_W = 220;
+  const PRINT_PREVIEW_W = 1100, PRINT_PREVIEW_H = 760, PRINT_PREVIEW_BOX_W = 620;
   useEffect(() => {
     if (!showPrintScale || printScaleMode !== 'manual' || viewMode === 'table') return;
     const src = printAreaRef.current;
@@ -2085,7 +2085,8 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
             {showPrintScale && (
               <>
                 <div className="fixed inset-0 z-20" onClick={() => setShowPrintScale(false)} />
-                <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-gray-200 rounded-xl shadow-lg p-3 w-64">
+                <div className="absolute right-0 top-full mt-1 z-30 bg-white border border-gray-200 rounded-xl shadow-lg p-3"
+                  style={{ width: printScaleMode === 'manual' && viewMode !== 'table' ? PRINT_PREVIEW_BOX_W + 24 : 256 }}>
                   <p className="text-xs font-semibold text-gray-500 mb-2">🖨 인쇄 배율</p>
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 mb-1.5 cursor-pointer select-none">
                     <input type="radio" checked={printScaleMode === 'auto'} onChange={() => setPrintScaleMode('auto')} />
