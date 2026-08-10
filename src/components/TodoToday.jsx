@@ -141,6 +141,7 @@ function StickyNotesBoard() {
   });
   const [openPaletteId, setOpenPaletteId] = useState(null);
   const [dragId, setDragId] = useState(null);
+  const [search, setSearch] = useState('');
   // 지금 크기 조절 중인 메모의 실시간 크기 — 다른 메모들과 폭/높이가 맞는지
   // 비교해 보조선(테두리 강조)을 보여주는 데 쓴다. 조절이 멈추면 null로 돌아간다.
   const [liveResize, setLiveResize] = useState(null); // { id, w, h } | null
@@ -176,23 +177,43 @@ function StickyNotesBoard() {
     });
   }
 
+  const q = search.trim().toLowerCase();
+  const canDrag = !q; // 검색 중엔 필터된 목록과 실제 배열의 순서가 어긋나므로 드래그 순서변경을 막는다
+  const filteredNotes = q
+    ? notes.filter(n => (n.title || '').toLowerCase().includes(q) || (n.text || '').toLowerCase().includes(q)
+        || (n.tags || []).some(t => t.toLowerCase().includes(q)))
+    : notes;
+
   return (
     <div className="space-y-3 lg:sticky lg:top-6">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-bold text-gray-700">📌 메모</h2>
         <button onClick={addNote} className="text-xs px-2.5 py-1 bg-gray-800 text-white rounded-lg hover:bg-gray-700 font-medium">+ 메모</button>
       </div>
+      <div className="relative">
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="제목·내용·태그 검색..." spellCheck={false}
+          className="w-full border border-gray-200 rounded-lg pl-8 pr-7 py-1.5 text-sm outline-none focus:ring-1 focus:ring-blue-400" />
+        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-300 text-xs">🔍</span>
+        {search && (
+          <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-600 text-xs">✕</button>
+        )}
+      </div>
       {notes.length === 0 ? (
         <p className="text-xs text-gray-300 py-6 text-center border border-dashed border-gray-200 rounded-xl leading-relaxed">
           아직 메모가 없습니다.<br />"+ 메모"로 포스트잇을 붙여보세요.
         </p>
+      ) : filteredNotes.length === 0 ? (
+        <p className="text-xs text-gray-300 py-6 text-center border border-dashed border-gray-200 rounded-xl leading-relaxed">
+          검색 결과가 없습니다.
+        </p>
       ) : (
         <div className="flex flex-wrap content-start gap-3 max-h-[calc(100vh-160px)] overflow-y-auto pr-0.5">
-          {notes.map(note => {
+          {filteredNotes.map(note => {
             const matchW = liveResize && liveResize.id !== note.id && Math.abs((note.w || NOTE_DEFAULT_W) - liveResize.w) <= NOTE_SNAP_TOLERANCE;
             const matchH = liveResize && liveResize.id !== note.id && Math.abs((note.h || NOTE_DEFAULT_H) - liveResize.h) <= NOTE_SNAP_TOLERANCE;
             return (
-              <NoteCard key={note.id} note={note} dragId={dragId} setDragId={setDragId} reorderNotes={reorderNotes}
+              <NoteCard key={note.id} note={note} dragId={dragId} setDragId={setDragId} reorderNotes={canDrag ? reorderNotes : () => {}}
+                canDrag={canDrag}
                 openPaletteId={openPaletteId} setOpenPaletteId={setOpenPaletteId}
                 updateNote={updateNote} removeNote={removeNote}
                 isResizing={liveResize?.id === note.id} matchW={!!matchW} matchH={!!matchH}
@@ -207,10 +228,22 @@ function StickyNotesBoard() {
 
 // 카드 오른쪽 아래 모서리를 드래그해 크기를 조절할 수 있는(resize:both) 포스트잇 한 장.
 // 조절하는 동안 폭·높이가 다른 메모와 맞으면 그 메모 테두리에 보조선(강조 테두리)이 뜬다.
-function NoteCard({ note, dragId, setDragId, reorderNotes, openPaletteId, setOpenPaletteId, updateNote, removeNote, isResizing, matchW, matchH, onLiveResize }) {
+function NoteCard({ note, dragId, setDragId, reorderNotes, canDrag, openPaletteId, setOpenPaletteId, updateNote, removeNote, isResizing, matchW, matchH, onLiveResize }) {
   const cardRef = useRef(null);
   const resizeTimer = useRef(null);
   const liveEndTimer = useRef(null);
+  const [newTag, setNewTag] = useState('');
+  const tags = note.tags || [];
+
+  function addTag() {
+    const t = newTag.trim();
+    if (!t || tags.includes(t)) { setNewTag(''); return; }
+    updateNote(note.id, { tags: [...tags, t] });
+    setNewTag('');
+  }
+  function removeTag(t) {
+    updateNote(note.id, { tags: tags.filter(x => x !== t) });
+  }
 
   useEffect(() => {
     const el = cardRef.current;
@@ -257,10 +290,12 @@ function NoteCard({ note, dragId, setDragId, reorderNotes, openPaletteId, setOpe
       {matchW && <div className="absolute top-0 right-0 bottom-0 w-0.5 bg-blue-500 pointer-events-none" />}
       {matchH && <div className="absolute left-0 right-0 bottom-0 h-0.5 bg-blue-500 pointer-events-none" />}
       <div className="flex items-center justify-between mb-1.5 shrink-0">
-        <span draggable
-          onDragStart={e => { e.dataTransfer.setData('text/plain', note.id); e.dataTransfer.effectAllowed = 'move'; setDragId(note.id); }}
-          onDragEnd={() => setDragId(null)}
-          className="cursor-move text-black/40 hover:text-black/70 text-xs select-none" title="드래그해서 순서 변경">⠿</span>
+        {canDrag ? (
+          <span draggable
+            onDragStart={e => { e.dataTransfer.setData('text/plain', note.id); e.dataTransfer.effectAllowed = 'move'; setDragId(note.id); }}
+            onDragEnd={() => setDragId(null)}
+            className="cursor-move text-black/40 hover:text-black/70 text-xs select-none" title="드래그해서 순서 변경">⠿</span>
+        ) : <span className="text-black/15 text-xs select-none" title="검색 중에는 순서를 바꿀 수 없습니다">⠿</span>}
         <div className="flex items-center gap-2">
           <button onClick={() => setOpenPaletteId(p => p === note.id ? null : note.id)}
             className="text-xs opacity-60 hover:opacity-100" title="색상 변경">🎨</button>
@@ -274,6 +309,11 @@ function NoteCard({ note, dragId, setDragId, reorderNotes, openPaletteId, setOpe
               className={`w-5 h-5 rounded-full border-2 ${note.color === c ? 'border-gray-700' : 'border-transparent'}`}
               style={{ backgroundColor: c }} title={c} />
           ))}
+          <label className="w-5 h-5 rounded-full border-2 border-white shadow flex items-center justify-center cursor-pointer overflow-hidden"
+            style={{ background: 'conic-gradient(red, yellow, lime, cyan, blue, magenta, red)' }} title="RGB로 직접 선택">
+            <input type="color" value={note.color || '#ffffff'} onChange={e => updateNote(note.id, { color: e.target.value })}
+              className="opacity-0 w-6 h-6 cursor-pointer" />
+          </label>
         </div>
       )}
       <input
@@ -282,6 +322,18 @@ function NoteCard({ note, dragId, setDragId, reorderNotes, openPaletteId, setOpe
         placeholder="제목"
         className="w-full bg-transparent text-sm font-bold text-gray-800 outline-none shrink-0 placeholder:text-gray-500/50 placeholder:font-normal"
       />
+      <div className="flex flex-wrap items-center gap-1 mt-1 shrink-0">
+        {tags.map(t => (
+          <span key={t} className="flex items-center gap-0.5 text-[10px] bg-white/50 text-gray-700 px-1.5 py-0.5 rounded-full">
+            #{t}
+            <button onClick={() => removeTag(t)} className="text-gray-400 hover:text-red-500 leading-none">✕</button>
+          </span>
+        ))}
+        <input value={newTag} onChange={e => setNewTag(e.target.value)} placeholder="+태그" spellCheck={false}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } }}
+          onBlur={addTag}
+          className="w-14 bg-transparent text-[10px] text-gray-600 outline-none placeholder:text-gray-500/50" />
+      </div>
       <hr className="border-t border-black/10 my-1.5 shrink-0" />
       <textarea
         value={note.text}
@@ -523,8 +575,8 @@ export default function TodoToday({ currentMember }) {
   const ahuDone = ahuTasks.filter(t => t.done).length;
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_560px] gap-6 items-start">
+    <div className="p-6 max-w-[1600px] mx-auto">
+    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_720px] gap-6 items-start">
     <div className="space-y-5 min-w-0">
       {/* 헤더 */}
       <div className="flex items-end justify-between flex-wrap gap-3">
