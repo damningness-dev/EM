@@ -806,7 +806,11 @@ function showNextAlarm() {
           win.setBounds({ x: wa.width - W - 16, y: Math.max(16, wa.height - newH - 16), width: W, height: newH });
         }
       } catch { /* ignore */ }
-      if (!win.isDestroyed()) { win.show(); win.moveTop(); }
+      // showInactive() — 알람 창은 보이고 클릭도 되지만 키보드 포커스는 뺏지 않는다.
+      // show()를 쓰면 다른 화면(예: 주간근무 입력 중)에서 타이핑하던 포커스가
+      // 갑자기 이 알람 창으로 넘어가 버려, 확인을 누르기 전까지 입력이 안 먹히는
+      // 것처럼 보이는 문제가 있었다.
+      if (!win.isDestroyed()) { win.showInactive(); win.moveTop(); }
     };
     win.webContents.once('did-finish-load', reveal);
     win.once('ready-to-show', reveal);

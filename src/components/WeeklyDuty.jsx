@@ -95,6 +95,21 @@ export default function WeeklyDuty({ adminUnlocked }) {
     setDuty(prev => ({ ...prev, [section]: prev[section].map(t => t.id === id ? { ...t, alarmTime: value } : t) }));
     setDirty(true);
   }
+  // 드래그한 업무(fromId)를 놓은 자리(toId)로 옮긴다 — 같은 섹션 안에서만.
+  function reorderTasks(section, fromId, toId) {
+    if (!requireAdmin()) return;
+    if (!fromId || fromId === toId) return;
+    setDuty(prev => {
+      const arr = [...prev[section]];
+      const fromIdx = arr.findIndex(t => t.id === fromId);
+      const toIdx = arr.findIndex(t => t.id === toId);
+      if (fromIdx < 0 || toIdx < 0) return prev;
+      const [moved] = arr.splice(fromIdx, 1);
+      arr.splice(toIdx, 0, moved);
+      return { ...prev, [section]: arr };
+    });
+    setDirty(true);
+  }
   function updateAssignment(section, id, weekIdx, value) {
     if (!requireAdmin()) return;
     setDuty(prev => ({
@@ -180,7 +195,7 @@ export default function WeeklyDuty({ adminUnlocked }) {
   const weekIdx = computeCurrentWeekIndex(duty, new Date());
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-5" onClick={() => setOpenPicker(null)}>
+    <div className="p-6 max-w-[1500px] mx-auto space-y-5" onClick={() => setOpenPicker(null)}>
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-800">주간근무</h1>
         {adminUnlocked && (
@@ -256,6 +271,7 @@ export default function WeeklyDuty({ adminUnlocked }) {
         onUpdateAlarmTime={(id, v) => updateTaskAlarmTime('dailyTasks', id, v)}
         onUpdateAssignment={(id, wi, v) => updateAssignment('dailyTasks', id, wi, v)}
         onUpdateWeekLabel={updateWeekLabel} onAddWeek={addWeek} onRemoveWeek={removeWeek} showWeekControls
+        onReorderTask={(fromId, toId) => reorderTasks('dailyTasks', fromId, toId)}
       />
 
       <DutyGrid title="🗓 주간점검 (매주 월요일)" section="weeklyTasks" tasks={duty.weeklyTasks} weeks={duty.weeks} staff={staff} adminUnlocked={adminUnlocked}
@@ -265,12 +281,14 @@ export default function WeeklyDuty({ adminUnlocked }) {
         onUpdateAlarmTime={(id, v) => updateTaskAlarmTime('weeklyTasks', id, v)}
         onUpdateAssignment={(id, wi, v) => updateAssignment('weeklyTasks', id, wi, v)}
         onUpdateWeekLabel={updateWeekLabel} onAddWeek={addWeek} onRemoveWeek={removeWeek} showWeekControls={false}
+        onReorderTask={(fromId, toId) => reorderTasks('weeklyTasks', fromId, toId)}
       />
 
       <MonthlySection duty={duty} staff={staff} adminUnlocked={adminUnlocked}
         onAddTask={() => addTask('monthlyTasks')} onRemoveTask={id => removeTask('monthlyTasks', id)}
         onUpdateName={(id, v) => updateTaskName('monthlyTasks', id, v)} onUpdateAssignee={updateMonthlyAssignee}
         onUpdateAlarmTime={(id, v) => updateTaskAlarmTime('monthlyTasks', id, v)}
+        onReorderTask={(fromId, toId) => reorderTasks('monthlyTasks', fromId, toId)}
       />
 
       <NotesSection notes={duty.notes} adminUnlocked={adminUnlocked} onChange={updateNotes} />
@@ -334,9 +352,41 @@ function AssignCell({ pickerKey, value, staff, adminUnlocked, openPicker, setOpe
   );
 }
 
+const DUTY_COL_DEFAULT = { task: 380, alarm: 100, week: 130 };
+const DUTY_COL_MIN = 60;
+
 // 업무 × 주차 배정표 — 일일점검·주간점검 둘 다 이 구조를 쓴다. 주차 열(weeks)은
 // 두 표가 공유하므로, 열 추가/삭제 버튼은 showWeekControls가 true인 표에서만 보여준다.
-function DutyGrid({ title, section, tasks, weeks, staff, adminUnlocked, openPicker, setOpenPicker, onAddTask, onRemoveTask, onUpdateName, onUpdateAlarmTime, onUpdateAssignment, onUpdateWeekLabel, onAddWeek, onRemoveWeek, showWeekControls }) {
+// 헤더 사이 경계를 드래그해 각 열 너비를 조절할 수 있고(Calibration.jsx 표와 같은
+// 방식), 행 앞의 ⠿를 드래그해 업무 순서를 바꿀 수 있다.
+function DutyGrid({ title, section, tasks, weeks, staff, adminUnlocked, openPicker, setOpenPicker, onAddTask, onRemoveTask, onUpdateName, onUpdateAlarmTime, onUpdateAssignment, onUpdateWeekLabel, onAddWeek, onRemoveWeek, showWeekControls, onReorderTask }) {
+  const storeKey = `em-weeklyduty-cols-${section}`;
+  const [colW, setColW] = useState(() => {
+    try { const s = JSON.parse(localStorage.getItem(storeKey)); if (s && typeof s === 'object') return s; } catch { /* ignore */ }
+    return {};
+  });
+  useEffect(() => { try { localStorage.setItem(storeKey, JSON.stringify(colW)); } catch { /* ignore */ } }, [colW, storeKey]);
+  const [dragTaskId, setDragTaskId] = useState(null);
+
+  function colWidth(key) {
+    if (colW[key] != null) return colW[key];
+    return key === 'task' ? DUTY_COL_DEFAULT.task : key === 'alarm' ? DUTY_COL_DEFAULT.alarm : DUTY_COL_DEFAULT.week;
+  }
+  function startColResize(e, key) {
+    e.preventDefault(); e.stopPropagation();
+    const startX = e.clientX, startW = colWidth(key);
+    const onMove = ev => setColW(prev => ({ ...prev, [key]: Math.max(DUTY_COL_MIN, startW + ev.clientX - startX) }));
+    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
+  }
+  const resizeHandle = key => (
+    <span onMouseDown={e => startColResize(e, key)} draggable={false} onDragStart={e => e.preventDefault()}
+      className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }}
+      onClick={e => e.stopPropagation()} title="드래그하여 너비 조절" />
+  );
+
+  const totalWidth = 28 + colWidth('task') + colWidth('alarm') + weeks.reduce((s, _, wi) => s + colWidth(`week_${wi}`), 0) + (adminUnlocked ? 32 : 0);
+
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden" onClick={e => e.stopPropagation()}>
       <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 bg-gray-50">
@@ -351,13 +401,27 @@ function DutyGrid({ title, section, tasks, weeks, staff, adminUnlocked, openPick
         )}
       </div>
       <div className="overflow-x-auto">
-        <table className="text-sm w-full">
+        <table className="text-sm" style={{ tableLayout: 'fixed', width: totalWidth }}>
+          <colgroup>
+            <col style={{ width: 28 }} />
+            <col style={{ width: colWidth('task') }} />
+            <col style={{ width: colWidth('alarm') }} />
+            {weeks.map((_, wi) => <col key={wi} style={{ width: colWidth(`week_${wi}`) }} />)}
+            {adminUnlocked && <col style={{ width: 32 }} />}
+          </colgroup>
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200">
-              <th className="px-3 py-2 text-left text-gray-500 font-medium min-w-[200px]">업무</th>
-              <th className="px-2 py-2 text-center text-gray-500 font-medium min-w-[90px]">⏰ 알람</th>
+              <th></th>
+              <th className="relative px-3 py-2 text-left text-gray-500 font-medium border-r border-gray-200">
+                업무
+                {resizeHandle('task')}
+              </th>
+              <th className="relative px-2 py-2 text-center text-gray-500 font-medium border-r border-gray-200">
+                ⏰ 알람
+                {resizeHandle('alarm')}
+              </th>
               {weeks.map((w, wi) => (
-                <th key={wi} className="px-2 py-2 text-center text-gray-500 font-medium min-w-[110px]">
+                <th key={wi} className="relative px-2 py-2 text-center text-gray-500 font-medium border-r border-gray-200">
                   <div className="flex items-center justify-center gap-1">
                     <input value={w} disabled={!adminUnlocked} spellCheck={false} onChange={e => onUpdateWeekLabel(wi, e.target.value)}
                       className="w-full text-center bg-transparent outline-none disabled:text-gray-500" />
@@ -365,24 +429,36 @@ function DutyGrid({ title, section, tasks, weeks, staff, adminUnlocked, openPick
                       <button onClick={() => onRemoveWeek(wi)} className="text-gray-300 hover:text-red-500 text-xs shrink-0" title="이 주차 삭제">✕</button>
                     )}
                   </div>
+                  {resizeHandle(`week_${wi}`)}
                 </th>
               ))}
-              {adminUnlocked && <th className="w-8"></th>}
+              {adminUnlocked && <th></th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
             {tasks.map(t => (
-              <tr key={t.id} className="hover:bg-gray-50">
-                <td className="px-3 py-2">
+              <tr key={t.id}
+                onDragOver={e => { if (dragTaskId) e.preventDefault(); }}
+                onDrop={e => { e.preventDefault(); if (dragTaskId) onReorderTask(dragTaskId, t.id); setDragTaskId(null); }}
+                className={`hover:bg-gray-50 ${dragTaskId === t.id ? 'opacity-40' : ''}`}>
+                <td className="text-center">
+                  {adminUnlocked && (
+                    <span draggable
+                      onDragStart={e => { e.dataTransfer.effectAllowed = 'move'; setDragTaskId(t.id); }}
+                      onDragEnd={() => setDragTaskId(null)}
+                      className="cursor-move text-gray-300 hover:text-gray-600 text-xs select-none" title="드래그해서 순서 변경">⠿</span>
+                  )}
+                </td>
+                <td className="px-3 py-2 border-r border-gray-100">
                   <input value={t.name} disabled={!adminUnlocked} spellCheck={false} onChange={e => onUpdateName(t.id, e.target.value)}
                     className="w-full bg-transparent outline-none text-gray-800 disabled:text-gray-700" placeholder="업무명" />
                 </td>
-                <td className="px-2 py-2 text-center">
+                <td className="px-2 py-2 text-center border-r border-gray-100">
                   <input type="time" value={t.alarmTime || ''} disabled={!adminUnlocked} onChange={e => onUpdateAlarmTime(t.id, e.target.value)}
                     className="w-full bg-transparent outline-none text-xs text-gray-600 disabled:text-gray-400" />
                 </td>
                 {weeks.map((_, wi) => (
-                  <td key={wi} className="px-2 py-2 text-center">
+                  <td key={wi} className="px-2 py-2 text-center border-r border-gray-100">
                     <AssignCell pickerKey={`${section}_${t.id}_${wi}`} value={t.assignments[wi]} staff={staff}
                       adminUnlocked={adminUnlocked} openPicker={openPicker} setOpenPicker={setOpenPicker}
                       onChange={v => onUpdateAssignment(t.id, wi, v)} />
@@ -396,7 +472,7 @@ function DutyGrid({ title, section, tasks, weeks, staff, adminUnlocked, openPick
               </tr>
             ))}
             {tasks.length === 0 && (
-              <tr><td colSpan={weeks.length + 3} className="px-3 py-6 text-center text-gray-400 text-sm">등록된 업무가 없습니다.</td></tr>
+              <tr><td colSpan={weeks.length + 4} className="px-3 py-6 text-center text-gray-400 text-sm">등록된 업무가 없습니다.</td></tr>
             )}
           </tbody>
         </table>
@@ -406,7 +482,8 @@ function DutyGrid({ title, section, tasks, weeks, staff, adminUnlocked, openPick
 }
 
 // 월간점검 — 항목마다 담당자 한 명(주차 개념 없음)이라 표 구조가 달라 별도로 그린다.
-function MonthlySection({ duty, staff, adminUnlocked, onAddTask, onRemoveTask, onUpdateName, onUpdateAssignee, onUpdateAlarmTime }) {
+function MonthlySection({ duty, staff, adminUnlocked, onAddTask, onRemoveTask, onUpdateName, onUpdateAssignee, onUpdateAlarmTime, onReorderTask }) {
+  const [dragTaskId, setDragTaskId] = useState(null);
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden" onClick={e => e.stopPropagation()}>
       <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 bg-gray-50">
@@ -417,13 +494,22 @@ function MonthlySection({ duty, staff, adminUnlocked, onAddTask, onRemoveTask, o
       </div>
       <div className="divide-y divide-gray-50">
         {duty.monthlyTasks.map(t => (
-          <div key={t.id} className="flex items-center gap-3 px-5 py-2.5">
+          <div key={t.id}
+            onDragOver={e => { if (dragTaskId) e.preventDefault(); }}
+            onDrop={e => { e.preventDefault(); if (dragTaskId) onReorderTask(dragTaskId, t.id); setDragTaskId(null); }}
+            className={`flex items-center gap-3 px-5 py-2.5 ${dragTaskId === t.id ? 'opacity-40' : ''}`}>
+            {adminUnlocked && (
+              <span draggable
+                onDragStart={e => { e.dataTransfer.effectAllowed = 'move'; setDragTaskId(t.id); }}
+                onDragEnd={() => setDragTaskId(null)}
+                className="cursor-move text-gray-300 hover:text-gray-600 text-xs select-none shrink-0" title="드래그해서 순서 변경">⠿</span>
+            )}
             <input value={t.name} disabled={!adminUnlocked} spellCheck={false} onChange={e => onUpdateName(t.id, e.target.value)}
-              className="flex-1 bg-transparent outline-none text-sm text-gray-800 disabled:text-gray-700" placeholder="점검 항목" />
+              className="flex-1 bg-transparent outline-none text-sm text-gray-800 disabled:text-gray-700 border-r border-gray-100 pr-3" placeholder="점검 항목" />
             <input type="time" value={t.alarmTime || ''} disabled={!adminUnlocked} onChange={e => onUpdateAlarmTime(t.id, e.target.value)}
-              className="w-24 text-center bg-transparent outline-none text-xs text-gray-600 disabled:text-gray-400 border-l border-gray-100 pl-3" />
+              className="w-24 text-center bg-transparent outline-none text-xs text-gray-600 disabled:text-gray-400 border-r border-gray-100 pr-3" />
             <select value={t.assignee || ''} disabled={!adminUnlocked} onChange={e => onUpdateAssignee(t.id, e.target.value)}
-              className="w-32 text-center bg-transparent outline-none text-sm text-gray-600 disabled:text-gray-500 border-l border-gray-100 pl-3">
+              className="w-32 text-center bg-transparent outline-none text-sm text-gray-600 disabled:text-gray-500">
               <option value="">선택</option>
               {staff.map(n => <option key={n} value={n}>{n}</option>)}
             </select>
