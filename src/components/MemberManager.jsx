@@ -23,6 +23,7 @@ export default function MemberManager({ menu, onClose }) {
   const [form, setForm] = useState({ username: '', password: '', allowedTabs: [], token: '', isAdmin: false });
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [confirmAction, setConfirmAction] = useState(null); // { type: 'remove'|'clearToken', id }
 
   function reload() {
     setLoading(true);
@@ -66,18 +67,30 @@ export default function MemberManager({ menu, onClose }) {
     finally { setBusy(false); }
   }
 
-  async function remove(id) {
-    if (!confirm('이 계정을 삭제하시겠습니까?')) return;
-    await deleteMember(id);
-    reload();
-    syncAfterChange();
+  function remove(id) {
+    setConfirmAction({ type: 'remove', id });
   }
 
-  async function clearToken(id) {
-    if (!confirm('이 계정의 토큰을 삭제하시겠습니까?')) return;
+  function clearToken(id) {
+    setConfirmAction({ type: 'clearToken', id });
+  }
+
+  async function runConfirmedAction() {
+    if (!confirmAction) return;
+    const { type, id } = confirmAction;
+    setConfirmAction(null);
     setBusy(true);
-    try { await upsertMember({ id, clearToken: true }); reload(); syncAfterChange(); }
-    finally { setBusy(false); }
+    try {
+      if (type === 'remove') {
+        await deleteMember(id);
+      } else if (type === 'clearToken') {
+        await upsertMember({ id, clearToken: true });
+      }
+      reload();
+      syncAfterChange();
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -152,6 +165,20 @@ export default function MemberManager({ menu, onClose }) {
           )}
         </div>
       </div>
+
+      {confirmAction && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-xl shadow-2xl p-5 max-w-sm w-full">
+            <p className="text-sm text-gray-800 mb-4">
+              {confirmAction.type === 'remove' ? '이 계정을 삭제하시겠습니까?' : '이 계정의 토큰을 삭제하시겠습니까?'}
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setConfirmAction(null)} className="px-3 py-1.5 border border-gray-200 rounded text-xs text-gray-600 hover:bg-gray-50">취소</button>
+              <button onClick={runConfirmedAction} className="px-3 py-1.5 bg-red-500 text-white rounded text-xs font-semibold hover:bg-red-600">삭제</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
