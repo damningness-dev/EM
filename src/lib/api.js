@@ -301,6 +301,10 @@ export async function syncUpload() {
 export async function syncPull() {
   return api.invoke('sync:pull');
 }
+// 이 PC에만 있는(아직 공유에 못 올린) 변경을 버리고 원격 내용으로 맞춘다.
+export async function syncDiscardLocalAndPull() {
+  return api.invoke('sync:discardLocalAndPull');
+}
 
 // ─── 임시 일정 ────────────────────────────────────────────────────────────────
 

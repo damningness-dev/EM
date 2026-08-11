@@ -374,14 +374,20 @@ function seedDefaultAdminOnce() {
       allowedTabs: [...DEFAULT_ADMIN_TABS], isAdmin: true,
     });
   }
-  saveData(data);
+  // 앱이 스스로 심는 기본값이라 "올려야 할 로컬 변경"으로 잡지 않는다 — 그렇게
+  // 잡으면 토큰이 없는(읽기 전용) PC가 첫 실행부터 내려받기가 막혀버린다.
+  saveData(data, { local: false });
 }
 
-function saveData(data) {
+// local:false는 "이 PC 사용자가 편집한 게 아니다"라는 뜻 — 동기화로 내려받은
+// 내용을 반영하거나 앱이 스스로 초기값을 심는 경우다. 이때는 아직 못 올린 로컬
+// 변경으로 표시하지 않는다(아래 markPendingLocal 설명 참고).
+function saveData(data, { local = true } = {}) {
   const clean = { ...data };
   delete clean.todos; // 할일은 todos-local.json에서 별도 관리
   delete clean.users; // 사용자 명부(구 기능) — 관리자 비밀번호로 대체됨
   fs.writeFileSync(getDataPath(), JSON.stringify(clean, null, 2), 'utf-8');
+  if (local) markPendingLocal();
 }
 
 function newId() {
@@ -463,6 +469,20 @@ function loadSyncConfig() {
 }
 function saveSyncConfig(cfg) {
   try { fs.writeFileSync(syncConfigPath(), JSON.stringify(cfg, null, 2), 'utf-8'); } catch { /* ignore */ }
+}
+
+// 이 PC에서 편집했지만 아직 공유 Gist에 못 올린 변경이 있는지 표시한다.
+// syncPull()은 내려받은 내용으로 데이터 파일을 통째로 덮어쓰기 때문에, 이 표시가
+// 없으면 "저장은 됐는데 몇 분 뒤 조용히 사라지는"(=자동 동기화가 덮어씀) 데이터
+// 유실이 생긴다. 표시가 있으면 내려받기 전에 먼저 올려서 지킨다.
+function markPendingLocal() {
+  try {
+    const cfg = loadSyncConfig();
+    if (!cfg.gistId) return;           // 공유를 안 쓰는 PC는 덮어쓸 원격이 없다
+    if (cfg.pendingLocalSince) return; // 이미 표시돼 있으면 시각을 갱신하지 않는다
+    cfg.pendingLocalSince = new Date().toISOString();
+    saveSyncConfig(cfg);
+  } catch { /* ignore */ }
 }
 
 // 로그인 계정별 GitHub 토큰 — 관리자가 "사용자 계정 관리"에서 각 계정에 미리
@@ -589,9 +609,30 @@ async function gistFetchData(gistId, token, etag) {
 }
 
 // 원격 → 로컬 최신화. force=false면 updated_at이 마지막 동기화와 같으면 건너뜀.
-async function syncPull(force) {
-  const cfg = loadSyncConfig();
+async function syncPull(force, { discardLocal = false } = {}) {
+  let cfg = loadSyncConfig();
   if (!cfg.gistId) return { ok: false, error: 'Gist ID가 설정되지 않았습니다' };
+
+  // 아직 못 올린 이 PC의 변경이 있으면 먼저 올려서 지킨 뒤에 내려받는다.
+  // 그냥 내려받으면 아래 saveData()가 데이터 파일을 원격 내용으로 통째로
+  // 덮어써서 그 변경이 흔적 없이 사라진다 — "분명 저장했는데 나중에 보면
+  // 없어져 있다 / 다른 PC와 공유도 안 된다"로 나타나던 문제의 원인이다.
+  if (cfg.pendingLocalSince && !discardLocal) {
+    const up = await syncUpload();
+    if (up?.ok) {
+      cfg = loadSyncConfig(); // 업로드가 갱신한 lastSyncedAt/etag를 다시 읽는다
+    } else {
+      // 올릴 수 없으면(토큰 없음·만료 등) 덮어쓰지 않고 멈춘다. 조용히 넘어가면
+      // 다음 자동 동기화가 이 PC의 작업을 지워버리므로, 원인을 눈에 보이게 알린다.
+      sendSyncStatus({
+        type: 'error',
+        pendingLocal: true,
+        message: `이 PC에만 저장된 변경이 있어 내려받기를 멈췄습니다(덮어쓰기 방지). 공유하려면 GitHub 토큰이 필요합니다 — ${up?.error || ''}`,
+      });
+      return { ok: false, error: up?.error || '업로드할 수 없어 내려받기를 멈췄습니다', pendingLocal: true };
+    }
+  }
+
   sendSyncStatus({ type: 'checking' });
   try {
     const r = await gistFetchData(cfg.gistId, effectiveToken(cfg), cfg.etag);
@@ -609,9 +650,10 @@ async function syncPull(force) {
     let parsed;
     try { parsed = JSON.parse(content); } catch { throw new Error('원격 데이터 형식 오류'); }
     if (!parsed || typeof parsed !== 'object') throw new Error('원격 데이터가 비어있습니다');
-    saveData(parsed);
+    saveData(parsed, { local: false }); // 내려받은 내용 = 원격과 같음 → 올릴 것 없음
     cfg.lastSyncedAt = updatedAt;
     cfg.etag = etag;
+    delete cfg.pendingLocalSince;
     saveSyncConfig(cfg);
     broadcastDataChanged();
     sendSyncStatus({ type: 'updated', lastSyncedAt: updatedAt });
@@ -644,6 +686,7 @@ async function syncUpload() {
       gistId = r.json.id; updatedAt = r.json.updated_at; etag = r.etag;
     }
     cfg.gistId = gistId; cfg.lastSyncedAt = updatedAt; cfg.etag = etag || '';
+    delete cfg.pendingLocalSince; // 올렸으므로 이 PC에만 있는 변경은 이제 없다
     saveSyncConfig(cfg);
     sendSyncStatus({ type: 'uploaded', lastSyncedAt: updatedAt });
     return { ok: true, gistId, updatedAt };
@@ -1103,6 +1146,8 @@ function registerHandlers() {
       gistId: c.gistId || '', hasToken: !!effectiveToken(c), hasSharedToken: !!c.token,
       autoSync: c.autoSync !== false, intervalMin: c.intervalMin || 5, lastSyncedAt: c.lastSyncedAt || '',
       role: c.role || 'member', requesterName: c.requesterName || '',
+      pendingLocal: !!c.pendingLocalSince, // 아직 공유에 못 올린 이 PC만의 변경 여부
+
     };
   });
   ipcMain.handle('sync:setConfig', (_e, patch = {}) => {
@@ -1127,6 +1172,9 @@ function registerHandlers() {
   });
   ipcMain.handle('sync:upload', () => syncUpload());
   ipcMain.handle('sync:pull', () => syncPull(true));
+  // 이 PC에만 있는 변경을 포기하고 원격 내용으로 맞춘다 — 올릴 수 없어(토큰 없음 등)
+  // 내려받기가 계속 막힐 때 빠져나오는 용도. 되돌릴 수 없으므로 화면에서 한 번 더 확인받는다.
+  ipcMain.handle('sync:discardLocalAndPull', () => syncPull(true, { discardLocal: true }));
 
   // ── 인쇄 (가로 방향 강제) ──
   // Windows Electron 인쇄 대화상자는 landscape 옵션을 무시하고 프린터 기본(세로)을
