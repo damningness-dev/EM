@@ -191,9 +191,12 @@ async function downloadUpdate() {
   downloadingUpdate = true;
   let lastErr = null;
   try {
-    const meta = await fetchJSON(META_URL);
     for (let attempt = 1; attempt <= DOWNLOAD_RETRIES; attempt++) {
       try {
+        // meta.json도 매 시도마다 새로 받는다 — "latest" 릴리즈가 두 배포가 짧은
+        // 간격으로 이어질 때(예: 커밋 두 개를 연달아 푸시) 도중에 바뀌면, meta는
+        // 예전 것을 쓰고 asar만 새로 받아 체크섬이 계속 어긋나는 문제를 막는다.
+        const meta = await fetchJSON(META_URL);
         const sha256 = await downloadAsar(ASAR_URL, dest);
         if (meta.sha256 && sha256 !== meta.sha256) {
           throw new Error(`파일 검증 실패 (체크섬 불일치)${attempt < DOWNLOAD_RETRIES ? ` — 재시도 중 (${attempt}/${DOWNLOAD_RETRIES})` : ''}`);
