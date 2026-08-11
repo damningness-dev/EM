@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { formatDate } from '../utils/dateUtils';
 import {
   fetchUsagePoints, upsertUsagePoint, deleteUsagePoint,
@@ -78,12 +78,21 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   const [catDraft, setCatDraft] = useState(null);
   const [newMinor, setNewMinor] = useState({});
 
-  useEffect(() => {
-    Promise.all([fetchUsagePoints(), fetchUsagePointCategories()])
+  const reload = useCallback(() => {
+    return Promise.all([fetchUsagePoints(), fetchUsagePointCategories()])
       .then(([list, cats]) => { setData(list || []); setCategories(cats || DEFAULT_CATEGORIES); })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  // 공유 동기화로 새 내용이 들어오면 화면을 바로 최신화한다 — 예전에는 이 창을
+  // 열어둔 채로는 반영되지 않아 다른 메뉴에 갔다 와야 보였다.
+  useEffect(() => {
+    if (!window.electronAPI?.onDataChanged) return;
+    return window.electronAPI.onDataChanged(() => { reload(); });
+  }, [reload]);
 
   // 미리보기(사진)를 클릭해 확대창을 열면, 로컬/캐시에 없으면 공유 Gist에서
   // 원본을 받아 캐시에 저장한 뒤 항상 고화질(최대 2000px 저장본)로 보여준다.

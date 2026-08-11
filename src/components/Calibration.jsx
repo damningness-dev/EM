@@ -4,6 +4,7 @@ import { nextCalibDate, latestCalibHistory as latestHistory, effectiveCalib } fr
 import { fetchCalibration, upsertCalibration, deleteCalibration, saveCalibFile, uploadCalibAttachment, openCalibFile, revealCalibFile, syncGetConfig, syncUpload, backfillCalibAttachments } from '../lib/api';
 import CalibExport from './CalibExport';
 
+import useDataVersion from '../hooks/useDataVersion';
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
 let hid = 0;
 function newHistoryId() { return `h${Date.now()}_${hid++}`; }
@@ -47,6 +48,7 @@ function certFileName(no, calibDate, sn, originalName) {
 }
 
 export default function Calibration({ adminUnlocked }) {
+  const dataVersion = useDataVersion(); // 공유 동기화 시 화면 자동 최신화
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -118,7 +120,7 @@ export default function Calibration({ adminUnlocked }) {
       setLoading(false);
       for (const m of migrated) { try { await upsertCalibration(m); } catch { /* ignore */ } }
     });
-  }, []);
+  }, [dataVersion]);
 
   const enriched = useMemo(() => data.map(item => {
     const eff = effectiveCalib(item);

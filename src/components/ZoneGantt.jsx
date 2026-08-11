@@ -3,6 +3,7 @@ import { format, differenceInDays } from 'date-fns';
 import { fetchZones } from '../lib/api';
 import { calcMeasurements } from '../lib/schedule';
 
+import useDataVersion from '../hooks/useDataVersion';
 const MONTHS = [1,2,3,4,5,6,7,8,9,10,11,12];
 const GRADE_ORDER = ['P1','P2','P3','유지관리'];
 const GANTT_COLORS = {
@@ -19,6 +20,7 @@ const CHAR_PX = 5.6;       // text-[10px] 숫자 한 글자 대략 폭
 const LABEL_PAD = 10;      // 라벨 좌우 여백 버퍼
 
 export default function ZoneGantt({ year, onYearChange }) {
+  const dataVersion = useDataVersion(); // 공유 동기화 시 화면 자동 최신화
   const [zones,   setZones]   = useState([]);
   const [loading, setLoading] = useState(true);
   const [search,  setSearch]  = useState('');
@@ -28,7 +30,7 @@ export default function ZoneGantt({ year, onYearChange }) {
 
   useEffect(() => {
     fetchZones().then(z => { setZones(z); setLoading(false); });
-  }, []);
+  }, [dataVersion]);
 
   // 트랙(막대 영역) 실제 픽셀 폭 측정 → 라벨이 막대 안에 들어가는지 판단
   useLayoutEffect(() => {

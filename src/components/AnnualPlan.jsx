@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { fetchAnnualPlan, upsertAnnualPlan, fetchAnnualPlanAhus, addAnnualPlanAhu } from '../lib/api';
 
+import useDataVersion from '../hooks/useDataVersion';
 const MONTHS = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'];
 
 export default function AnnualPlan({ year, onYearChange }) {
+  const dataVersion = useDataVersion(); // 공유 동기화 시 화면 자동 최신화
   const [plan, setPlan] = useState({});
   const [ahus, setAhus] = useState([]);
   const [newAhu, setNewAhu] = useState('');
@@ -15,12 +17,12 @@ export default function AnnualPlan({ year, onYearChange }) {
   // 데이터(em-data.json)에 저장되어 재시작하거나 다른 PC에서도 유지된다.
   useEffect(() => {
     fetchAnnualPlanAhus().then(setAhus).catch(() => {});
-  }, []);
+  }, [dataVersion]);
 
   useEffect(() => {
     setLoading(true);
     fetchAnnualPlan(year).then(p => { setPlan(p); setLoading(false); });
-  }, [year]);
+  }, [year, dataVersion]);
 
   async function addAhu() {
     const name = newAhu.trim();

@@ -3,6 +3,7 @@ import { fetchZones, fetchScheduleConfig, fetchHolidays, fetchCompletions } from
 import { GRADE_COLORS } from '../data/initialData';
 import { calcMeasurements, calcEndDate, buildHolidayMap, setScheduleConfig, getScheduleSpec, computePhaseCount, GRADE_PRIORITY } from '../lib/schedule';
 
+import useDataVersion from '../hooks/useDataVersion';
 const DOW = ['일', '월', '화', '수', '목', '금', '토'];
 function fmt(d) { return d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '—'; }
 
@@ -53,6 +54,7 @@ function zoneCycleLabel(zone) {
 }
 
 export default function ZoneStatus({ year, onYearChange, onJumpToSchedule }) {
+  const dataVersion = useDataVersion(); // 공유 동기화 시 화면 자동 최신화
   const [zones, setZones] = useState([]);
   const [holidayDefs, setHolidayDefs] = useState([]);
   const [completions, setCompletions] = useState(new Set());
@@ -70,7 +72,7 @@ export default function ZoneStatus({ year, onYearChange, onJumpToSchedule }) {
         setCompletions(new Set((comps || []).map(c => `${c.zoneId}_${c.num}`)));
         setLoading(false);
       });
-  }, []);
+  }, [dataVersion]);
 
   const holidayMap = useMemo(() => {
     try { return buildHolidayMap(holidayDefs, year - 1, year + 5); } catch { return {}; }

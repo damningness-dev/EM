@@ -4,6 +4,7 @@ import { GRADE_TARGETS, GRADE_COLORS, CLEAN_GRADES, CLEAN_GRADE_COLORS } from '.
 import { calcMeasurements, calcEndDate, GRADE_PRIORITY, buildHolidayMap, computeCascadeSchedules, DEFAULT_SCHEDULE_SPECS, setScheduleConfig, getScheduleConfig, isCombinedCat, getMajorCat } from '../lib/schedule';
 import { format } from 'date-fns';
 
+import useDataVersion from '../hooks/useDataVersion';
 const MONTHS = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
 const GRADES = ['P1', 'P2', 'P3', '유지관리', 'OQ', 'PQ'];
 const PROGRESSION = ['P1', 'P2', 'P3', '유지관리'];
@@ -23,6 +24,7 @@ function catBg(cat) { return MAJOR_BG[getMajorCat(cat)]; }
 const COMBINED_CATS = { includes: (c) => isCombinedCat(c) };
 
 export default function MonthlyMonitoring({ year, onYearChange }) {
+  const dataVersion = useDataVersion(); // 공유 동기화 시 화면 자동 최신화
   const [month, setMonth] = useState(new Date().getMonth() + 1);
   const [zones, setZones] = useState([]);
   const [monData, setMonData] = useState({});
@@ -79,12 +81,12 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
       setHolidayDefs(hols);
       setNamedGroups(grps);
     });
-  }, []);
+  }, [dataVersion]);
 
   useEffect(() => {
     setLoading(true);
     fetchMonitoringData(year, month).then(d => { setMonData(d); setLoading(false); });
-  }, [year, month]);
+  }, [year, month, dataVersion]);
 
   // 모달 목록에서 선택된 행 자동 스크롤
   useEffect(() => {

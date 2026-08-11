@@ -33,6 +33,14 @@ export default function WeeklyDuty({ adminUnlocked }) {
     fetchWeeklyDuty().then(setDuty).catch(() => {});
   }, []);
 
+  // 공유 동기화로 새 내용이 들어오면 이 창을 열어둔 채로도 바로 최신화한다.
+  useEffect(() => {
+    if (!window.electronAPI?.onDataChanged) return;
+    return window.electronAPI.onDataChanged(() => {
+      fetchWeeklyDuty().then(setDuty).catch(() => {});
+    });
+  }, []);
+
   function showNotice(text, isError) {
     setNotice({ text, isError });
     setTimeout(() => setNotice(null), 3000);

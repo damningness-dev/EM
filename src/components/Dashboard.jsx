@@ -4,7 +4,9 @@ import { effectiveCalib } from '../utils/calibUtils';
 import { fetchCalibration, fetchZones, fetchAllMonitoringData, fetchAnnualPlan } from '../lib/api';
 import { GRADE_TARGETS, GRADE_COLORS } from '../data/initialData';
 
+import useDataVersion from '../hooks/useDataVersion';
 export default function Dashboard({ year }) {
+  const dataVersion = useDataVersion(); // 공유 동기화 시 화면 자동 최신화
   const [calibration, setCalibration] = useState([]);
   const [zones, setZones] = useState([]);
   const [monData, setMonData] = useState({});
@@ -27,7 +29,7 @@ export default function Dashboard({ year }) {
       setPlan(p);
       setLoading(false);
     });
-  }, [year]);
+  }, [year, dataVersion]);
 
   const urgentCalib = calibration
     .map(c => ({ ...c, eff: effectiveCalib(c) }))
