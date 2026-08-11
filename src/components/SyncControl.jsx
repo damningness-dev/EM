@@ -255,10 +255,16 @@ function SettingsModal({ cfg, onClose, onStatus }) {
   }
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="bg-white text-gray-800 rounded-2xl shadow-2xl w-[420px] max-w-[92vw] p-6" onClick={e => e.stopPropagation()}>
-        <h3 className="text-base font-bold mb-1">공유 동기화 설정</h3>
-        <p className="text-xs text-gray-500 mb-4">일정 데이터를 GitHub Gist로 공유합니다. 읽기는 모든 PC 가능, 업로드는 관리자(토큰 보유)만.</p>
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      {/* 내용이 길어 화면 밖으로 잘리지 않도록, 높이를 화면에 맞추고 본문만 스크롤한다.
+          제목과 아래 버튼줄은 스크롤과 무관하게 항상 보이게 고정한다. */}
+      <div className="bg-white text-gray-800 rounded-2xl shadow-2xl w-[420px] max-w-[92vw] max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="shrink-0 px-6 pt-5 pb-3 border-b border-gray-100">
+          <h3 className="text-base font-bold mb-1">공유 동기화 설정</h3>
+          <p className="text-xs text-gray-500">일정 데이터를 GitHub Gist로 공유합니다. 읽기는 모든 PC 가능, 업로드는 관리자(토큰 보유)만.</p>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-4">
 
         <label className="block text-xs font-medium text-gray-600 mb-1">Gist ID</label>
         <div className="flex gap-1.5 mb-1">
@@ -331,19 +337,6 @@ function SettingsModal({ cfg, onClose, onStatus }) {
           한도를 넘어 "API rate limit exceeded" 오류가 날 수 있습니다).
         </p>
 
-        {msg && <div className={`text-xs mb-3 ${msg.ok ? 'text-green-600' : 'text-red-500'} break-all`}>{msg.text}</div>}
-
-        <div className="flex gap-2">
-          <button onClick={() => runUpload('upload')} disabled={busy || !safeGistId}
-            title={safeGistId ? '이 PC의 변경을 공유에 올립니다(다른 PC 변경과 합쳐서).' : 'Gist ID를 먼저 입력하세요'}
-            className="flex-1 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50">
-            {busy ? '처리 중…' : '업로드(공유)'}
-          </button>
-          <button onClick={save} disabled={busy}
-            className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">저장</button>
-          <button onClick={onClose} className="px-4 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50">닫기</button>
-        </div>
-
         {/* PC마다 데이터가 갈라졌을 때 하나로 맞추는 도구 — 되돌릴 수 없어 확인창을 거친다. */}
         <div className="mt-4 pt-3 border-t border-gray-200">
           <p className="text-xs font-semibold text-gray-600 mb-1">🔧 데이터 하나로 통일하기</p>
@@ -364,6 +357,22 @@ function SettingsModal({ cfg, onClose, onStatus }) {
               className="px-2.5 py-1.5 border border-gray-300 text-gray-600 rounded text-[11px] hover:bg-gray-50 disabled:opacity-40">
               새 공유 만들기
             </button>
+          </div>
+        </div>
+        </div>
+
+        {/* 스크롤과 무관하게 항상 보이는 버튼줄 */}
+        <div className="shrink-0 border-t border-gray-100 px-6 py-3">
+          {msg && <div className={`text-xs mb-2 ${msg.ok ? 'text-green-600' : 'text-red-500'} break-all`}>{msg.text}</div>}
+          <div className="flex gap-2">
+            <button onClick={() => runUpload('upload')} disabled={busy || !safeGistId}
+              title={safeGistId ? '이 PC의 변경을 공유에 올립니다(다른 PC 변경과 합쳐서).' : 'Gist ID를 먼저 입력하세요'}
+              className="flex-1 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50">
+              {busy ? '처리 중…' : '업로드(공유)'}
+            </button>
+            <button onClick={save} disabled={busy}
+              className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">저장</button>
+            <button onClick={onClose} className="px-4 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50">닫기</button>
           </div>
         </div>
 
