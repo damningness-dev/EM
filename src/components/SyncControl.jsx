@@ -162,6 +162,7 @@ function SettingsModal({ cfg, onClose, onStatus }) {
   const [token, setToken] = useState('');
   const [autoSync, setAutoSync] = useState(cfg?.autoSync !== false);
   const [intervalMin, setIntervalMin] = useState(cfg?.intervalMin || 5);
+  const [isBasePC, setIsBasePC] = useState(cfg?.role === 'admin');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [confirm, setConfirm] = useState(null); // 'publish' | 'adopt' | 'create'
@@ -186,7 +187,7 @@ function SettingsModal({ cfg, onClose, onStatus }) {
     const isFirstSetup = !cfg?.gistId && !!safeGistId;
     setBusy(true);
     try {
-      await syncSetConfig({ gistId: safeGistId, token: token || undefined, autoSync, intervalMin });
+      await syncSetConfig({ gistId: safeGistId, token: token || undefined, autoSync, intervalMin, role: isBasePC ? 'admin' : 'member' });
       if (!isFirstSetup) {
         setMsg({ ok: true, text: '저장되었습니다.' });
         return;
@@ -211,7 +212,7 @@ function SettingsModal({ cfg, onClose, onStatus }) {
     setConfirm(null);
     try {
       // 업로드 전 최신 설정(토큰/gist) 저장
-      await syncSetConfig({ gistId: safeGistId, token: token || undefined, autoSync, intervalMin });
+      await syncSetConfig({ gistId: safeGistId, token: token || undefined, autoSync, intervalMin, role: isBasePC ? 'admin' : 'member' });
       const fn = action === 'create' ? syncCreateGist : action === 'publish' ? syncPublishLocal : syncUpload;
       const r = await fn();
       if (r?.ok) {
@@ -235,7 +236,7 @@ function SettingsModal({ cfg, onClose, onStatus }) {
     setMsg(null);
     setConfirm(null);
     try {
-      await syncSetConfig({ gistId: safeGistId, token: token || undefined, autoSync, intervalMin });
+      await syncSetConfig({ gistId: safeGistId, token: token || undefined, autoSync, intervalMin, role: isBasePC ? 'admin' : 'member' });
       const r = await syncDiscardLocalAndPull();
       if (r?.ok) {
         onStatus?.({ type: 'updated', lastSyncedAt: r.updatedAt });
@@ -293,6 +294,26 @@ function SettingsModal({ cfg, onClose, onStatus }) {
           (github.com → Settings → Developer settings → Personal access tokens → <b>Tokens (classic)</b>)
         </p>
         <p className="text-[11px] text-gray-400 mb-3">일정 편집 권한은 사이드바의 "로그인"에서 관리자 계정으로 로그인하면 함께 열립니다.</p>
+
+        {/* 어떤 PC의 내용이 "기준"이 되는지 정한다. 사용점 관리는 모든 PC가 함께
+            쓰지만, 나머지 자료는 기준 PC의 내용이 공유 기준이 된다. */}
+        <div className="border border-gray-200 rounded-lg p-2.5 mb-3">
+          <label className="flex items-start gap-1.5 text-sm cursor-pointer select-none">
+            <input type="checkbox" checked={isBasePC} onChange={e => setIsBasePC(e.target.checked)} className="mt-0.5" />
+            <span>
+              <b>이 PC를 기준(관리자) PC로 사용</b>
+              <span className="block text-[11px] text-gray-500 mt-0.5 font-normal">
+                월간모니터링·구역별현황·간트차트·연간계획·교정관리·주간근무·계정설정은
+                <b> 기준 PC의 내용만 공유에 반영</b>됩니다. 기준 PC는 <b>한 대만</b> 지정하세요.
+              </span>
+            </span>
+          </label>
+          <p className="text-[11px] text-gray-400 mt-1.5 pl-5">
+            {isBasePC
+              ? '✓ 이 PC에서 수정한 모든 자료가 공유에 반영됩니다.'
+              : '이 PC에서는 사용점 관리만 공유에 반영됩니다(다른 자료는 기준 PC 내용을 받아 봅니다). 할일·메모는 어느 PC에서든 공유되지 않습니다.'}
+          </p>
+        </div>
 
         <div className="flex items-center gap-3 mt-2 mb-1">
           <label className="flex items-center gap-1.5 text-sm">

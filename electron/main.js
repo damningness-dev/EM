@@ -479,10 +479,30 @@ function markPendingLocal() {
   try {
     const cfg = loadSyncConfig();
     if (!cfg.gistId) return;           // 공유를 안 쓰는 PC는 덮어쓸 원격이 없다
-    if (cfg.pendingLocalSince) return; // 이미 표시돼 있으면 시각을 갱신하지 않는다
-    cfg.pendingLocalSince = new Date().toISOString();
-    saveSyncConfig(cfg);
+    if (!cfg.pendingLocalSince) {      // 이미 표시돼 있으면 시각을 갱신하지 않는다
+      cfg.pendingLocalSince = new Date().toISOString();
+      saveSyncConfig(cfg);
+    }
+    schedulePush();
   } catch { /* ignore */ }
+}
+
+// 어느 화면에서 저장하든 잠시 뒤 자동으로 공유에 올린다. 화면마다 업로드 호출을
+// 넣는 방식은 빠뜨리기 쉬워(연간계획·월간모니터링·발주그룹관리가 실제로 빠져 있었다)
+// 데이터 저장 지점 한 곳에서 공통으로 처리한다. 연속 저장은 한 번으로 묶는다.
+const PUSH_DEBOUNCE_MS = 8000;
+let pendingPushTimer = null;
+function schedulePush() {
+  if (pendingPushTimer) clearTimeout(pendingPushTimer);
+  pendingPushTimer = setTimeout(() => {
+    pendingPushTimer = null;
+    try {
+      const cfg = loadSyncConfig();
+      if (!cfg.gistId || !cfg.pendingLocalSince) return;
+      if (!effectiveToken(cfg)) return; // 토큰이 없으면 사이드바 경고로 이미 알리고 있다
+      syncUpload().catch(() => { /* 실패해도 표시는 남아 다음 기회에 다시 시도 */ });
+    } catch { /* ignore */ }
+  }, PUSH_DEBOUNCE_MS);
 }
 
 // 로그인 계정별 GitHub 토큰 — 관리자가 "사용자 계정 관리"에서 각 계정에 미리
@@ -711,6 +731,23 @@ function explainGistError(err) {
   return m;
 }
 
+// 모든 PC가 함께 쓰는(누구나 추가·수정하고 서로 공유하는) 항목.
+// 사용점 관리만 여기에 해당한다. 나머지(월간모니터링·구역별현황·간트차트·연간계획·
+// 교정관리·주간근무·계정 설정 등)는 "기준 PC"(sync-config의 role='admin')의 내용이
+// 공유 기준이 되고, 일반 PC가 올릴 때는 건드리지 않는다.
+const COLLAB_KEYS = ['usagePoints'];
+
+// 일반 PC가 올릴 내용을 만든다 — 원격(기준 PC가 올린 내용)을 그대로 두고,
+// 함께 쓰는 항목만 이 PC 내용을 합쳐 넣는다. 이렇게 해야 일반 PC가 사용점을
+// 추가해도 기준 PC가 관리하는 다른 자료를 덮어쓰지 않는다.
+function buildMemberUpload(remoteData, localData) {
+  const out = { ...remoteData };
+  for (const key of COLLAB_KEYS) out[key] = mergeListById(remoteData?.[key], localData?.[key]);
+  // 첨부파일 보관용 Gist ID는 한 번 정해지면 계속 써야 하므로 있는 쪽을 남긴다.
+  if (!out.attachGistId && localData?.attachGistId) out.attachGistId = localData.attachGistId;
+  return out;
+}
+
 // 로컬 → 원격 업로드.
 // allowCreate: Gist ID가 없을 때 새로 만들어도 되는지(명시적으로 "새 공유 만들기"를
 //   눌렀을 때만 true). 예전엔 항상 만들어서, PC마다 자기만의 Gist가 생겨 데이터가
@@ -720,19 +757,28 @@ async function syncUpload({ allowCreate = false, overwriteRemote = false } = {})
   const cfg = loadSyncConfig();
   const token = effectiveToken(cfg);
   if (!token) return { ok: false, error: '업로드하려면 GitHub 토큰이 필요합니다' };
+  const isBasePC = cfg.role === 'admin'; // 이 PC가 기준(관리자) PC인가
   sendSyncStatus({ type: 'uploading' });
   try {
     let localData = loadData();
     let gistId = cfg.gistId, updatedAt, etag, merged = false;
     if (gistId) {
       if (!overwriteRemote) {
-        // 올리기 직전 원격 상태 확인 — 내가 마지막으로 맞춘 시점과 다르면 그 사이
-        // 다른 PC가 올린 것이므로, 덮어쓰지 않고 합친 뒤 올린다.
+        // 올리기 직전 원격 상태 확인.
+        // - 기준 PC: 그 사이 원격이 바뀌었으면(다른 PC가 사용점을 추가했을 수 있으므로)
+        //   덮어쓰지 않고 합친다.
+        // - 일반 PC: 항상 원격을 바탕으로 삼고 사용점만 얹는다.
         const remote = await gistFetchData(gistId, token);
-        if (!remote.notModified && remote.updatedAt !== cfg.lastSyncedAt) {
-          let parsed = null;
+        let parsed = null;
+        if (!remote.notModified) {
           try { parsed = JSON.parse(remote.content); } catch { /* 형식 오류면 합치지 않는다 */ }
-          if (parsed && typeof parsed === 'object') {
+        }
+        if (parsed && typeof parsed === 'object') {
+          if (!isBasePC) {
+            localData = buildMemberUpload(parsed, localData);
+            saveData(localData, { local: false }); // 올린 내용과 이 PC를 일치시킨다
+            merged = true;
+          } else if (remote.updatedAt !== cfg.lastSyncedAt) {
             localData = mergeSharedData(parsed, localData);
             saveData(localData, { local: false }); // 합친 결과를 이 PC에도 반영
             merged = true;
