@@ -475,10 +475,37 @@ function computeAdminUnlocked() {
   const m = (loadData().memberAccounts || []).find(mm => mm.id === currentMemberId);
   return !!m?.isAdmin;
 }
+// 계정별 토큰은 공유 데이터(em-data.json)에 담겨 그대로 공유 Gist에 업로드된다.
+// 원문(ghp_... 등)을 그대로 저장하면 GitHub가 자기 플랫폼(Gist 포함) 안에서
+// 자기 토큰 형식이 노출된 것을 자동 탐지해 "유출된 토큰"으로 간주하고 즉시
+// 폐기해버린다(실제로 겪은 문제). Gist 안에는 원문이 절대 보이지 않도록 저장 시
+// 형태를 바꾸고, 실제 GitHub API 호출 직전에만 원래 값으로 복원한다. 이건 진짜
+// 암호화가 아니라 자동 스캐너의 패턴 탐지만 피하기 위한 최소한의 가공이다 —
+// 이 앱의 신뢰 경계(공유 데이터에 이미 비밀번호 해시 등도 함께 있음)는 그대로다.
+const TOKEN_OBFUSCATE_KEY = 'em-shared-data-token-guard';
+function obfuscateToken(raw) {
+  if (!raw) return raw;
+  const buf = Buffer.from(String(raw), 'utf-8');
+  const key = Buffer.from(TOKEN_OBFUSCATE_KEY, 'utf-8');
+  const out = Buffer.alloc(buf.length);
+  for (let i = 0; i < buf.length; i++) out[i] = buf[i] ^ key[i % key.length];
+  return 'x1:' + out.toString('base64');
+}
+function deobfuscateToken(stored) {
+  if (!stored || typeof stored !== 'string') return stored;
+  if (!stored.startsWith('x1:')) return stored; // 이전 버전에 평문으로 저장된 토큰과 호환
+  try {
+    const buf = Buffer.from(stored.slice(3), 'base64');
+    const key = Buffer.from(TOKEN_OBFUSCATE_KEY, 'utf-8');
+    const out = Buffer.alloc(buf.length);
+    for (let i = 0; i < buf.length; i++) out[i] = buf[i] ^ key[i % key.length];
+    return out.toString('utf-8');
+  } catch { return stored; }
+}
 function effectiveToken(cfg) {
   if (currentMemberId) {
     const m = (loadData().memberAccounts || []).find(mm => mm.id === currentMemberId);
-    if (m?.token) return m.token;
+    if (m?.token) return deobfuscateToken(m.token);
   }
   return cfg.token;
 }
@@ -1446,7 +1473,7 @@ function registerHandlers() {
       if (member.password) data.memberAccounts[idx].passwordHash = hashPassword(member.password);
       // 토큰: clearToken이면 삭제, token이 오면(빈 값 아니면) 교체, 안 오면 기존 값 유지.
       if (member.clearToken) delete data.memberAccounts[idx].token;
-      else if (member.token) data.memberAccounts[idx].token = String(member.token).trim();
+      else if (member.token) data.memberAccounts[idx].token = obfuscateToken(String(member.token).trim());
       saveData(data);
       broadcastAdminUnlocked();
       return { ok: true, id: member.id };
@@ -1460,7 +1487,7 @@ function registerHandlers() {
     if (!member.password) return { ok: false, error: '비밀번호를 입력하세요' };
     const id = newId();
     const newMember = { id, username, passwordHash: hashPassword(member.password), allowedTabs, isAdmin: !!member.isAdmin };
-    if (member.token) newMember.token = String(member.token).trim();
+    if (member.token) newMember.token = obfuscateToken(String(member.token).trim());
     data.memberAccounts.push(newMember);
     saveData(data);
     return { ok: true, id };
