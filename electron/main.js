@@ -1555,9 +1555,20 @@ function registerHandlers() {
           const ext = dot > 0 ? h.filePath.slice(dot) : '';
           const gistKey = h.gistKey || `attach_${h.id}${ext}.b64`;
           if (!existingKeys.has(gistKey)) {
-            pending.push({ itemIdx, histIdx, filePath: h.filePath, gistKey });
+            pending.push({ kind: 'calib', itemIdx, histIdx, filePath: h.filePath, gistKey });
           }
         });
+      });
+      // 사용점 관리 사진도 함께 올린다. 토큰이 없거나 만료된 상태에서 사진을
+      // 등록하면 공유 Gist에 못 올라가 photoGistKey가 비게 되고, 그러면 다른 PC는
+      // 작게 압축된 미리보기만 볼 수 있다("다른 사람이 올린 사진이 고화질로
+      // 안 열린다"의 원인). 여기서 뒤늦게 올려 모든 PC가 원본을 볼 수 있게 한다.
+      (data.usagePoints || []).forEach((u, itemIdx) => {
+        if (!u.photoFilePath || !fs.existsSync(u.photoFilePath)) return;
+        const gistKey = u.photoGistKey || `attach_up_${u.id}.jpg.b64`;
+        if (!existingKeys.has(gistKey)) {
+          pending.push({ kind: 'usagepoint', itemIdx, filePath: u.photoFilePath, gistKey });
+        }
       });
       if (!pending.length) return { ok: true, uploaded: 0, total: 0, failed: [] };
       sendProgress('uploading', { done: 0, total: pending.length });
@@ -1575,7 +1586,10 @@ function registerHandlers() {
           try {
             await ghRequest('PATCH', `https://api.github.com/gists/${attachGistId}`, { token, body: { files } });
             batch.forEach(p => {
-              if (files[p.gistKey]) { data.calibration[p.itemIdx].history[p.histIdx].gistKey = p.gistKey; uploaded++; }
+              if (!files[p.gistKey]) return;
+              if (p.kind === 'usagepoint') data.usagePoints[p.itemIdx].photoGistKey = p.gistKey;
+              else data.calibration[p.itemIdx].history[p.histIdx].gistKey = p.gistKey;
+              uploaded++;
             });
           } catch (e) {
             batch.forEach(p => { if (files[p.gistKey]) failed.push({ filePath: p.filePath, error: e.message }); });

@@ -4,6 +4,7 @@ import {
   fetchUsagePoints, upsertUsagePoint, deleteUsagePoint,
   fetchUsagePointCategories, saveUsagePointCategories,
   saveCalibFile, uploadCalibAttachment, revealCalibFile, resolveCalibImage, syncGetConfig, syncUpload,
+  backfillCalibAttachments,
 } from '../lib/api';
 
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
@@ -74,6 +75,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   const [hqUrl, setHqUrl] = useState(null);
   const [hqLoading, setHqLoading] = useState(false);
   const [expanded, setExpanded] = useState(() => new Set());
+  const [sharingPhotos, setSharingPhotos] = useState(false);
   const [showCatManager, setShowCatManager] = useState(false);
   const [catDraft, setCatDraft] = useState(null);
   const [newMinor, setNewMinor] = useState({});
@@ -279,6 +281,26 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
     }
   }
 
+  // 토큰이 없거나 만료된 상태에서 등록한 사진은 공유 Gist에 못 올라가, 다른 PC에서
+  // 작게 압축된 미리보기만 보인다. 뒤늦게라도 원본을 올려 모든 PC가 고화질로
+  // 볼 수 있게 한다(이미 올라간 사진은 건너뛴다).
+  async function handleSharePhotos() {
+    if (sharingPhotos) return;
+    setSharingPhotos(true);
+    try {
+      const r = await backfillCalibAttachments();
+      if (!r?.ok) { showNotice('사진 공유 실패: ' + (r?.error || ''), true); return; }
+      if (r.total === 0) { showNotice('모든 사진이 이미 공유되어 있습니다.'); return; }
+      if (r.uploaded > 0) await reload();
+      const failMsg = r.failed?.length ? ` (실패 ${r.failed.length}건)` : '';
+      showNotice(`📤 사진 ${r.uploaded}/${r.total}건을 공유했습니다.${failMsg}`, r.failed?.length > 0);
+    } catch (e) {
+      showNotice('사진 공유 중 오류: ' + e.message, true);
+    } finally {
+      setSharingPhotos(false);
+    }
+  }
+
   function openCatManager() {
     if (!requireAdmin()) return;
     setCatDraft(JSON.parse(JSON.stringify(categories || DEFAULT_CATEGORIES)));
@@ -320,6 +342,11 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
           {adminUnlocked && (
             <button onClick={openCatManager} className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200">🏷️ 분류 관리</button>
           )}
+          <button onClick={handleSharePhotos} disabled={sharingPhotos}
+            title="공유에 아직 올라가지 않은 사진의 원본을 올려, 다른 PC에서도 고화질로 볼 수 있게 합니다."
+            className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-50">
+            {sharingPhotos ? '📤 공유 중…' : '📤 사진 공유'}
+          </button>
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="검색 (분류·작성자·실명·사용점번호 등)"
             className="px-3 py-2 border border-gray-200 rounded-lg text-sm w-64" />
           <button onClick={openAdd} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">+ 추가</button>
@@ -542,7 +569,12 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
               )}
             </div>
             <p className="text-[11px] text-gray-400">
-              {hqUrl ? '고화질 사진(최대 2000px)입니다.' : hqLoading ? '' : '작게 압축된 미리보기입니다.'}
+              {hqUrl ? '고화질 사진(최대 2000px)입니다.'
+                : hqLoading ? ''
+                : !lightbox.photoGistKey
+                  // 원본이 공유 Gist에 없으면 올린 PC에만 있어 다른 PC는 받을 수 없다.
+                  ? '작게 압축된 미리보기입니다 — 원본이 아직 공유되지 않았습니다. 이 사진을 올린 PC에서 "📤 사진 공유"를 눌러주세요.'
+                  : '작게 압축된 미리보기입니다.'}
             </p>
             <div className="flex justify-between items-center">
               <p className="text-xs text-gray-400 truncate">{lightbox.photoFileName || ''}</p>
