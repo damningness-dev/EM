@@ -819,14 +819,21 @@ async function syncUpload({ allowCreate = false, overwriteRemote = false } = {})
   }
 }
 
+// 자동 동기화 최소 주기.
+// 토큰이 있으면 인증 요청이라 계정당 시간당 5,000회를 쓸 수 있고, 변경이 없을 때
+// 돌아오는 304 응답은 아예 한도에 포함되지 않는다 — 1분 주기도 충분히 여유롭다.
+// 토큰이 없는 PC는 같은 IP에서 비인증 시간당 60회를 나눠 쓰므로 3분을 유지한다.
+function minIntervalMin(cfg) {
+  return effectiveToken(cfg) ? 1 : 3;
+}
+
 let syncTimer = null;
 function restartSyncTimer() {
   if (syncTimer) { clearInterval(syncTimer); syncTimer = null; }
   const cfg = loadSyncConfig();
   if (cfg.autoSync && cfg.gistId) {
-    // 예전 버전에서 1분처럼 너무 짧게 저장된 값도(설정창을 다시 안 열어도) 자동으로
-    // 안전한 값으로 올려준다 — 여러 PC가 비인증 요청 시간당 60회 한도를 공유하기 때문.
-    const safeIntervalMin = Math.max(3, cfg.intervalMin || 5);
+    // 너무 짧게 저장된 값은(설정창을 다시 안 열어도) 자동으로 안전한 값으로 올려준다.
+    const safeIntervalMin = Math.max(minIntervalMin(cfg), cfg.intervalMin || 5);
     if (safeIntervalMin !== cfg.intervalMin) { cfg.intervalMin = safeIntervalMin; saveSyncConfig(cfg); }
     const ms = safeIntervalMin * 60 * 1000;
     syncTimer = setInterval(() => { syncPull(false); }, ms);
@@ -1283,10 +1290,9 @@ function registerHandlers() {
     if (patch.clearToken) c.token = '';
     else if (patch.token) c.token = String(patch.token).trim(); // 빈 값이면 기존 토큰 유지
     if (patch.autoSync !== undefined) c.autoSync = !!patch.autoSync;
-    // 토큰 없이 읽기만 하는 PC들은 같은 IP에서 GitHub 비인증 요청 시간당 60회 한도를
-    // 공유한다. 여러 PC가 너무 짧은 주기(예: 1분)로 자동 동기화하면 합산 요청이
-    // 금방 한도를 넘어 "API rate limit exceeded"가 나므로 최소 3분으로 제한한다.
-    if (patch.intervalMin !== undefined) c.intervalMin = Math.max(3, parseInt(patch.intervalMin) || 5);
+    // 최소 주기는 토큰 유무에 따라 다르다(minIntervalMin 설명 참고). 토큰 설정이
+    // 이번 patch에 함께 올 수 있으므로, 위에서 갱신된 c 기준으로 판단한다.
+    if (patch.intervalMin !== undefined) c.intervalMin = Math.max(minIntervalMin(c), parseInt(patch.intervalMin) || 5);
     if (patch.role !== undefined) c.role = patch.role === 'admin' ? 'admin' : 'member';
     if (patch.requesterName !== undefined) c.requesterName = String(patch.requesterName).trim();
     saveSyncConfig(c);

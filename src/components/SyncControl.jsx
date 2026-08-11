@@ -122,6 +122,9 @@ function SettingsModal({ cfg, onClose, onStatus }) {
   const [autoSync, setAutoSync] = useState(cfg?.autoSync !== false);
   const [intervalMin, setIntervalMin] = useState(cfg?.intervalMin || 5);
   const [isBasePC, setIsBasePC] = useState(cfg?.role === 'admin');
+  // 토큰이 있으면 인증 요청이라 한도가 훨씬 넉넉해, 주기를 1분까지 줄일 수 있다.
+  const hasToken = !!cfg?.hasToken || !!token;
+  const minInterval = hasToken ? 1 : 3;
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [confirm, setConfirm] = useState(null); // 'publish' | 'adopt' | 'create'
@@ -286,14 +289,15 @@ function SettingsModal({ cfg, onClose, onStatus }) {
           </label>
           <label className="flex items-center gap-1 text-sm text-gray-600">
             주기
-            <input type="number" min="3" max="180" value={intervalMin} onChange={e => setIntervalMin(Math.max(3, parseInt(e.target.value) || 5))}
+            <input type="number" min={minInterval} max="180" value={intervalMin}
+              onChange={e => setIntervalMin(Math.max(minInterval, parseInt(e.target.value) || 5))}
               className="w-14 border border-gray-300 rounded px-1.5 py-1 text-center text-sm" /> 분
           </label>
         </div>
         <p className="text-[11px] text-gray-400 mb-3">
-          토큰 없이 읽기만 하는 PC는 같은 네트워크(IP)에서 시간당 60회로 GitHub 요청이 제한됩니다.
-          읽는 PC가 여러 대면 주기를 5~10분 이상으로 넉넉히 설정하세요(1분처럼 너무 짧으면 여러 PC 합산 요청이
-          한도를 넘어 "API rate limit exceeded" 오류가 날 수 있습니다).
+          {hasToken
+            ? '토큰이 등록된 PC는 인증 요청이라 계정당 시간당 5,000회를 쓸 수 있고, 변경이 없을 때 돌아오는 응답은 한도에 포함되지 않습니다. 최소 1분까지 짧게 설정해도 여유롭습니다.'
+            : '토큰 없이 읽기만 하는 PC는 같은 네트워크(IP)에서 시간당 60회로 GitHub 요청이 제한됩니다. 읽는 PC가 여러 대면 주기를 5~10분 이상으로 넉넉히 설정하세요(너무 짧으면 여러 PC 합산 요청이 한도를 넘어 "API rate limit exceeded" 오류가 날 수 있습니다).'}
         </p>
 
         {/* PC마다 데이터가 갈라졌을 때 하나로 맞추는 도구 — 되돌릴 수 없어 확인창을 거친다. */}
