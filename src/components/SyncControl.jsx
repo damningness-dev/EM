@@ -16,7 +16,6 @@ export default function SyncControl({ adminUnlocked }) {
   const [busy, setBusy] = useState(false);
   const [cooldownUntil, setCooldownUntil] = useState(0);
   const [now, setNow] = useState(() => Date.now());
-  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   const reload = useCallback(() => { syncGetConfig().then(setCfg).catch(() => {}); }, []);
 
@@ -84,16 +83,6 @@ export default function SyncControl({ adminUnlocked }) {
     setShowSettings(true);
   }
 
-  async function doDiscardLocal() {
-    setConfirmDiscard(false);
-    setBusy(true);
-    try {
-      const r = await syncDiscardLocalAndPull();
-      if (!r?.ok && r?.error) setStatus({ type: 'error', message: r.error });
-      reload();
-    } finally { setBusy(false); }
-  }
-
   return (
     <div className="px-4 py-3 border-t border-gray-700 text-xs">
       <div className="flex items-center justify-between mb-1.5">
@@ -108,20 +97,6 @@ export default function SyncControl({ adminUnlocked }) {
             최근: {lastText}{cfg.autoSync ? ` · 자동 ${cfg.intervalMin}분` : ' · 자동 꺼짐'}
           </div>
           {statusText && <div className={`mb-1.5 ${status?.type === 'error' ? 'text-red-400' : 'text-blue-400'}`}>{statusText}</div>}
-          {/* 이 PC에만 있는 변경 — 공유되지 않은 상태라 다른 PC에서는 안 보인다.
-              조용히 놔두면 자동 동기화가 덮어써 사라지므로 눈에 띄게 알린다. */}
-          {cfg?.pendingLocal && (
-            <div className="mb-1.5 rounded bg-amber-500/15 border border-amber-500/40 px-2 py-1.5 leading-tight">
-              <div className="text-amber-300">⚠ 이 PC에만 저장된 변경이 있습니다</div>
-              <div className="text-amber-200/70 mt-0.5">
-                공유하려면 GitHub 토큰이 필요합니다. 해결 전까지 내려받기는 멈춥니다(덮어쓰기 방지).
-              </div>
-              <button onClick={() => setConfirmDiscard(true)} disabled={busy}
-                className="mt-1 text-amber-300 hover:text-amber-100 underline disabled:opacity-50">
-                이 PC 변경 버리고 내려받기
-              </button>
-            </div>
-          )}
           <button onClick={doPull} disabled={busy || onCooldown}
             title={onCooldown ? `너무 자주 요청하지 않도록 잠시 후 다시 시도하세요 (${cooldownLeft}초)` : undefined}
             className="w-full py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed">
@@ -137,22 +112,6 @@ export default function SyncControl({ adminUnlocked }) {
       )}
 
       {showSettings && adminUnlocked && <SettingsModal cfg={cfg} onClose={() => { setShowSettings(false); reload(); }} onStatus={setStatus} />}
-
-      {confirmDiscard && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[300] p-4" onClick={() => setConfirmDiscard(false)}>
-          <div className="bg-white text-gray-800 rounded-xl shadow-2xl p-5 max-w-sm w-full" onClick={e => e.stopPropagation()}>
-            <p className="text-sm font-semibold mb-1.5">이 PC의 변경을 버릴까요?</p>
-            <p className="text-xs text-gray-500 mb-4">
-              공유에 올리지 못한 이 PC의 변경 내용이 원격(다른 PC와 공유 중인) 데이터로 덮어써집니다.
-              되돌릴 수 없습니다.
-            </p>
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => setConfirmDiscard(false)} className="px-3 py-1.5 border border-gray-300 rounded text-xs text-gray-600 hover:bg-gray-50">취소</button>
-              <button onClick={doDiscardLocal} className="px-3 py-1.5 bg-red-500 text-white rounded text-xs font-semibold hover:bg-red-600">버리고 내려받기</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

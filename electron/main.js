@@ -637,19 +637,16 @@ async function syncPull(force, { discardLocal = false } = {}) {
   // 그냥 내려받으면 아래 saveData()가 데이터 파일을 원격 내용으로 통째로
   // 덮어써서 그 변경이 흔적 없이 사라진다 — "분명 저장했는데 나중에 보면
   // 없어져 있다 / 다른 PC와 공유도 안 된다"로 나타나던 문제의 원인이다.
+  let keepLocalChanges = false;
   if (cfg.pendingLocalSince && !discardLocal) {
     const up = await syncUpload();
     if (up?.ok) {
       cfg = loadSyncConfig(); // 업로드가 갱신한 lastSyncedAt/etag를 다시 읽는다
     } else {
-      // 올릴 수 없으면(토큰 없음·만료 등) 덮어쓰지 않고 멈춘다. 조용히 넘어가면
-      // 다음 자동 동기화가 이 PC의 작업을 지워버리므로, 원인을 눈에 보이게 알린다.
-      sendSyncStatus({
-        type: 'error',
-        pendingLocal: true,
-        message: `이 PC에만 저장된 변경이 있어 내려받기를 멈췄습니다(덮어쓰기 방지). 공유하려면 GitHub 토큰이 필요합니다 — ${up?.error || ''}`,
-      });
-      return { ok: false, error: up?.error || '업로드할 수 없어 내려받기를 멈췄습니다', pendingLocal: true };
+      // 올릴 수 없으면(토큰 없음·만료 등) 내려받기를 멈추는 대신, 내려받은 내용에
+      // 이 PC의 변경을 얹어서 반영한다. 멈추면 다른 PC의 변경을 못 받고, 그냥
+      // 덮어쓰면 이 PC 작업이 사라지는데, 합치면 둘 다 잃지 않는다.
+      keepLocalChanges = true;
     }
   }
 
@@ -670,10 +667,18 @@ async function syncPull(force, { discardLocal = false } = {}) {
     let parsed;
     try { parsed = JSON.parse(content); } catch { throw new Error('원격 데이터 형식 오류'); }
     if (!parsed || typeof parsed !== 'object') throw new Error('원격 데이터가 비어있습니다');
+    if (keepLocalChanges) {
+      // 올리지 못한 이 PC 변경을 내려받은 내용에 얹는다. 기준 PC면 전체를 합치고,
+      // 일반 PC면 사용점만 남긴다(나머지는 기준 PC 내용이 맞으므로).
+      const local = loadData();
+      parsed = cfg.role === 'admin' ? mergeSharedData(parsed, local) : buildMemberUpload(parsed, local);
+    }
     saveData(parsed, { local: false }); // 내려받은 내용 = 원격과 같음 → 올릴 것 없음
     cfg.lastSyncedAt = updatedAt;
     cfg.etag = etag;
-    delete cfg.pendingLocalSince;
+    // 아직 못 올린 변경이 남아 있으면 표시를 유지해, 나중에 올릴 수 있게 되면
+    // (토큰 등록 등) 그때 자동으로 올라가게 한다.
+    if (!keepLocalChanges) delete cfg.pendingLocalSince;
     saveSyncConfig(cfg);
     broadcastDataChanged();
     sendSyncStatus({ type: 'updated', lastSyncedAt: updatedAt });
