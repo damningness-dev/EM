@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { syncGetConfig, syncSetConfig, syncUpload, syncPull, syncDiscardLocalAndPull } from '../lib/api';
+import { syncGetConfig, syncSetConfig, syncUpload, syncPull, syncDiscardLocalAndPull, syncCreateGist, syncPublishLocal } from '../lib/api';
 
 const PULL_COOLDOWN_MS = 3 * 60 * 1000; // "지금 동기화" 버튼 쿨타임 — 아래 설명 참고
 
@@ -164,6 +164,7 @@ function SettingsModal({ cfg, onClose, onStatus }) {
   const [intervalMin, setIntervalMin] = useState(cfg?.intervalMin || 5);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [confirm, setConfirm] = useState(null); // 'publish' | 'adopt' | 'create'
 
   // 입력칸의 gistId가 비어있는데 이미 저장된 gistId(cfg)가 있다면, 설정창이 cfg
   // 로딩 완료 전에 열려 입력칸이 빈 채로 초기화된 경우다. 이때 그대로 저장하면
@@ -202,21 +203,47 @@ function SettingsModal({ cfg, onClose, onStatus }) {
     finally { setBusy(false); }
   }
 
-  async function upload() {
+  // action: 'upload'(평소 업로드 — 원격과 합쳐서 올림)
+  //       | 'create'(새 공유 Gist 만들기) | 'publish'(이 PC 기준으로 통일)
+  async function runUpload(action) {
     setBusy(true);
     setMsg(null);
+    setConfirm(null);
     try {
       // 업로드 전 최신 설정(토큰/gist) 저장
       await syncSetConfig({ gistId: safeGistId, token: token || undefined, autoSync, intervalMin });
-      const r = await syncUpload();
+      const fn = action === 'create' ? syncCreateGist : action === 'publish' ? syncPublishLocal : syncUpload;
+      const r = await fn();
       if (r?.ok) {
         setGistId(r.gistId);
         onStatus?.({ type: 'uploaded', lastSyncedAt: r.updatedAt });
-        setMsg({ ok: true, text: `공유 완료. Gist ID: ${r.gistId}` });
+        setMsg({
+          ok: true,
+          text: action === 'publish' ? `이 PC 데이터로 통일했습니다. Gist ID: ${r.gistId}`
+            : action === 'create' ? `새 공유를 만들었습니다. 다른 PC에도 이 Gist ID를 똑같이 입력하세요 — ${r.gistId}`
+            : r.merged ? `공유 완료. 다른 PC의 변경과 합쳐서 올렸습니다.` : `공유 완료. Gist ID: ${r.gistId}`,
+        });
       } else {
         setMsg({ ok: false, text: '업로드 실패: ' + (r?.error || '') });
       }
     } catch (e) { setMsg({ ok: false, text: '업로드 실패: ' + e.message }); }
+    finally { setBusy(false); }
+  }
+
+  async function adoptRemote() {
+    setBusy(true);
+    setMsg(null);
+    setConfirm(null);
+    try {
+      await syncSetConfig({ gistId: safeGistId, token: token || undefined, autoSync, intervalMin });
+      const r = await syncDiscardLocalAndPull();
+      if (r?.ok) {
+        onStatus?.({ type: 'updated', lastSyncedAt: r.updatedAt });
+        setMsg({ ok: true, text: '공유 데이터로 이 PC를 맞췄습니다.' });
+      } else {
+        setMsg({ ok: false, text: '내려받기 실패: ' + (r?.error || '') });
+      }
+    } catch (e) { setMsg({ ok: false, text: '내려받기 실패: ' + e.message }); }
     finally { setBusy(false); }
   }
 
@@ -233,8 +260,24 @@ function SettingsModal({ cfg, onClose, onStatus }) {
         <p className="text-xs text-gray-500 mb-4">일정 데이터를 GitHub Gist로 공유합니다. 읽기는 모든 PC 가능, 업로드는 관리자(토큰 보유)만.</p>
 
         <label className="block text-xs font-medium text-gray-600 mb-1">Gist ID</label>
-        <input value={gistId} onChange={e => setGistId(e.target.value.trim())} placeholder="예: 1a2b3c4d... (공유받은 ID 입력)"
-          className="w-full border border-gray-300 rounded px-2 py-1.5 text-sm mb-3 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+        <div className="flex gap-1.5 mb-1">
+          <input value={gistId} onChange={e => setGistId(e.target.value.trim())} placeholder="예: 1a2b3c4d... (공유받은 ID 입력)"
+            className="flex-1 border border-gray-300 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+          <button type="button" disabled={!safeGistId}
+            onClick={() => { navigator.clipboard?.writeText(safeGistId); setMsg({ ok: true, text: 'Gist ID를 복사했습니다. 다른 PC에 똑같이 입력하세요.' }); }}
+            className="px-2 border border-gray-300 rounded text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40">복사</button>
+        </div>
+        <p className="text-[11px] text-blue-600 mb-3">
+          ℹ <b>모든 PC가 똑같은 Gist ID</b>를 써야 하나의 데이터로 관리됩니다. ID가 다르면 PC마다 별도 데이터가 됩니다.
+          또한 Gist는 <b>만든 GitHub 계정만 수정</b>할 수 있으므로, 각 PC에 등록하는 토큰은 모두
+          <b> 이 Gist를 만든 그 GitHub 계정</b>에서 발급한 것이어야 합니다.
+        </p>
+        {!safeGistId && (
+          <p className="text-[11px] text-red-500 mb-3">
+            ⚠ Gist ID가 비어 있습니다. 이미 다른 PC에서 공유 중이라면 그 ID를 받아 입력하세요.
+            처음 시작하는 경우에만 아래 "새 공유 만들기"를 누르세요.
+          </p>
+        )}
 
         <label className="block text-xs font-medium text-gray-600 mb-1">
           GitHub 토큰 (관리자만 · gist 권한)
@@ -270,7 +313,8 @@ function SettingsModal({ cfg, onClose, onStatus }) {
         {msg && <div className={`text-xs mb-3 ${msg.ok ? 'text-green-600' : 'text-red-500'} break-all`}>{msg.text}</div>}
 
         <div className="flex gap-2">
-          <button onClick={upload} disabled={busy}
+          <button onClick={() => runUpload('upload')} disabled={busy || !safeGistId}
+            title={safeGistId ? '이 PC의 변경을 공유에 올립니다(다른 PC 변경과 합쳐서).' : 'Gist ID를 먼저 입력하세요'}
             className="flex-1 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50">
             {busy ? '처리 중…' : '업로드(공유)'}
           </button>
@@ -278,6 +322,54 @@ function SettingsModal({ cfg, onClose, onStatus }) {
             className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">저장</button>
           <button onClick={onClose} className="px-4 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50">닫기</button>
         </div>
+
+        {/* PC마다 데이터가 갈라졌을 때 하나로 맞추는 도구 — 되돌릴 수 없어 확인창을 거친다. */}
+        <div className="mt-4 pt-3 border-t border-gray-200">
+          <p className="text-xs font-semibold text-gray-600 mb-1">🔧 데이터 하나로 통일하기</p>
+          <p className="text-[11px] text-gray-400 mb-2">
+            PC마다 데이터가 달라졌을 때 사용합니다. 기준으로 삼을 PC 한 대에서 "이 PC 기준으로 통일"을
+            누른 뒤, 나머지 PC에서 각각 "공유 데이터로 맞추기"를 누르세요.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            <button onClick={() => setConfirm('publish')} disabled={busy || !safeGistId}
+              className="px-2.5 py-1.5 border border-amber-300 text-amber-700 bg-amber-50 rounded text-[11px] font-medium hover:bg-amber-100 disabled:opacity-40">
+              이 PC 기준으로 통일
+            </button>
+            <button onClick={() => setConfirm('adopt')} disabled={busy || !safeGistId}
+              className="px-2.5 py-1.5 border border-blue-300 text-blue-700 bg-blue-50 rounded text-[11px] font-medium hover:bg-blue-100 disabled:opacity-40">
+              공유 데이터로 맞추기
+            </button>
+            <button onClick={() => setConfirm('create')} disabled={busy}
+              className="px-2.5 py-1.5 border border-gray-300 text-gray-600 rounded text-[11px] hover:bg-gray-50 disabled:opacity-40">
+              새 공유 만들기
+            </button>
+          </div>
+        </div>
+
+        {confirm && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[310] p-4" onClick={() => setConfirm(null)}>
+            <div className="bg-white rounded-xl shadow-2xl p-5 max-w-sm w-full" onClick={e => e.stopPropagation()}>
+              <p className="text-sm font-semibold mb-1.5">
+                {confirm === 'publish' ? '이 PC 데이터로 통일할까요?'
+                  : confirm === 'adopt' ? '공유 데이터로 이 PC를 맞출까요?'
+                  : '새 공유를 만들까요?'}
+              </p>
+              <p className="text-xs text-gray-500 mb-4">
+                {confirm === 'publish' ? '공유 데이터가 이 PC의 내용으로 통째로 덮어써집니다. 다른 PC에만 있던 내용은 사라집니다. 되돌릴 수 없습니다.'
+                  : confirm === 'adopt' ? '이 PC의 데이터가 공유 데이터로 통째로 덮어써집니다. 이 PC에만 있던 내용은 사라집니다. 되돌릴 수 없습니다.'
+                  : '새 Gist를 만들어 이 PC 데이터로 공유를 시작합니다. 기존 공유와는 별개가 되므로, 이미 다른 PC에서 공유 중이라면 그 Gist ID를 입력해 쓰는 것이 맞습니다.'}
+              </p>
+              <div className="flex gap-2 justify-end">
+                <button onClick={() => setConfirm(null)} className="px-3 py-1.5 border border-gray-300 rounded text-xs text-gray-600 hover:bg-gray-50">취소</button>
+                <button
+                  onClick={() => confirm === 'adopt' ? adoptRemote() : runUpload(confirm === 'publish' ? 'publish' : 'create')}
+                  className="px-3 py-1.5 bg-red-500 text-white rounded text-xs font-semibold hover:bg-red-600">
+                  진행
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

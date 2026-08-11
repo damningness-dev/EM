@@ -664,35 +664,107 @@ async function syncPull(force, { discardLocal = false } = {}) {
   }
 }
 
-// 로컬 → 원격 업로드. gistId 없으면 새 secret gist 생성.
-async function syncUpload() {
+// 공유 데이터는 파일 하나를 통째로 올리는 방식이라, 내가 마지막으로 맞춘 뒤에
+// 다른 PC가 먼저 올려놨다면 그대로 덮어쓸 때 그쪽 입력이 통째로 사라진다.
+// PC 4대가 서로 다른 데이터를 갖게 된 원인 중 하나다. 그래서 충돌이 감지될 때만
+// 목록형 데이터를 id 기준 합집합으로 합쳐서 양쪽 입력을 모두 살린다.
+const MERGE_MAP_KEYS = ['monitoringData', 'annualPlan']; // 날짜·구역 키로 나뉜 맵
+
+function mergeListById(remoteList, localList) {
+  const a = Array.isArray(remoteList) ? remoteList : [];
+  const b = Array.isArray(localList) ? localList : [];
+  // id가 있으면 id로, 없으면(문자열 목록 등) 값 자체로 같은 항목인지 판단한다.
+  const keyOf = (v) => (v && typeof v === 'object' && v.id != null) ? `id:${v.id}` : `raw:${JSON.stringify(v)}`;
+  const map = new Map();
+  for (const v of a) map.set(keyOf(v), v);
+  for (const v of b) {
+    const k = keyOf(v);
+    const prev = map.get(k);
+    if (prev === undefined) { map.set(k, v); continue; }
+    // 양쪽이 같은 항목을 갖고 있으면 더 최근에 수정된 쪽을 남긴다.
+    const tPrev = (prev && prev.updatedAt) || '';
+    const tNext = (v && v.updatedAt) || '';
+    map.set(k, tNext >= tPrev ? v : prev);
+  }
+  return [...map.values()];
+}
+
+function mergeSharedData(remote, local) {
+  const out = { ...(remote || {}), ...(local || {}) }; // 설정성 단일 값은 이 PC 기준
+  const keys = new Set([...Object.keys(remote || {}), ...Object.keys(local || {})]);
+  for (const key of keys) {
+    const rv = remote?.[key], lv = local?.[key];
+    if (Array.isArray(rv) || Array.isArray(lv)) out[key] = mergeListById(rv, lv);
+    else if (MERGE_MAP_KEYS.includes(key)) out[key] = { ...(rv || {}), ...(lv || {}) };
+  }
+  return out;
+}
+
+// GitHub 오류를 사용자가 바로 조치할 수 있는 말로 바꾼다. 특히 Gist는 "만든
+// 계정"만 수정할 수 있어서, 다른 GitHub 계정의 토큰으로 올리려 하면 404가 난다 —
+// PC마다 각자 다른 Gist가 만들어져 데이터가 갈라지는 흔한 원인이라 명확히 알린다.
+function explainGistError(err) {
+  const m = String(err?.message || '');
+  if (/HTTP 401/.test(m)) return `GitHub 인증 실패 — 토큰이 만료·폐기되었습니다. 새 토큰을 발급해 등록하세요. (${m})`;
+  if (/HTTP 404/.test(m)) return `이 Gist를 수정할 수 없습니다 — Gist ID가 맞는지, 그리고 등록된 토큰이 그 Gist를 만든 GitHub 계정의 토큰인지 확인하세요. Gist는 만든 계정만 수정할 수 있습니다. (${m})`;
+  if (/HTTP 403/.test(m)) return `권한이 없습니다 — Classic 토큰에 gist 권한이 켜져 있는지 확인하세요. (${m})`;
+  return m;
+}
+
+// 로컬 → 원격 업로드.
+// allowCreate: Gist ID가 없을 때 새로 만들어도 되는지(명시적으로 "새 공유 만들기"를
+//   눌렀을 때만 true). 예전엔 항상 만들어서, PC마다 자기만의 Gist가 생겨 데이터가
+//   갈라지는 문제가 있었다.
+// overwriteRemote: 원격을 이 PC 내용으로 통째로 덮어쓴다("이 PC 기준으로 통일").
+async function syncUpload({ allowCreate = false, overwriteRemote = false } = {}) {
   const cfg = loadSyncConfig();
   const token = effectiveToken(cfg);
   if (!token) return { ok: false, error: '업로드하려면 GitHub 토큰이 필요합니다' };
   sendSyncStatus({ type: 'uploading' });
   try {
-    const content = fs.readFileSync(getDataPath(), 'utf-8');
-    let gistId = cfg.gistId, updatedAt, etag;
+    let localData = loadData();
+    let gistId = cfg.gistId, updatedAt, etag, merged = false;
     if (gistId) {
+      if (!overwriteRemote) {
+        // 올리기 직전 원격 상태 확인 — 내가 마지막으로 맞춘 시점과 다르면 그 사이
+        // 다른 PC가 올린 것이므로, 덮어쓰지 않고 합친 뒤 올린다.
+        const remote = await gistFetchData(gistId, token);
+        if (!remote.notModified && remote.updatedAt !== cfg.lastSyncedAt) {
+          let parsed = null;
+          try { parsed = JSON.parse(remote.content); } catch { /* 형식 오류면 합치지 않는다 */ }
+          if (parsed && typeof parsed === 'object') {
+            localData = mergeSharedData(parsed, localData);
+            saveData(localData, { local: false }); // 합친 결과를 이 PC에도 반영
+            merged = true;
+          }
+        }
+      }
       const r = await ghRequest('PATCH', `https://api.github.com/gists/${gistId}`, {
-        token, body: { files: { [GIST_FILE]: { content } } },
+        token, body: { files: { [GIST_FILE]: { content: JSON.stringify(localData, null, 2) } } },
       });
       updatedAt = r.json.updated_at; etag = r.etag;
     } else {
+      if (!allowCreate) {
+        const msg = '공유 Gist ID가 설정되지 않았습니다 — 다른 PC와 똑같은 Gist ID를 입력하세요. (새로 시작하려면 설정에서 "새 공유 만들기")';
+        sendSyncStatus({ type: 'error', message: msg });
+        return { ok: false, error: msg };
+      }
       const r = await ghRequest('POST', 'https://api.github.com/gists', {
         token,
-        body: { description: '환경 모니터링 공유 일정 데이터', public: false, files: { [GIST_FILE]: { content } } },
+        body: { description: '환경 모니터링 공유 일정 데이터', public: false, files: { [GIST_FILE]: { content: JSON.stringify(localData, null, 2) } } },
       });
       gistId = r.json.id; updatedAt = r.json.updated_at; etag = r.etag;
     }
     cfg.gistId = gistId; cfg.lastSyncedAt = updatedAt; cfg.etag = etag || '';
     delete cfg.pendingLocalSince; // 올렸으므로 이 PC에만 있는 변경은 이제 없다
     saveSyncConfig(cfg);
-    sendSyncStatus({ type: 'uploaded', lastSyncedAt: updatedAt });
-    return { ok: true, gistId, updatedAt };
+    if (merged) broadcastDataChanged(); // 합쳐진 내용이 화면에 바로 보이게
+    sendSyncStatus({ type: 'uploaded', lastSyncedAt: updatedAt, merged });
+    return { ok: true, gistId, updatedAt, merged };
   } catch (err) {
-    sendSyncStatus({ type: 'error', message: err.message });
-    return { ok: false, error: err.message };
+    const msg = explainGistError(err);
+    sendSyncStatus({ type: 'error', message: msg });
+    return { ok: false, error: msg };
   }
 }
 
@@ -1171,6 +1243,10 @@ function registerHandlers() {
     return { ok: true };
   });
   ipcMain.handle('sync:upload', () => syncUpload());
+  // 새 공유를 처음 만들 때만 — 실수로 PC마다 각자 Gist가 생기지 않도록 분리했다.
+  ipcMain.handle('sync:createGist', () => syncUpload({ allowCreate: true }));
+  // "이 PC 데이터를 기준으로 통일" — 원격을 이 PC 내용으로 통째로 덮어쓴다.
+  ipcMain.handle('sync:publishLocal', () => syncUpload({ overwriteRemote: true }));
   ipcMain.handle('sync:pull', () => syncPull(true));
   // 이 PC에만 있는 변경을 포기하고 원격 내용으로 맞춘다 — 올릴 수 없어(토큰 없음 등)
   // 내려받기가 계속 막힐 때 빠져나오는 용도. 되돌릴 수 없으므로 화면에서 한 번 더 확인받는다.
@@ -1734,6 +1810,8 @@ function registerHandlers() {
 
   ipcMain.handle('usagePoints:upsert', (_e, item) => {
     const data = loadData();
+    // 여러 PC가 같은 항목을 고쳤을 때 어느 쪽이 최신인지 판단하는 기준 (합치기용)
+    item.updatedAt = new Date().toISOString();
     if (item.id) {
       const idx = data.usagePoints.findIndex(u => u.id === item.id);
       if (idx >= 0) data.usagePoints[idx] = item;

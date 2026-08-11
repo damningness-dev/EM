@@ -298,6 +298,14 @@ export async function syncSetConfig(patch) {
 export async function syncUpload() {
   return api.invoke('sync:upload');
 }
+// 새 공유(Gist)를 처음 만들 때만 — 평소 업로드로는 새로 만들지 않는다.
+export async function syncCreateGist() {
+  return api.invoke('sync:createGist');
+}
+// 이 PC 데이터를 기준으로 공유 데이터를 통째로 덮어쓴다(하나로 통일).
+export async function syncPublishLocal() {
+  return api.invoke('sync:publishLocal');
+}
 export async function syncPull() {
   return api.invoke('sync:pull');
 }
