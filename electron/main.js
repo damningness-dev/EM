@@ -1421,12 +1421,14 @@ function registerHandlers() {
   ipcMain.handle('members:upsert', (_e, member = {}) => {
     const data = loadData();
     if (!data.memberAccounts) data.memberAccounts = [];
-    const username = String(member.username || '').trim();
-    if (!username) return { ok: false, error: '사용자이름을 입력하세요' };
-    const allowedTabs = Array.isArray(member.allowedTabs) ? member.allowedTabs : [];
     if (member.id) {
+      // 편집(id 지정) 시 username/allowedTabs가 함께 오지 않으면(예: 토큰만 삭제하는
+      // 호출) 기존 값을 그대로 유지한다 — 안 그러면 "사용자이름을 입력하세요"로 실패한다.
       const idx = data.memberAccounts.findIndex(m => m.id === member.id);
       if (idx < 0) return { ok: false, error: '존재하지 않는 사용자입니다' };
+      const username = member.username !== undefined ? String(member.username).trim() : data.memberAccounts[idx].username;
+      if (!username) return { ok: false, error: '사용자이름을 입력하세요' };
+      const allowedTabs = Array.isArray(member.allowedTabs) ? member.allowedTabs : data.memberAccounts[idx].allowedTabs;
       if (data.memberAccounts.some(m => m.id !== member.id && m.username === username)) {
         return { ok: false, error: '이미 사용 중인 사용자이름입니다' };
       }
@@ -1446,6 +1448,9 @@ function registerHandlers() {
       broadcastAdminUnlocked();
       return { ok: true, id: member.id };
     }
+    const username = String(member.username || '').trim();
+    if (!username) return { ok: false, error: '사용자이름을 입력하세요' };
+    const allowedTabs = Array.isArray(member.allowedTabs) ? member.allowedTabs : [];
     if (data.memberAccounts.some(m => m.username === username)) {
       return { ok: false, error: '이미 사용 중인 사용자이름입니다' };
     }
