@@ -1323,7 +1323,9 @@ function registerHandlers() {
         pageSize: options.pageSize || 'A4',
         margins: { top: 0, bottom: 0, left: 0, right: 0 },
       });
-      const file = path.join(app.getPath('temp'), `모니터링일정_${Date.now()}.pdf`);
+      // 파일명은 호출한 화면이 정한다(뷰어 제목/저장 시 기본 이름이 되므로).
+      const base = String(options.fileName || '모니터링일정').replace(/[\\/:*?"<>|]/g, '_');
+      const file = path.join(app.getPath('temp'), `${base}_${Date.now()}.pdf`);
       fs.writeFileSync(file, data);
       const err = await shell.openPath(file);
       if (err) return { ok: false, error: err };

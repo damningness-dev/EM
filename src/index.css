@@ -105,6 +105,56 @@ body {
   height: 6px !important;
 }
 
+/* 사용점 관리 PDF — 여러 페이지에 걸쳐 흐르는 표. 달력과 달리 한 페이지에
+   맞출 필요가 없으므로 높이를 고정하지 않고, 페이지가 넘어가도 표 머리글이
+   반복되고 한 행이 페이지 경계에서 잘리지 않게 한다. */
+.print-portal .up-print {
+  font-family: inherit;
+  color: #111;
+}
+.print-portal .up-print h1 {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0 0 2px;
+}
+.print-portal .up-print .up-print-meta {
+  font-size: 9px;
+  color: #555;
+  margin: 0 0 8px;
+}
+.print-portal .up-print table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.print-portal .up-print thead {
+  display: table-header-group;      /* 페이지마다 머리글 반복 */
+}
+.print-portal .up-print tr {
+  break-inside: avoid;
+  page-break-inside: avoid;         /* 한 행이 페이지 경계에서 잘리지 않게 */
+}
+.print-portal .up-print th,
+.print-portal .up-print td {
+  border: 1px solid #9ca3af;
+  padding: 3px 4px;
+  font-size: 9px;
+  line-height: 1.3;
+  vertical-align: top;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.print-portal .up-print th {
+  background: #f3f4f6 !important;
+  font-weight: 600;
+  text-align: center;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.print-portal .up-print td.up-center {
+  text-align: center;
+}
+
 @media print {
   @page {
     size: A4 landscape;

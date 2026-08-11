@@ -1,10 +1,10 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { formatDate } from '../utils/dateUtils';
 import {
   fetchUsagePoints, upsertUsagePoint, deleteUsagePoint,
   fetchUsagePointCategories, saveUsagePointCategories,
   saveCalibFile, uploadCalibAttachment, revealCalibFile, resolveCalibImage, syncGetConfig, syncUpload,
-  backfillCalibAttachments,
+  backfillCalibAttachments, printDoc,
 } from '../lib/api';
 
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
@@ -76,6 +76,8 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   const [hqLoading, setHqLoading] = useState(false);
   const [expanded, setExpanded] = useState(() => new Set());
   const [sharingPhotos, setSharingPhotos] = useState(false);
+  const [printing, setPrinting] = useState(false);
+  const printRef = useRef(null);
   const [showCatManager, setShowCatManager] = useState(false);
   const [catDraft, setCatDraft] = useState(null);
   const [newMinor, setNewMinor] = useState({});
@@ -281,6 +283,51 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
     }
   }
 
+  // 현재 화면에 보이는 목록(검색·대분류 필터가 적용된 그대로)을 A4 세로 PDF로
+  // 만들어 기본 뷰어로 연다 — 달력 인쇄와 같은 방식(Windows 인쇄 대화상자가
+  // 방향 설정을 무시하는 문제를 피하려고 PDF로 만든 뒤 뷰어에서 인쇄).
+  async function handlePrintPdf() {
+    if (printing) return;
+    if (!sorted.length) { showNotice('출력할 내용이 없습니다.', true); return; }
+    const src = printRef.current;
+    if (!src) return;
+    setPrinting(true);
+
+    const portal = document.createElement('div');
+    portal.className = 'print-portal';
+    portal.appendChild(src.cloneNode(true));
+    document.body.appendChild(portal);
+    document.body.classList.add('is-printing');
+
+    // 표는 세로 방향으로 여러 페이지에 걸쳐 흐르게 한다(달력처럼 한 페이지에
+    // 맞출 필요가 없음). @page는 선택자로 조건부 지정이 안 되므로 덮어쓴다.
+    const styleEl = document.createElement('style');
+    styleEl.textContent = '@page { size: A4 portrait; margin: 10mm; }';
+    document.head.appendChild(styleEl);
+
+    const cleanup = () => {
+      document.body.classList.remove('is-printing');
+      portal.remove();
+      styleEl.remove();
+    };
+
+    try {
+      if (isElectron) {
+        await new Promise(r => requestAnimationFrame(() => r())); // 렌더 안정화
+        const r = await printDoc({ landscape: false, pageSize: 'A4', fileName: '사용점관리' });
+        if (r?.ok) showNotice('PDF로 열었습니다. 뷰어에서 인쇄(Ctrl+P)하세요.');
+        else showNotice('PDF 생성 실패: ' + (r?.error || ''), true);
+      } else {
+        window.print();
+      }
+    } catch (e) {
+      showNotice('PDF 생성 실패: ' + e.message, true);
+    } finally {
+      cleanup();
+      setPrinting(false);
+    }
+  }
+
   // 토큰이 없거나 만료된 상태에서 등록한 사진은 공유 Gist에 못 올라가, 다른 PC에서
   // 작게 압축된 미리보기만 보인다. 뒤늦게라도 원본을 올려 모든 PC가 고화질로
   // 볼 수 있게 한다(이미 올라간 사진은 건너뛴다).
@@ -342,6 +389,11 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
           {adminUnlocked && (
             <button onClick={openCatManager} className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200">🏷️ 분류 관리</button>
           )}
+          <button onClick={handlePrintPdf} disabled={printing}
+            title="지금 화면에 보이는 목록(검색·분류 필터 적용)을 A4 세로 PDF로 만듭니다."
+            className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-50">
+            {printing ? '🖨 준비 중…' : '🖨 PDF 출력'}
+          </button>
           <button onClick={handleSharePhotos} disabled={sharingPhotos}
             title="공유에 아직 올라가지 않은 사진의 원본을 올려, 다른 PC에서도 고화질로 볼 수 있게 합니다."
             className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-50">
@@ -350,6 +402,51 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="검색 (분류·작성자·실명·사용점번호 등)"
             className="px-3 py-2 border border-gray-200 rounded-lg text-sm w-64" />
           <button onClick={openAdd} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">+ 추가</button>
+        </div>
+      </div>
+
+      {/* PDF 출력 전용 표 — 화면에는 보이지 않고(부모가 display:none), 출력할 때만
+          .print-portal로 복제되어 인쇄된다. 화면 표에 있는 버튼·사진·펼치기 같은
+          요소를 빼고 순수 내용만 담아 인쇄물이 깔끔하게 나오게 한다. */}
+      <div style={{ display: 'none' }} aria-hidden="true">
+        <div ref={printRef} className="up-print">
+          <h1>사용점 관리</h1>
+          <p className="up-print-meta">
+            출력일 {todayStr()} · 총 {sorted.length}건
+            {majorFilter !== 'all' && ` · 대분류: ${majorFilter}`}
+            {search.trim() && ` · 검색: "${search.trim()}"`}
+          </p>
+          <table>
+            <colgroup>
+              <col style={{ width: '4%' }} /><col style={{ width: '7%' }} /><col style={{ width: '9%' }} />
+              <col style={{ width: '9%' }} /><col style={{ width: '8%' }} /><col style={{ width: '11%' }} />
+              <col style={{ width: '7%' }} /><col style={{ width: '9%' }} /><col style={{ width: '15%' }} />
+              <col style={{ width: '8%' }} /><col style={{ width: '13%' }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>번호</th><th>대분류</th><th>소분류</th><th>작성일</th><th>작성자</th>
+                <th>실명</th><th>실번호</th><th>사용점번호</th><th>사유</th><th>진행상황</th><th>비고</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((u, i) => (
+                <tr key={u.id}>
+                  <td className="up-center">{i + 1}</td>
+                  <td className="up-center">{u.major_category || ''}</td>
+                  <td className="up-center">{u.minor_category || ''}</td>
+                  <td className="up-center">{u.created_date || ''}</td>
+                  <td className="up-center">{u.author_name || ''}</td>
+                  <td>{u.room_name || ''}</td>
+                  <td className="up-center">{u.room_number || ''}</td>
+                  <td className="up-center">{u.point_number || ''}</td>
+                  <td>{u.reason || ''}</td>
+                  <td className="up-center">{u.progress || '접수'}</td>
+                  <td>{[u.progress_note, u.note].filter(Boolean).join(' / ')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
 
