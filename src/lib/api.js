@@ -182,6 +182,14 @@ export async function deleteHoliday(date) {
 
 // ─── 측정 완료 ────────────────────────────────────────────────────────────────
 
+// 일정 담당자 — 완료 표시와 같은 키(zoneId_num)로 관리한다. { "zoneId_num": "이름" }
+export async function fetchScheduleAssignees() {
+  return api.invoke('scheduleAssignees:getAll');
+}
+export async function setScheduleAssignee(zoneId, num, assignee) {
+  return api.invoke('scheduleAssignees:set', zoneId, num, assignee);
+}
+
 export async function fetchCompletions() {
   return api.invoke('completions:getAll');
 }

@@ -313,6 +313,7 @@ function loadData() {
     if (!data.blockedDates) data.blockedDates = [];
     if (!data.annualPlanAhus) data.annualPlanAhus = [...DEFAULT_AHUS];
     if (!data.memberAccounts) data.memberAccounts = [];
+    if (!data.scheduleAssignees) data.scheduleAssignees = {};
     if (!data.usagePoints) data.usagePoints = [];
     if (!data.usagePointCategories) data.usagePointCategories = { ...DEFAULT_USAGE_POINT_CATEGORIES };
     // 로그인하지 않았을 때 보이는 메뉴 — null(기본값)이면 지금까지처럼 전체 메뉴가 보이고,
@@ -2114,6 +2115,21 @@ function registerHandlers() {
     const data = loadData();
     data.completions = data.completions.filter(c => `${c.zoneId}_${c.num}` !== key);
     saveData(data);
+  });
+
+  // ── 일정 담당자 배정 ──
+  // 측정 완료와 같은 키(zoneId_num = "그 구역의 몇 번째 측정")로 담당자를 저장한다.
+  // 값이 비면 배정 해제로 보고 항목 자체를 지운다(빈 문자열이 쌓이지 않게).
+  ipcMain.handle('scheduleAssignees:getAll', () => loadData().scheduleAssignees || {});
+  ipcMain.handle('scheduleAssignees:set', (_e, zoneId, num, assignee) => {
+    const data = loadData();
+    if (!data.scheduleAssignees) data.scheduleAssignees = {};
+    const key = `${zoneId}_${num}`;
+    const name = String(assignee || '').trim();
+    if (name) data.scheduleAssignees[key] = name;
+    else delete data.scheduleAssignees[key];
+    saveData(data);
+    return { ok: true };
   });
 
   // ── 일정 비우기(차단 날짜) ──

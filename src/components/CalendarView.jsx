@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
-import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchTempSchedules, addTempSchedule, deleteTempSchedule, updateTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload, exportScheduleExcelTable, printDoc } from '../lib/api';
+import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchScheduleAssignees, setScheduleAssignee, fetchMembers, fetchTempSchedules, addTempSchedule, deleteTempSchedule, updateTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload, exportScheduleExcelTable, printDoc } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
@@ -169,6 +169,9 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   const [newHolidayDow, setNewHolidayDow] = useState(1);
   const [completions, setCompletions] = useState(new Set());
   const [completionPrompt, setCompletionPrompt] = useState(null); // {zoneId,zoneName,grade,num,dateStr,isCompleted}
+  // 일정 담당자 — 완료 표시와 같은 키(zoneId_num). 관리자만 배정할 수 있다.
+  const [assignees, setAssignees] = useState({});
+  const [memberNames, setMemberNames] = useState([]);
   const [groupMovePrompt, setGroupMovePrompt] = useState(null); // { dateStr, dragData, groupName, members:[{zoneId,num,min,max,label}] }
   const [todos, setTodos] = useState([]); // 할일 (측정 알람 추가 상태 확인용)
   const [tempSchedules, setTempSchedules] = useState([]);
@@ -367,6 +370,26 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
 
   // 구역/그룹/공휴일/완료/임시일정/측정주기설정/일정비우기는 월·연도와 무관한 전역 데이터라
   // 마운트 시 한 번만 불러온다. (매번 다시 불러오면 저장하지 않은 일정 초안이 사라지므로)
+  // 일정 담당자 배정(관리자 전용) — 완료 표시처럼 "일정 저장하기"를 거치지 않고
+  // 바로 저장한 뒤 조용히 공유에 올린다.
+  async function assignSchedule(zoneId, num, name) {
+    const key = `${zoneId}_${num}`;
+    setAssignees(prev => {
+      const next = { ...prev };
+      if (name) next[key] = name; else delete next[key];
+      return next;
+    });
+    try {
+      await setScheduleAssignee(zoneId, num, name);
+      silentSyncUpload();
+    } catch { /* 저장 실패해도 화면 표시는 되돌리지 않는다 — 다음 동기화 때 정정됨 */ }
+  }
+
+  // 담당자 후보 = 등록된 로그인 계정 목록
+  useEffect(() => {
+    fetchMembers().then(ms => setMemberNames((ms || []).map(m => m.username))).catch(() => {});
+  }, []);
+
   useEffect(() => {
     Promise.all([
       fetchZones(),
@@ -376,7 +399,8 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
       fetchTempSchedules(),
       fetchScheduleConfig(),
       fetchBlockedDates(),
-    ]).then(([zns, grps, hols, comps, temps, schedCfg, blocked]) => {
+      fetchScheduleAssignees(),
+    ]).then(([zns, grps, hols, comps, temps, schedCfg, blocked, assigns]) => {
       const mergedCfg = mergeScheduleConfig(schedCfg);
       setScheduleConfig(mergedCfg);
       setScheduleConfigState(mergedCfg);
@@ -391,6 +415,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
       setGroups(grps);
       setHolidayDefs(hols);
       setCompletions(new Set(comps.map(c => `${c.zoneId}_${c.num}`)));
+      setAssignees(assigns || {});
       setTempSchedules(temps);
       setBlockedDates(blockedSet);
       savedSnapshotRef.current = { zones: zns, blockedDates: blockedSet, tempSchedules: temps };
@@ -440,14 +465,15 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   // 임시일정은 덮어쓰지 않는다 (초안 유실 방지). 나머지는 초안과 무관하므로 항상 반영.
   async function reloadZonesGroups() {
     try {
-      const [zns, grps, hols, comps, temps, blocked, cal, mon, plan, schedCfg, tds] = await Promise.all([
+      const [zns, grps, hols, comps, temps, blocked, cal, mon, plan, schedCfg, tds, assigns] = await Promise.all([
         fetchZones(), fetchGroups(), fetchHolidays(), fetchCompletions(), fetchTempSchedules(),
         fetchBlockedDates(), fetchCalibration(), fetchMonitoringData(year, month), fetchAnnualPlan(year),
-        fetchScheduleConfig(), fetchTodos(),
+        fetchScheduleConfig(), fetchTodos(), fetchScheduleAssignees(),
       ]);
       setGroups(grps);
       setHolidayDefs(hols);
       setCompletions(new Set(comps.map(c => `${c.zoneId}_${c.num}`)));
+      setAssignees(assigns || {});
       setCalibration(cal);
       setMonitoring(mon);
       setAnnualPlan(plan);
@@ -1494,6 +1520,26 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
               {completionPrompt.num}번째 측정을{' '}
               {completionPrompt.isCompleted ? '완료 취소 하시겠습니까?' : '완료 처리 하시겠습니까?'}
             </p>
+
+            {/* 담당자 배정 — 관리자만 바꿀 수 있고, 그 외에는 배정된 사람만 보인다. */}
+            <div className="mb-4">
+              <label className="block text-xs font-medium text-gray-500 mb-1">담당자</label>
+              {adminUnlocked ? (
+                <select
+                  value={assignees[`${completionPrompt.zoneId}_${completionPrompt.num}`] || ''}
+                  onChange={e => assignSchedule(completionPrompt.zoneId, completionPrompt.num, e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
+                  <option value="">(배정 안 함)</option>
+                  {memberNames.map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              ) : (
+                <p className="text-sm text-gray-700">
+                  {assignees[`${completionPrompt.zoneId}_${completionPrompt.num}`] || '배정 안 됨'}
+                  <span className="ml-1 text-[11px] text-gray-400">(관리자만 배정할 수 있습니다)</span>
+                </p>
+              )}
+            </div>
+
             <div className="flex gap-2 justify-end">
               <button onClick={() => setCompletionPrompt(null)}
                 className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>
@@ -2195,7 +2241,9 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
             <button onClick={nextMonth} className="print:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-xl leading-none">›</button>
           </div>
           {viewMode === 'table' ? (
-            <ScheduleTable rows={monthTableRows} completions={completions} year={year} month={month}
+            <ScheduleTable rows={monthTableRows} completions={completions} assignees={assignees}
+              adminUnlocked={adminUnlocked} memberNames={memberNames} onAssign={assignSchedule}
+              year={year} month={month}
               getChipStyle={getChipStyle}
               onToggleDone={(zone, m) => { if (requireAdmin()) setCompletionPrompt({ zoneId: zone.id, zoneName: zone.name, grade: zone.grade, num: m.num, dateStr: format(m.date, 'yyyy-MM-dd'), isCompleted: completions.has(`${zone.id}_${m.num}`) }); }}
             />
@@ -2620,6 +2668,9 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                           <p className={`text-sm font-medium break-words ${isDone ? 'text-gray-400 line-through' : 'text-gray-800'}`}>
                             {zone.name}[{zone.grade}]
                           </p>
+                          {assignees[compKey] && (
+                            <p className="text-xs text-indigo-600 font-medium mt-0.5">👤 {assignees[compKey]}</p>
+                          )}
                           <p className="text-xs text-gray-400 mt-0.5">
                             측정주기: {format(bounds.min, 'MM/dd')}~{format(bounds.max, 'MM/dd')}
                           </p>
@@ -2807,12 +2858,13 @@ const SCHED_COL_META = {
   particle: { label: '입자', w: 56, align: 'center', pt: true },
   nitro: { label: '질소', w: 56, align: 'center', pt: true },
   comp: { label: '압축', w: 56, align: 'center', pt: true },
+  assignee: { label: '담당자', w: 84, align: 'center' },
   status: { label: '상태', w: 64, align: 'center' },
 };
-const SCHED_DEFAULT_ORDER = ['date', 'dow', 'zone', 'num', 'float', 'fall', 'surface', 'particle', 'nitro', 'comp', 'status'];
+const SCHED_DEFAULT_ORDER = ['date', 'dow', 'zone', 'num', 'float', 'fall', 'surface', 'particle', 'nitro', 'comp', 'assignee', 'status'];
 const PT_KEYS = ['float', 'fall', 'surface', 'particle', 'nitro', 'comp'];
 
-function ScheduleTable({ rows, completions, year, month, getChipStyle, onToggleDone }) {
+function ScheduleTable({ rows, completions, assignees = {}, adminUnlocked, memberNames = [], onAssign, year, month, getChipStyle, onToggleDone }) {
   const DOW = ['일', '월', '화', '수', '목', '금', '토'];
   const [colW, setColW] = useState(() => {
     try { const s = JSON.parse(localStorage.getItem('em-sched-table-cols')); if (s && typeof s === 'object') return s; } catch { /* ignore */ }
@@ -2863,6 +2915,24 @@ function ScheduleTable({ rows, completions, year, month, getChipStyle, onToggleD
     if (key === 'dow') return <td key={key} className={`${cellBase} text-center font-semibold ${dowCls}`}>{ri === 0 ? DOW[dow] : ''}</td>;
     if (key === 'zone') return <td key={key} className={`${cellBase} truncate`}><span className={`inline-block px-1 py-0.5 rounded ${done ? 'line-through opacity-60' : ''}`} style={getChipStyle(zone.category, zone.grade)}>{zone.name}[{zone.grade}]-{measurement.num}</span></td>;
     if (key === 'num') { const total = totalCount(zone) || measurement.num; const numCls = measurement.isFirst ? 'text-green-600' : measurement.isLast ? 'text-red-600' : 'text-gray-700'; return <td key={key} className={`${cellBase} text-center font-bold ${numCls}`}>{measurement.num}/{total}회</td>; }
+    if (key === 'assignee') {
+      const who = assignees[`${zone.id}_${measurement.num}`] || '';
+      // 관리자는 표에서 바로 배정할 수 있게 한다 — 한 달치를 하나씩 팝업으로
+      // 여는 것은 번거롭기 때문. 그 외에는 배정된 이름만 보인다.
+      if (!adminUnlocked) {
+        return <td key={key} className={`${cellBase} text-center ${who ? 'text-gray-700' : 'text-gray-300'}`}>{who || '—'}</td>;
+      }
+      return (
+        <td key={key} className={`${cellBase} text-center p-0`}>
+          <select value={who} onChange={e => onAssign?.(zone.id, measurement.num, e.target.value)}
+            onDoubleClick={e => e.stopPropagation()}
+            className={`w-full bg-transparent px-1 py-1 text-xs outline-none cursor-pointer ${who ? 'text-gray-700' : 'text-gray-300'}`}>
+            <option value="">—</option>
+            {memberNames.map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </td>
+      );
+    }
     if (key === 'status') return <td key={key} className={`${cellBase} text-center`}><span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${done ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{done ? '완료' : '예정'}</span></td>;
     // 포인트 컬럼
     const v = ptValue(zone, key);
