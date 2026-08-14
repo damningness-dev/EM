@@ -251,6 +251,7 @@ export default function App() {
           {page === 'todo' && <TodoToday currentMember={currentMember} />}
           {page === 'calendar' && (
             <CalendarView year={year} onYearChange={setYear} adminUnlocked={adminUnlocked}
+              currentMember={currentMember}
               jumpTarget={scheduleJumpTarget} onJumpTargetConsumed={() => setScheduleJumpTarget(null)} />
           )}
           {page === 'status' && <ZoneStatus year={year} onYearChange={setYear} onJumpToSchedule={jumpToSchedule} />}

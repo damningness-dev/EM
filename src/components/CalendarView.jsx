@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from 'react';
 import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchScheduleAssignees, setScheduleAssignee, fetchMembers, fetchTempSchedules, addTempSchedule, deleteTempSchedule, updateTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload, exportScheduleExcelTable, printDoc } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
@@ -104,7 +104,7 @@ function manualScaleFontPx(percent) {
   return Math.max(3, Math.min(16, 8 * (percent || 100) / 100));
 }
 
-export default function CalendarView({ year: initYear, onYearChange, adminUnlocked, jumpTarget, onJumpTargetConsumed }) {
+export default function CalendarView({ year: initYear, onYearChange, adminUnlocked, currentMember, jumpTarget, onJumpTargetConsumed }) {
   const today = new Date();
   const [year, setYear] = useState(initYear || today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
@@ -172,6 +172,9 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
   // 일정 담당자 — 완료 표시와 같은 키(zoneId_num). 관리자만 배정할 수 있다.
   const [assignees, setAssignees] = useState({});
   const [memberNames, setMemberNames] = useState([]);
+  // 로그인한 사람 본인에게 배정된 일정만 추려 보는 필터. 꺼져 있어도 본인 담당은
+  // 항상 눈에 띄게 표시되므로(👤 표식), 전체 흐름을 보면서도 내 것을 알 수 있다.
+  const [onlyMine, setOnlyMine] = useState(false);
   const [groupMovePrompt, setGroupMovePrompt] = useState(null); // { dateStr, dragData, groupName, members:[{zoneId,num,min,max,label}] }
   const [todos, setTodos] = useState([]); // 할일 (측정 알람 추가 상태 확인용)
   const [tempSchedules, setTempSchedules] = useState([]);
@@ -664,6 +667,39 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
       || (zoneOrderRank[a.zone.id] ?? 1e9) - (zoneOrderRank[b.zone.id] ?? 1e9));
     return rows;
   }, [scheduleByDate, year, month, zoneOrderRank]);
+
+  // 로그인한 사람 본인 이름 — 담당자 배정과 대조해 "내 일정"을 가려낸다.
+  const myName = currentMember?.username || '';
+  const isMine = useCallback(
+    (zoneId, num) => !!myName && assignees[`${zoneId}_${num}`] === myName,
+    [myName, assignees],
+  );
+
+  // 이번 달 내 담당 건수 요약 (완료/남음)
+  const myMonthStats = useMemo(() => {
+    let total = 0, done = 0;
+    monthTableRows.forEach(({ zone, measurement }) => {
+      if (!isMine(zone.id, measurement.num)) return;
+      total++;
+      if (completions.has(`${zone.id}_${measurement.num}`)) done++;
+    });
+    return { total, done, left: total - done };
+  }, [monthTableRows, isMine, completions]);
+
+  // "내 담당만" 필터가 켜져 있으면 표/달력 모두 본인 배정분만 남긴다.
+  const visibleTableRows = useMemo(
+    () => (onlyMine && myName ? monthTableRows.filter(r => isMine(r.zone.id, r.measurement.num)) : monthTableRows),
+    [monthTableRows, onlyMine, myName, isMine],
+  );
+  const visibleScheduleByDate = useMemo(() => {
+    if (!onlyMine || !myName) return scheduleByDate;
+    const out = {};
+    Object.entries(scheduleByDate).forEach(([ds, arr]) => {
+      const kept = arr.filter(({ zone, measurement }) => isMine(zone.id, measurement.num));
+      if (kept.length) out[ds] = kept;
+    });
+    return out;
+  }, [scheduleByDate, onlyMine, myName, isMine]);
 
   // 엑셀(CSV)로 내보내기 — 이번 달 표 보기와 동일한 컬럼 구성
   function handleExportExcel() {
@@ -2105,6 +2141,22 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
           >
             🔔 알람 내역
           </button>
+          {/* 내 담당 일정 — 로그인했고 이번 달 배정분이 있을 때만 보인다.
+              끄면 전체가 보이되 내 담당은 👤 표식과 테두리로 계속 구분된다. */}
+          {myName && myMonthStats.total > 0 && (
+            <button
+              onClick={() => setOnlyMine(v => !v)}
+              title={onlyMine ? '전체 일정 보기' : '내가 담당인 일정만 보기'}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-xl border transition-colors ${
+                onlyMine ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              👤 내 담당 {myMonthStats.total}건
+              <span className={`text-xs ${onlyMine ? 'text-indigo-100' : 'text-gray-400'}`}>
+                (남음 {myMonthStats.left})
+              </span>
+            </button>
+          )}
           <div className="flex rounded-xl border border-gray-200 overflow-hidden bg-white text-sm">
             <button onClick={() => setViewMode('calendar')} className={`px-3 py-1.5 font-medium ${viewMode === 'calendar' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>📅 달력</button>
             <button onClick={() => setViewMode('table')} className={`px-3 py-1.5 font-medium ${viewMode === 'table' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>☰ 표</button>
@@ -2241,7 +2293,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
             <button onClick={nextMonth} className="print:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-xl leading-none">›</button>
           </div>
           {viewMode === 'table' ? (
-            <ScheduleTable rows={monthTableRows} completions={completions} assignees={assignees}
+            <ScheduleTable rows={visibleTableRows} completions={completions} assignees={assignees}
               adminUnlocked={adminUnlocked} memberNames={memberNames} onAssign={assignSchedule}
               year={year} month={month}
               getChipStyle={getChipStyle}
@@ -2268,7 +2320,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                 const { day, isOther } = cell;
                 const dateStr = `${cell.year}-${String(cell.month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
                 const calibEvts = calibByDate[dateStr] || [];
-                const schedEvts = scheduleByDate[dateStr] || [];
+                const schedEvts = visibleScheduleByDate[dateStr] || [];
                 const tempEvts = tempByDate[dateStr] || [];
 
                 const isToday = !isOther && isCurrentMonth && day === todayDate;
@@ -2393,6 +2445,7 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                         const label = `${zone.name}[${zone.grade}]-${measurement.num}`;
                         const noPts = !(zone.points_surface || zone.points_float || zone.points_fall || zone.points_particle);
                         const isDone = completions.has(`${zone.id}_${measurement.num}`);
+                        const mine = isMine(zone.id, measurement.num); // 본인 담당이면 눈에 띄게
                         return (
                           <div
                             key={`s${i}`}
@@ -2413,13 +2466,15 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                             } : undefined}
                             onDragEnd={(!isDone && adminUnlocked) ? () => setDragOverDay(null) : undefined}
                             onClick={(e) => e.stopPropagation()}
-                            className={`text-xs rounded overflow-hidden flex items-stretch min-w-0 ${isDone ? 'opacity-60 cursor-default' : 'cursor-grab active:cursor-grabbing'} ${flashTarget?.zoneId === zone.id && flashTarget?.num === measurement.num ? 'flash-highlight' : ''}`}
+                            className={`text-xs rounded overflow-hidden flex items-stretch min-w-0 ${isDone ? 'opacity-60 cursor-default' : 'cursor-grab active:cursor-grabbing'} ${mine ? 'ring-2 ring-indigo-500' : ''} ${flashTarget?.zoneId === zone.id && flashTarget?.num === measurement.num ? 'flash-highlight' : ''}`}
                             style={getChipStyle(zone.category, zone.grade)}
-                            title={`${label}${noPts ? ' [포인트 입력 필요]' : ''}${isDone ? ' [완료]' : measurement.isFirst ? ' [첫 측정]' : measurement.isLast ? ' [마지막 측정]' : ''}`}
+                            title={`${label}${mine ? ' [내 담당]' : ''}${noPts ? ' [포인트 입력 필요]' : ''}${isDone ? ' [완료]' : measurement.isFirst ? ' [첫 측정]' : measurement.isLast ? ' [마지막 측정]' : ''}`}
                           >
                             {measurement.isFirst && <span className="w-1 shrink-0" style={{ backgroundColor: '#22c55e' }} />}
                             <span className={`truncate flex-1 px-1 py-0.5 ${isDone ? 'line-through' : ''} ${(measurement.isFirst || measurement.isLast) ? 'font-semibold' : ''}`}>
-                              {noPts && <span className="text-red-600 font-bold">*</span>}{label}
+                              {noPts && <span className="text-red-600 font-bold">*</span>}
+                              {mine && <span className="font-bold">👤 </span>}
+                              {label}
                             </span>
                             {measurement.isLast && <span className="w-1 shrink-0" style={{ backgroundColor: '#ef4444' }} />}
                           </div>
@@ -2669,7 +2724,11 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
                             {zone.name}[{zone.grade}]
                           </p>
                           {assignees[compKey] && (
-                            <p className="text-xs text-indigo-600 font-medium mt-0.5">👤 {assignees[compKey]}</p>
+                            <p className={`text-xs mt-0.5 ${assignees[compKey] === myName
+                              ? 'text-white bg-indigo-600 inline-block px-1.5 py-0.5 rounded font-bold'
+                              : 'text-indigo-600 font-medium'}`}>
+                              👤 {assignees[compKey]}{assignees[compKey] === myName ? ' (나)' : ''}
+                            </p>
                           )}
                           <p className="text-xs text-gray-400 mt-0.5">
                             측정주기: {format(bounds.min, 'MM/dd')}~{format(bounds.max, 'MM/dd')}
