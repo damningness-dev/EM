@@ -654,15 +654,21 @@ async function syncPull(force, { discardLocal = false } = {}) {
   sendSyncStatus({ type: 'checking' });
   try {
     const r = await gistFetchData(cfg.gistId, effectiveToken(cfg), cfg.etag);
+    // 확인에 성공한 시각. lastSyncedAt(=공유 데이터가 마지막으로 "바뀐" 시각)과 달리
+    // 바뀐 게 없어도 갱신된다 — 이게 없으면 아무도 올리지 않은 동안 화면의 시각이
+    // 계속 그대로여서 자동 동기화가 멈춘 것처럼 보인다.
+    const checkedAt = new Date().toISOString();
+    cfg.lastCheckedAt = checkedAt;
     if (r.notModified) {
-      if (r.etag && r.etag !== cfg.etag) { cfg.etag = r.etag; saveSyncConfig(cfg); }
-      sendSyncStatus({ type: 'idle', lastSyncedAt: cfg.lastSyncedAt });
+      if (r.etag && r.etag !== cfg.etag) cfg.etag = r.etag;
+      saveSyncConfig(cfg);
+      sendSyncStatus({ type: 'idle', lastSyncedAt: cfg.lastSyncedAt, lastCheckedAt: checkedAt });
       return { ok: true, updated: false };
     }
     const { updatedAt, content, etag } = r;
     if (!force && cfg.lastSyncedAt && updatedAt === cfg.lastSyncedAt) {
       cfg.etag = etag; saveSyncConfig(cfg);
-      sendSyncStatus({ type: 'idle', lastSyncedAt: cfg.lastSyncedAt });
+      sendSyncStatus({ type: 'idle', lastSyncedAt: cfg.lastSyncedAt, lastCheckedAt: checkedAt });
       return { ok: true, updated: false };
     }
     let parsed;
@@ -682,7 +688,7 @@ async function syncPull(force, { discardLocal = false } = {}) {
     if (!keepLocalChanges) delete cfg.pendingLocalSince;
     saveSyncConfig(cfg);
     broadcastDataChanged();
-    sendSyncStatus({ type: 'updated', lastSyncedAt: updatedAt });
+    sendSyncStatus({ type: 'updated', lastSyncedAt: updatedAt, lastCheckedAt: checkedAt });
     return { ok: true, updated: true, updatedAt };
   } catch (err) {
     sendSyncStatus({ type: 'error', message: err.message });
@@ -833,10 +839,11 @@ function restartSyncTimer() {
   if (syncTimer) { clearInterval(syncTimer); syncTimer = null; }
   const cfg = loadSyncConfig();
   if (cfg.autoSync && cfg.gistId) {
-    // 너무 짧게 저장된 값은(설정창을 다시 안 열어도) 자동으로 안전한 값으로 올려준다.
-    const safeIntervalMin = Math.max(minIntervalMin(cfg), cfg.intervalMin || 5);
-    if (safeIntervalMin !== cfg.intervalMin) { cfg.intervalMin = safeIntervalMin; saveSyncConfig(cfg); }
-    const ms = safeIntervalMin * 60 * 1000;
+    // 여기서는 저장된 값을 고쳐 쓰지 않는다. 앱 시작 시점에는 아직 로그인 전이라
+    // 계정별 토큰을 알 수 없어, 토큰이 있는 PC인데도 "토큰 없음"으로 잘못 판단해
+    // 사용자가 설정한 1분을 3분으로 되돌려 저장해버리기 때문이다. 최소 주기 정리는
+    // 설정 저장(sync:setConfig) 때만 하고, 여기서는 타이머 간격만 안전하게 잡는다.
+    const ms = Math.max(1, cfg.intervalMin || 5) * 60 * 1000;
     syncTimer = setInterval(() => { syncPull(false); }, ms);
   }
 }
@@ -1276,6 +1283,7 @@ function registerHandlers() {
     return {
       gistId: c.gistId || '', hasToken: !!effectiveToken(c), hasSharedToken: !!c.token,
       autoSync: c.autoSync !== false, intervalMin: c.intervalMin || 5, lastSyncedAt: c.lastSyncedAt || '',
+      lastCheckedAt: c.lastCheckedAt || '',
       role: c.role || 'member', requesterName: c.requesterName || '',
       pendingLocal: !!c.pendingLocalSince, // 아직 공유에 못 올린 이 PC만의 변경 여부
 

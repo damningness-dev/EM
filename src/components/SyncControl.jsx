@@ -45,8 +45,13 @@ export default function SyncControl({ adminUnlocked }) {
 
   if (!window.electronAPI) return null; // 웹에서는 미표시
 
+  // "변경"은 공유 데이터가 마지막으로 바뀐 시각이라 아무도 올리지 않으면 그대로다.
+  // 자동 동기화가 살아있는지는 "확인" 시각으로 판단해야 한다(바뀐 게 없어도 갱신됨).
   const lastSynced = status?.lastSyncedAt || cfg?.lastSyncedAt;
-  const lastText = lastSynced ? new Date(lastSynced).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '없음';
+  const fmtTime = v => new Date(v).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const lastText = lastSynced ? fmtTime(lastSynced) : '없음';
+  const lastChecked = status?.lastCheckedAt || cfg?.lastCheckedAt;
+  const checkedText = lastChecked ? new Date(lastChecked).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) : '—';
   const cooldownLeft = Math.max(0, Math.ceil((cooldownUntil - now) / 1000));
   const onCooldown = cooldownLeft > 0;
 
@@ -94,7 +99,10 @@ export default function SyncControl({ adminUnlocked }) {
       {cfg?.gistId ? (
         <>
           <div className="text-gray-500 mb-1.5 leading-tight">
-            최근: {lastText}{cfg.autoSync ? ` · 자동 ${cfg.intervalMin}분` : ' · 자동 꺼짐'}
+            <div>변경: {lastText}</div>
+            <div title="바뀐 내용이 없어도 자동으로 확인한 시각입니다.">
+              확인: {checkedText}{cfg.autoSync ? ` · 자동 ${cfg.intervalMin}분` : ' · 자동 꺼짐'}
+            </div>
           </div>
           {statusText && <div className={`mb-1.5 ${status?.type === 'error' ? 'text-red-400' : 'text-blue-400'}`}>{statusText}</div>}
           <button onClick={doPull} disabled={busy || onCooldown}
