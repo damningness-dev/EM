@@ -960,19 +960,30 @@ function todoAlarmDueNow(todo, now, currentUsername) {
 // 데스크톱 알람 팝업 창 — 항상 위에 뜨는 별도 창(윈도우 알림 설정과 무관하게 확실히 표시)
 // 알람은 한 번에 하나씩. 확인(창 닫기) 전까지 유지되고, 그 사이 발생한 알람은
 // 대기열에 쌓았다가 확인하면 다음 알람을 표시한다.
-let alarmQueue = [];
+let alarmQueue = [];        // [{ todo, key }] — key가 같으면 "동일한 알람"
 let currentAlarmWin = null;
+let currentAlarmKey = null; // 지금 떠 있는 알람의 식별자
 function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
-function enqueueAlarm(todo) {
-  alarmQueue.push(todo);
+// key는 `${todo.id}_${occDay}_${mode}` — 같은 할일의 같은 날짜 알람이면 같은 값이다.
+// 완료 전까지 리마인드 주기마다 다시 울리므로, 자리를 비운 사이 같은 알람이 여러 번
+// 울리면 팝업이 겹겹이 쌓여 "확인"을 여러 번 눌러야 했다. 이미 떠 있거나 대기 중인
+// 알람과 같은 것이면 넣지 않아, 한 번만 확인하면 되도록 한다.
+// 서로 다른 알람은 key가 다르므로 그대로 각각 대기열에 쌓여 따로 확인하게 된다.
+function enqueueAlarm(todo, key) {
+  const id = key || `${todo.id}_`;
+  if (currentAlarmKey === id) return;
+  if (alarmQueue.some(a => a.key === id)) return;
+  alarmQueue.push({ todo, key: id });
   showNextAlarm();
 }
 
 function showNextAlarm() {
   if (currentAlarmWin && !currentAlarmWin.isDestroyed()) return; // 앞 알람 확인 대기
-  const todo = alarmQueue.shift();
-  if (!todo) return;
+  const next = alarmQueue.shift();
+  if (!next) { currentAlarmKey = null; return; }
+  const { todo, key: alarmKey } = next;
+  currentAlarmKey = alarmKey;
   try {
     const wa = screen.getPrimaryDisplay().workAreaSize;
     const W = 360, H = 150;
@@ -1027,8 +1038,8 @@ function showNextAlarm() {
     win.once('ready-to-show', reveal);
     setTimeout(reveal, 1200);
     // 확인(창 닫힘) → 다음 알람 표시. 자동 닫힘 없음.
-    win.on('closed', () => { currentAlarmWin = null; setTimeout(showNextAlarm, 100); });
-  } catch { currentAlarmWin = null; }
+    win.on('closed', () => { currentAlarmWin = null; currentAlarmKey = null; setTimeout(showNextAlarm, 100); });
+  } catch { currentAlarmWin = null; currentAlarmKey = null; }
 }
 
 // ─── 주간근무 → 할일 알람 자동 등록 ────────────────────────────────────────────
@@ -1111,10 +1122,6 @@ function checkAlarms() {
   if (!todos.length) return;
   const now = new Date();
   const currentUsername = currentLoggedInUsername();
-  // 앱이 꺼져 있다가 다시 켜지는 등, 같은 확인 틱에 서로 다른 할일 알람이 한꺼번에
-  // 밀려서 울릴 차례가 되면 전부 순서대로 띄우지 않는다 — 가장 최근(마지막) 것만
-  // 실제로 알리고, 나머지는 확인 처리만 해서 조용히 넘어간다(팝업이 줄줄이 쌓여
-  // "확인"을 여러 번 눌러야 하는 상황 방지).
   const due = [];
   todos.forEach(t => {
     const fire = todoAlarmDueNow(t, now, currentUsername);
@@ -1122,9 +1129,11 @@ function checkAlarms() {
   });
   if (!due.length) return;
   due.forEach(({ fire }) => firedAlarms.set(fire.key, now.getTime()));
-  const t = due[due.length - 1].todo;
-  // 1) 데스크톱 팝업 창 (항상 위) — 한 번에 하나씩, 확인 전까지 유지 + 대기열
-  enqueueAlarm(t);
+  // 1) 데스크톱 팝업 창 (항상 위) — 한 번에 하나씩, 확인 전까지 유지 + 대기열.
+  // 서로 다른 할일 알람은 각각 따로 확인할 수 있도록 모두 대기열에 넣는다.
+  // (같은 알람이 리마인드로 다시 울린 경우는 enqueueAlarm에서 걸러진다)
+  due.forEach(({ todo, fire }) => enqueueAlarm(todo, fire.key));
+  const t = due[due.length - 1].todo; // 아래 깜빡임·토스트에 쓸 대표 항목
   // 2) 작업표시줄 깜빡임
   try { if (mainWin && !mainWin.isDestroyed()) mainWin.flashFrame(true); } catch { /* ignore */ }
   // 3) 윈도우 네이티브 토스트 알림 (환경에 따라 표시)
@@ -1774,6 +1783,9 @@ function registerHandlers() {
       if (i >= 0) todos[i] = todo; else todos.push(todo);
       // 알람 시간을 수정했으면 발사 기록을 지워 새 시간에 다시 울리게 한다
       for (const k of [...firedAlarms.keys()]) { if (k.startsWith(todo.id + '_')) firedAlarms.delete(k); }
+      // 완료 처리하거나 내용을 고친 할일이 대기열에 남아 있으면 지운다 — 이미 처리한
+      // 일인데 나중에 팝업이 떠서 다시 확인해야 하는 상황을 막는다.
+      alarmQueue = alarmQueue.filter(a => !a.key.startsWith(todo.id + '_'));
     } else {
       todo.id = newId();
       if (!todo.completedDates) todo.completedDates = [];
