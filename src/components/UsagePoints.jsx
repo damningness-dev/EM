@@ -34,7 +34,7 @@ function emptyForm(currentMember) {
     worker_name: '',
     room_name: '', room_number: '', point_number: '', reason: '',
     photoThumb: '', photoFileName: '', photoFilePath: '', photoGistKey: '',
-    progress: '접수', progress_note: '', note: '',
+    progress: '접수', progress_note: '', progress_logs: [], action_taken: '', note: '',
   };
 }
 
@@ -279,14 +279,27 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
     }
   }
 
-  async function saveProgressNote(item, progress_note) {
+  // 진행상황은 덮어쓰지 않고 한 줄씩 덧붙인다 — 누가 언제 무엇을 적었는지 남기기 위함.
+  async function appendProgressLog(item, text) {
     if (!requireAdmin()) return;
+    const body = String(text || '').trim();
+    if (!body) return;
+    const now = new Date();
+    const stamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} `
+      + `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const entry = {
+      id: `${now.getTime()}_${Math.random().toString(36).slice(2, 8)}`,
+      text: body,
+      author: currentMember?.username || '',
+      at: stamp,
+    };
+    const logs = [...(Array.isArray(item.progress_logs) ? item.progress_logs : []), entry];
     try {
-      const saved = await upsertUsagePoint({ ...item, progress_note });
+      const saved = await upsertUsagePoint({ ...item, progress_logs: logs });
       setData(prev => prev.map(d => d.id === item.id ? saved : d));
       window.electronAPI?.notifyDataChanged?.();
       syncAfterChange();
-      showNotice('진행상황이 저장되었습니다.');
+      showNotice('진행상황이 기록되었습니다.');
     } catch (e) {
       showNotice('저장 실패: ' + e.message, true);
     }
@@ -354,6 +367,20 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
       showNotice('사진 공유 중 오류: ' + e.message, true);
     } finally {
       setSharingPhotos(false);
+    }
+  }
+
+  // 완료 처리된 건의 조치사항 — 무엇을 해서 마무리했는지 적는 칸.
+  async function saveActionTaken(item, action_taken) {
+    if (!requireAdmin()) return;
+    try {
+      const saved = await upsertUsagePoint({ ...item, action_taken });
+      setData(prev => prev.map(d => d.id === item.id ? saved : d));
+      window.electronAPI?.notifyDataChanged?.();
+      syncAfterChange();
+      showNotice('조치사항이 저장되었습니다.');
+    } catch (e) {
+      showNotice('저장 실패: ' + e.message, true);
     }
   }
 
@@ -430,14 +457,14 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
               <col style={{ width: '4%' }} /><col style={{ width: '6%' }} /><col style={{ width: '8%' }} />
               <col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '7%' }} />
               <col style={{ width: '7%' }} /><col style={{ width: '9%' }} /><col style={{ width: '6%' }} />
-              <col style={{ width: '8%' }} /><col style={{ width: '14%' }} /><col style={{ width: '7%' }} />
-              <col style={{ width: '8%' }} />
+              <col style={{ width: '8%' }} /><col style={{ width: '13%' }} /><col style={{ width: '6%' }} />
+              <col style={{ width: '11%' }} /><col style={{ width: '6%' }} />
             </colgroup>
             <thead>
               <tr>
                 <th>번호</th><th>대분류</th><th>소분류</th><th>발견일</th><th>작성일</th>
                 <th>작성자</th><th>작업자</th><th>실명</th><th>실번호</th><th>사용점번호</th>
-                <th>사유</th><th>진행상황</th><th>비고</th>
+                <th>사유</th><th>진행상황</th><th>조치사항</th><th>비고</th>
               </tr>
             </thead>
             <tbody>
@@ -455,7 +482,8 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                   <td className="up-center">{u.point_number || ''}</td>
                   <td>{u.reason || ''}</td>
                   <td className="up-center">{u.progress || '접수'}</td>
-                  <td>{[u.progress_note, u.note].filter(Boolean).join(' / ')}</td>
+                  <td>{u.action_taken || ''}</td>
+                  <td>{u.note || ''}</td>
                 </tr>
               ))}
             </tbody>
@@ -549,7 +577,9 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                   {isExp && (
                     <tr>
                       <td colSpan={USAGEPOINT_COLS} className="p-0 bg-gray-50/60">
-                        <ProgressNotePanel item={item} adminUnlocked={adminUnlocked} onSave={text => saveProgressNote(item, text)} />
+                        <ProgressNotePanel item={item} adminUnlocked={adminUnlocked} currentMember={currentMember}
+                          onAppend={text => appendProgressLog(item, text)}
+                          onSaveAction={text => saveActionTaken(item, text)} />
                       </td>
                     </tr>
                   )}
@@ -741,24 +771,101 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
 
 function FragmentRow({ children }) { return <>{children}</>; }
 
-function ProgressNotePanel({ item, adminUnlocked, onSave }) {
-  const [text, setText] = useState(item.progress_note || '');
+// 진행상황은 고쳐 쓰는 메모가 아니라 기록(로그)이다. 저장할 때마다 내용·작성자·
+// 시각이 아래에 한 줄씩 쌓이고, 지난 기록은 고치거나 지울 수 없다.
+// 예전 방식(progress_note 한 칸에 덮어쓰기)으로 저장된 내용은 맨 위에 함께 보여준다.
+function ProgressNotePanel({ item, adminUnlocked, currentMember, onAppend, onSaveAction }) {
+  const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
-  const dirty = text !== (item.progress_note || '');
+  const [action, setAction] = useState(item.action_taken || '');
+  const [actionBusy, setActionBusy] = useState(false);
+  const logs = Array.isArray(item.progress_logs) ? item.progress_logs : [];
+  // 완료로 표시되면 더 이상 진행상황을 적지 않고, 대신 조치사항을 정리한다.
+  const isDone = (item.progress || '접수') === '완료';
+  const canWrite = adminUnlocked && !isDone;
+
+  // 목록이 동기화로 갱신되면 조치사항 입력칸도 최신 값을 따라간다.
+  useEffect(() => { setAction(item.action_taken || ''); }, [item.action_taken]);
+
+  async function submit() {
+    const body = text.trim();
+    if (!body || busy) return;
+    setBusy(true);
+    try {
+      await onAppend(body);
+      setText('');
+    } finally { setBusy(false); }
+  }
+
   return (
-    <div className="px-8 py-3 flex items-start gap-3">
-      <span className="text-xs font-semibold text-gray-500 shrink-0 pt-1.5">📝 진행상황 메모</span>
-      {adminUnlocked ? (
-        <>
+    <div className="px-8 py-3">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-xs font-semibold text-gray-500">📝 진행상황 기록</span>
+        <span className="text-[11px] text-gray-400">저장할 때마다 아래에 쌓이며, 지난 기록은 수정할 수 없습니다.</span>
+      </div>
+
+      {canWrite && (
+        <div className="flex items-start gap-2 mb-2">
           <textarea value={text} onChange={e => setText(e.target.value)} rows={2}
-            className="flex-1 border border-gray-200 rounded px-2 py-1.5 text-xs" placeholder="접수 처리 후 진행 상황을 기록하세요" />
-          <button disabled={!dirty || busy} onClick={async () => { setBusy(true); try { await onSave(text); } finally { setBusy(false); } }}
+            onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submit(); }}
+            className="flex-1 border border-gray-200 rounded px-2 py-1.5 text-xs"
+            placeholder="진행 상황을 입력하고 저장하세요 (Ctrl+Enter)" />
+          <button disabled={!text.trim() || busy} onClick={submit}
             className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded font-semibold disabled:opacity-40 shrink-0">
             {busy ? '저장 중…' : '저장'}
           </button>
-        </>
+        </div>
+      )}
+      {adminUnlocked && isDone && (
+        <p className="text-[11px] text-emerald-600 mb-2">✓ 완료 처리되어 진행상황 입력은 닫혔습니다. 아래 조치사항을 작성하세요.</p>
+      )}
+
+      {logs.length === 0 && !item.progress_note ? (
+        <p className="text-xs text-gray-400">아직 작성된 진행상황이 없습니다.</p>
       ) : (
-        <p className="flex-1 text-xs text-gray-500 whitespace-pre-wrap pt-1">{item.progress_note || '아직 작성된 진행상황이 없습니다.'}</p>
+        <div className="space-y-1.5">
+          {/* 최신 기록이 위로 오도록 역순 표시 */}
+          {[...logs].reverse().map(l => (
+            <div key={l.id} className="flex items-start gap-2 text-xs">
+              <span className="shrink-0 text-gray-400 tabular-nums w-32">{l.at || ''}</span>
+              <span className="shrink-0 font-medium text-gray-600 w-20 truncate" title={l.author}>{l.author || '—'}</span>
+              <span className="flex-1 text-gray-700 whitespace-pre-wrap break-words">{l.text}</span>
+            </div>
+          ))}
+          {item.progress_note && (
+            <div className="flex items-start gap-2 text-xs pt-1.5 border-t border-gray-100">
+              <span className="shrink-0 text-gray-400 w-32">이전 기록</span>
+              <span className="shrink-0 w-20" />
+              <span className="flex-1 text-gray-500 whitespace-pre-wrap break-words">{item.progress_note}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 조치사항 — 완료로 표시된 뒤에만 열린다. 최종적으로 무엇을 해서
+          마무리했는지 정리하는 칸이라, 진행상황 기록과 달리 고쳐 쓸 수 있다. */}
+      {isDone && (
+        <div className="mt-3 pt-3 border-t border-gray-200">
+          <div className="flex items-center gap-2 mb-1.5">
+            <span className="text-xs font-semibold text-emerald-700">✅ 조치사항</span>
+            <span className="text-[11px] text-gray-400">완료 처리된 건의 최종 조치 내용</span>
+          </div>
+          {adminUnlocked ? (
+            <div className="flex items-start gap-2">
+              <textarea value={action} onChange={e => setAction(e.target.value)} rows={2}
+                className="flex-1 border border-emerald-200 rounded px-2 py-1.5 text-xs"
+                placeholder="어떤 조치로 마무리했는지 입력하세요" />
+              <button
+                disabled={actionBusy || action === (item.action_taken || '')}
+                onClick={async () => { setActionBusy(true); try { await onSaveAction(action); } finally { setActionBusy(false); } }}
+                className="text-xs px-3 py-1.5 bg-emerald-600 text-white rounded font-semibold disabled:opacity-40 shrink-0">
+                {actionBusy ? '저장 중…' : '저장'}
+              </button>
+            </div>
+          ) : (
+            <p className="text-xs text-gray-600 whitespace-pre-wrap">{item.action_taken || '아직 작성된 조치사항이 없습니다.'}</p>
+          )}
+        </div>
       )}
     </div>
   );
