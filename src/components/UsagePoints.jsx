@@ -75,6 +75,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [majorFilter, setMajorFilter] = useState('all');
+  const [doneFilter, setDoneFilter] = useState('all'); // 'all' | 'open'(미완료) | 'done'(완료)
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(() => emptyForm(currentMember));
@@ -161,13 +162,16 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   const filtered = useMemo(() => {
     let list = data;
     if (majorFilter !== 'all') list = list.filter(u => u.major_category === majorFilter);
+    // 완료만 "완료"이고 나머지(신청·조사 중·조치 중·보류)는 모두 미완료로 묶는다.
+    if (doneFilter === 'done') list = list.filter(u => progressOf(u) === '완료');
+    else if (doneFilter === 'open') list = list.filter(u => progressOf(u) !== '완료');
     const q = search.trim().toLowerCase();
     if (q) {
       list = list.filter(u => [u.major_category, u.minor_category, u.author_name, u.worker_name, u.room_name, u.room_number, u.point_number, u.reason, u.note]
         .some(v => String(v || '').toLowerCase().includes(q)));
     }
     return list;
-  }, [data, search, majorFilter]);
+  }, [data, search, majorFilter, doneFilter]);
 
   const sorted = useMemo(() => [...filtered].sort((a, b) => (b.created_date || '').localeCompare(a.created_date || '')), [filtered]);
 
@@ -500,6 +504,23 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
       </div>
 
       <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-xs text-gray-400 mr-1">상태</span>
+        {[['all', '전체'], ['open', '미완료'], ['done', '완료']].map(([v, label]) => {
+          const count = v === 'all' ? data.length
+            : v === 'done' ? data.filter(u => progressOf(u) === '완료').length
+            : data.filter(u => progressOf(u) !== '완료').length;
+          return (
+            <button key={v} onClick={() => setDoneFilter(v)}
+              className={`px-3 py-1 rounded-full text-xs font-medium border ${doneFilter === v
+                ? (v === 'done' ? 'bg-emerald-600 text-white border-emerald-600' : v === 'open' ? 'bg-amber-500 text-white border-amber-500' : 'bg-blue-600 text-white border-blue-600')
+                : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+              {label} {count}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center gap-1.5 flex-wrap">
         <span className="text-xs text-gray-400 mr-1">대분류</span>
         {['all', ...MAJOR_CATEGORIES].map(c => (
           <button key={c} onClick={() => setMajorFilter(c)}
@@ -825,7 +846,10 @@ function ProgressNotePanel({ item, adminUnlocked, currentMember, onAppend, onSav
         </div>
       )}
       {adminUnlocked && isDone && (
-        <p className="text-[11px] text-emerald-600 mb-2">✓ 완료 처리되어 진행상황 입력은 닫혔습니다. 아래 조치사항을 작성하세요.</p>
+        <p className="text-[11px] text-emerald-600 mb-2">
+          ✓ 완료 처리된 건입니다 — 진행상황·조치사항 모두 더 이상 수정할 수 없습니다.
+          다시 작성하려면 위 진행상황을 완료가 아닌 단계로 되돌리세요.
+        </p>
       )}
 
       {logs.length === 0 && !item.progress_note ? (
@@ -850,31 +874,31 @@ function ProgressNotePanel({ item, adminUnlocked, currentMember, onAppend, onSav
         </div>
       )}
 
-      {/* 조치사항 — 완료로 표시된 뒤에만 열린다. 최종적으로 무엇을 해서
-          마무리했는지 정리하는 칸이라, 진행상황 기록과 달리 고쳐 쓸 수 있다. */}
-      {isDone && (
-        <div className="mt-3 pt-3 border-t border-gray-200">
-          <div className="flex items-center gap-2 mb-1.5">
-            <span className="text-xs font-semibold text-emerald-700">✅ 조치사항</span>
-            <span className="text-[11px] text-gray-400">완료 처리된 건의 최종 조치 내용</span>
-          </div>
-          {adminUnlocked ? (
-            <div className="flex items-start gap-2">
-              <textarea value={action} onChange={e => setAction(e.target.value)} rows={2}
-                className="flex-1 border border-emerald-200 rounded px-2 py-1.5 text-xs"
-                placeholder="어떤 조치로 마무리했는지 입력하세요" />
-              <button
-                disabled={actionBusy || action === (item.action_taken || '')}
-                onClick={async () => { setActionBusy(true); try { await onSaveAction(action); } finally { setActionBusy(false); } }}
-                className="text-xs px-3 py-1.5 bg-emerald-600 text-white rounded font-semibold disabled:opacity-40 shrink-0">
-                {actionBusy ? '저장 중…' : '저장'}
-              </button>
-            </div>
-          ) : (
-            <p className="text-xs text-gray-600 whitespace-pre-wrap">{item.action_taken || '아직 작성된 조치사항이 없습니다.'}</p>
-          )}
+      {/* 조치사항 — 어떤 조치로 마무리하는지 정리하는 칸. 완료 처리 전까지
+          작성·수정할 수 있고, 완료로 표시하면 기록이 확정되어 잠긴다. */}
+      <div className="mt-3 pt-3 border-t border-gray-200">
+        <div className="flex items-center gap-2 mb-1.5">
+          <span className="text-xs font-semibold text-emerald-700">✅ 조치사항</span>
+          <span className="text-[11px] text-gray-400">
+            {isDone ? '완료되어 확정된 내용입니다' : '완료로 표시하면 더 이상 수정할 수 없습니다'}
+          </span>
         </div>
-      )}
+        {adminUnlocked && !isDone ? (
+          <div className="flex items-start gap-2">
+            <textarea value={action} onChange={e => setAction(e.target.value)} rows={2}
+              className="flex-1 border border-emerald-200 rounded px-2 py-1.5 text-xs"
+              placeholder="어떤 조치로 마무리했는지 입력하세요" />
+            <button
+              disabled={actionBusy || action === (item.action_taken || '')}
+              onClick={async () => { setActionBusy(true); try { await onSaveAction(action); } finally { setActionBusy(false); } }}
+              className="text-xs px-3 py-1.5 bg-emerald-600 text-white rounded font-semibold disabled:opacity-40 shrink-0">
+              {actionBusy ? '저장 중…' : '저장'}
+            </button>
+          </div>
+        ) : (
+          <p className="text-xs text-gray-600 whitespace-pre-wrap">{item.action_taken || '아직 작성된 조치사항이 없습니다.'}</p>
+        )}
+      </div>
     </div>
   );
 }
