@@ -18,7 +18,7 @@ const PROGRESS_COLOR = {
   '완료': 'bg-emerald-100 text-emerald-700',
   '보류': 'bg-red-100 text-red-700',
 };
-const USAGEPOINT_COLS = 13;
+const USAGEPOINT_COLS = 14; // 작업자 열 추가
 
 function todayStr() {
   const d = new Date();
@@ -27,8 +27,11 @@ function todayStr() {
 
 function emptyForm(currentMember) {
   return {
-    major_category: '', minor_category: '', created_date: todayStr(),
+    // created_date는 화면상 "발견일"이다(문제를 발견한 날 — 사용자가 바꿀 수 있음).
+    // created_at은 "작성일" — 이 기록을 처음 저장한 날로, 자동으로 채워지고 수정할 수 없다.
+    major_category: '', minor_category: '', created_date: todayStr(), created_at: '',
     author_id: currentMember?.id || '', author_name: currentMember?.username || '',
+    worker_name: '',
     room_name: '', room_number: '', point_number: '', reason: '',
     photoThumb: '', photoFileName: '', photoFilePath: '', photoGistKey: '',
     progress: '접수', progress_note: '', note: '',
@@ -152,7 +155,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
     if (majorFilter !== 'all') list = list.filter(u => u.major_category === majorFilter);
     const q = search.trim().toLowerCase();
     if (q) {
-      list = list.filter(u => [u.major_category, u.minor_category, u.author_name, u.room_name, u.room_number, u.point_number, u.reason, u.note]
+      list = list.filter(u => [u.major_category, u.minor_category, u.author_name, u.worker_name, u.room_name, u.room_number, u.point_number, u.reason, u.note]
         .some(v => String(v || '').toLowerCase().includes(q)));
     }
     return list;
@@ -230,7 +233,13 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
     if (!form.room_name && !form.point_number) { showNotice('실명 또는 사용점번호를 입력하세요.', true); return; }
     setSaving(true);
     try {
-      const item = editingId ? { ...form, id: editingId } : { ...form };
+      // 작성일(created_at)은 처음 저장할 때 한 번만 채우고 이후에는 건드리지 않는다.
+      // 예전에 저장된 기록에는 이 값이 없으므로, 수정 시 발견일을 그대로 물려준다.
+      const existing = editingId ? data.find(d => d.id === editingId) : null;
+      const createdAt = existing?.created_at || (editingId ? (existing?.created_date || '') : todayStr());
+      const item = editingId
+        ? { ...form, id: editingId, created_at: createdAt }
+        : { ...form, created_at: createdAt };
       const saved = await upsertUsagePoint(item);
       setData(prev => editingId ? prev.map(d => d.id === editingId ? saved : d) : [...prev, saved]);
       window.electronAPI?.notifyDataChanged?.();
@@ -399,7 +408,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
             className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-50">
             {sharingPhotos ? '📤 공유 중…' : '📤 사진 공유'}
           </button>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="검색 (분류·작성자·실명·사용점번호 등)"
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="검색 (분류·작성자·작업자·실명·사용점번호 등)"
             className="px-3 py-2 border border-gray-200 rounded-lg text-sm w-64" />
           <button onClick={openAdd} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">+ 추가</button>
         </div>
@@ -418,15 +427,17 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
           </p>
           <table>
             <colgroup>
-              <col style={{ width: '4%' }} /><col style={{ width: '7%' }} /><col style={{ width: '9%' }} />
-              <col style={{ width: '9%' }} /><col style={{ width: '8%' }} /><col style={{ width: '11%' }} />
-              <col style={{ width: '7%' }} /><col style={{ width: '9%' }} /><col style={{ width: '15%' }} />
-              <col style={{ width: '8%' }} /><col style={{ width: '13%' }} />
+              <col style={{ width: '4%' }} /><col style={{ width: '6%' }} /><col style={{ width: '8%' }} />
+              <col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '7%' }} />
+              <col style={{ width: '7%' }} /><col style={{ width: '9%' }} /><col style={{ width: '6%' }} />
+              <col style={{ width: '8%' }} /><col style={{ width: '14%' }} /><col style={{ width: '7%' }} />
+              <col style={{ width: '8%' }} />
             </colgroup>
             <thead>
               <tr>
-                <th>번호</th><th>대분류</th><th>소분류</th><th>작성일</th><th>작성자</th>
-                <th>실명</th><th>실번호</th><th>사용점번호</th><th>사유</th><th>진행상황</th><th>비고</th>
+                <th>번호</th><th>대분류</th><th>소분류</th><th>발견일</th><th>작성일</th>
+                <th>작성자</th><th>작업자</th><th>실명</th><th>실번호</th><th>사용점번호</th>
+                <th>사유</th><th>진행상황</th><th>비고</th>
               </tr>
             </thead>
             <tbody>
@@ -436,7 +447,9 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                   <td className="up-center">{u.major_category || ''}</td>
                   <td className="up-center">{u.minor_category || ''}</td>
                   <td className="up-center">{u.created_date || ''}</td>
+                  <td className="up-center">{u.created_at || ''}</td>
                   <td className="up-center">{u.author_name || ''}</td>
+                  <td className="up-center">{u.worker_name || ''}</td>
                   <td>{u.room_name || ''}</td>
                   <td className="up-center">{u.room_number || ''}</td>
                   <td className="up-center">{u.point_number || ''}</td>
@@ -467,8 +480,9 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
               <th className="px-1 py-3"></th>
               <th className="px-3 py-3 text-gray-500 font-medium text-center">대분류</th>
               <th className="px-3 py-3 text-gray-500 font-medium text-center">소분류</th>
-              <th className="px-3 py-3 text-gray-500 font-medium text-center">작성일</th>
+              <th className="px-3 py-3 text-gray-500 font-medium text-center">발견일</th>
               <th className="px-3 py-3 text-gray-500 font-medium text-center">작성자</th>
+              <th className="px-3 py-3 text-gray-500 font-medium text-center">작업자</th>
               <th className="px-3 py-3 text-gray-500 font-medium text-center">실명</th>
               <th className="px-3 py-3 text-gray-500 font-medium text-center">실번호</th>
               <th className="px-3 py-3 text-gray-500 font-medium text-center">사용점번호</th>
@@ -493,6 +507,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                     <td className="px-3 py-2 text-center text-gray-600">{item.minor_category || '—'}</td>
                     <td className="px-3 py-2 text-center text-gray-500 text-xs">{formatDate(item.created_date)}</td>
                     <td className="px-3 py-2 text-center text-gray-600">{item.author_name || '—'}</td>
+                    <td className="px-3 py-2 text-center text-gray-600">{item.worker_name || '—'}</td>
                     <td className="px-3 py-2 text-center text-gray-600">{item.room_name || '—'}</td>
                     <td className="px-3 py-2 text-center text-gray-600">{item.room_number || '—'}</td>
                     <td className="px-3 py-2 text-center font-medium text-gray-800">{item.point_number || '—'}</td>
@@ -571,8 +586,14 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                 </datalist>
               </div>
               <div>
-                <label className="text-xs text-gray-500">작성일</label>
+                <label className="text-xs text-gray-500">발견일</label>
                 <input type="date" className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.created_date} onChange={e => setForm(f => ({ ...f, created_date: e.target.value }))} />
+              </div>
+              <div>
+                {/* 기록을 처음 저장한 날 — 자동으로 채워지고 고칠 수 없다. */}
+                <label className="text-xs text-gray-500">작성일 <span className="text-gray-400">(자동)</span></label>
+                <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5 bg-gray-50 text-gray-400"
+                  value={form.created_at || (editingId ? (form.created_date || '—') : todayStr())} disabled readOnly />
               </div>
               <div>
                 <label className="text-xs text-gray-500">작성자</label>
@@ -580,6 +601,13 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                   value={form.author_name} disabled={!!currentMember}
                   onChange={e => setForm(f => ({ ...f, author_name: e.target.value }))}
                   placeholder={currentMember ? '' : '로그인하면 자동으로 채워집니다'} />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">작업자</label>
+                <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5"
+                  value={form.worker_name || ''}
+                  onChange={e => setForm(f => ({ ...f, worker_name: e.target.value }))}
+                  placeholder="실제 작업한 사람" />
               </div>
               <div>
                 <label className="text-xs text-gray-500">실명</label>
