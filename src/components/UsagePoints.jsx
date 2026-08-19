@@ -11,10 +11,18 @@ const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
 
 const MAJOR_CATEGORIES = ['공조', '가스', '용수', '기타'];
 const DEFAULT_CATEGORIES = { '공조': [], '가스': [], '용수': [], '기타': [] };
-const PROGRESS_OPTIONS = ['접수', '진행중', '완료', '보류'];
+const PROGRESS_OPTIONS = ['신청', '조사 중', '조치 중', '완료', '보류'];
+// 예전에 저장된 값(접수·진행중)은 새 단계로 바꿔 읽는다 — 저장된 데이터를 손대지
+// 않고도 화면·필터·색상이 새 구성으로 일관되게 동작하게 하기 위함.
+const LEGACY_PROGRESS = { '접수': '신청', '진행중': '조치 중' };
+function progressOf(item) {
+  const v = item?.progress || '';
+  return LEGACY_PROGRESS[v] || v || PROGRESS_OPTIONS[0];
+}
 const PROGRESS_COLOR = {
-  '접수': 'bg-gray-100 text-gray-600',
-  '진행중': 'bg-amber-100 text-amber-700',
+  '신청': 'bg-gray-100 text-gray-600',
+  '조사 중': 'bg-blue-100 text-blue-700',
+  '조치 중': 'bg-amber-100 text-amber-700',
   '완료': 'bg-emerald-100 text-emerald-700',
   '보류': 'bg-red-100 text-red-700',
 };
@@ -34,7 +42,7 @@ function emptyForm(currentMember) {
     worker_name: '',
     room_name: '', room_number: '', point_number: '', reason: '',
     photoThumb: '', photoFileName: '', photoFilePath: '', photoGistKey: '',
-    progress: '접수', progress_note: '', progress_logs: [], action_taken: '', note: '',
+    progress: PROGRESS_OPTIONS[0], progress_note: '', progress_logs: [], action_taken: '', note: '',
   };
 }
 
@@ -142,12 +150,12 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   }
 
   // 작성자 본인(접수 상태일 때만) 또는 관리자만 수정·삭제할 수 있다.
-  // 관리자가 접수를 진행중으로 바꾸고 나면 작성자는 더 이상 손댈 수 없다.
+  // 관리자가 신청을 다음 단계로 넘기고 나면 작성자는 더 이상 손댈 수 없다.
   function canManage(item) {
     if (adminUnlocked) return true;
     if (!currentMember) return false;
     const isAuthor = item.author_id ? item.author_id === currentMember.id : (!!item.author_name && item.author_name === currentMember.username);
-    return isAuthor && (item.progress || '접수') === '접수';
+    return isAuthor && progressOf(item) === PROGRESS_OPTIONS[0];
   }
 
   const filtered = useMemo(() => {
@@ -481,7 +489,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                   <td className="up-center">{u.room_number || ''}</td>
                   <td className="up-center">{u.point_number || ''}</td>
                   <td>{u.reason || ''}</td>
-                  <td className="up-center">{u.progress || '접수'}</td>
+                  <td className="up-center">{progressOf(u)}</td>
                   <td>{u.action_taken || ''}</td>
                   <td>{u.note || ''}</td>
                 </tr>
@@ -548,20 +556,20 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                     </td>
                     <td className="px-3 py-2 text-center">
                       {adminUnlocked ? (
-                        (item.progress || '접수') === '접수' ? (
-                          <button onClick={() => quickSetProgress(item, '진행중')}
+                        progressOf(item) === PROGRESS_OPTIONS[0] ? (
+                          <button onClick={() => quickSetProgress(item, '조사 중')}
                             className="text-xs rounded-full px-2.5 py-1 font-medium bg-gray-100 text-gray-600 hover:bg-amber-100 hover:text-amber-700"
-                            title="접수 처리 — 진행중으로 변경하면 작성자는 더 이상 수정할 수 없습니다">
-                            접수 ➜ 진행중
+                            title="다음 단계로 넘기기 — 조사 중으로 바꾸면 작성자는 더 이상 수정할 수 없습니다">
+                            신청 ➜ 조사 중
                           </button>
                         ) : (
-                          <select value={item.progress} onChange={e => quickSetProgress(item, e.target.value)}
-                            className={`text-xs rounded-full px-2 py-1 border-0 font-medium cursor-pointer ${PROGRESS_COLOR[item.progress] || 'bg-gray-100 text-gray-600'}`}>
-                            {['진행중', '완료', '보류'].map(p => <option key={p} value={p}>{p}</option>)}
+                          <select value={progressOf(item)} onChange={e => quickSetProgress(item, e.target.value)}
+                            className={`text-xs rounded-full px-2 py-1 border-0 font-medium cursor-pointer ${PROGRESS_COLOR[progressOf(item)] || 'bg-gray-100 text-gray-600'}`}>
+                            {PROGRESS_OPTIONS.slice(1).map(p => <option key={p} value={p}>{p}</option>)}
                           </select>
                         )
                       ) : (
-                        <span className={`text-xs rounded-full px-2.5 py-1 font-medium inline-block ${PROGRESS_COLOR[item.progress] || PROGRESS_COLOR['접수']}`}>{item.progress || '접수'}</span>
+                        <span className={`text-xs rounded-full px-2.5 py-1 font-medium inline-block ${PROGRESS_COLOR[progressOf(item)] || PROGRESS_COLOR[PROGRESS_OPTIONS[0]]}`}>{progressOf(item)}</span>
                       )}
                     </td>
                     <td className="px-3 py-2 text-center text-gray-500 text-xs max-w-[140px] truncate" title={item.note || ''}>{item.note || '—'}</td>
@@ -781,7 +789,7 @@ function ProgressNotePanel({ item, adminUnlocked, currentMember, onAppend, onSav
   const [actionBusy, setActionBusy] = useState(false);
   const logs = Array.isArray(item.progress_logs) ? item.progress_logs : [];
   // 완료로 표시되면 더 이상 진행상황을 적지 않고, 대신 조치사항을 정리한다.
-  const isDone = (item.progress || '접수') === '완료';
+  const isDone = progressOf(item) === '완료';
   const canWrite = adminUnlocked && !isDone;
 
   // 목록이 동기화로 갱신되면 조치사항 입력칸도 최신 값을 따라간다.
