@@ -821,9 +821,17 @@ function ProgressNotePanel({ item, adminUnlocked, currentMember, onAppend, onSav
   const [action, setAction] = useState(item.action_taken || '');
   const [actionBusy, setActionBusy] = useState(false);
   const logs = Array.isArray(item.progress_logs) ? item.progress_logs : [];
-  // 완료로 표시되면 더 이상 진행상황을 적지 않고, 대신 조치사항을 정리한다.
-  const isDone = progressOf(item) === '완료';
-  const canWrite = adminUnlocked && !isDone;
+  // 단계에 따라 어느 칸을 여는지 정한다.
+  //  신청·조사 중 : 진행상황만 기록 (조치사항은 아직 숨김)
+  //  조치 중      : 진행상황은 잠기고 조치사항을 작성
+  //  완료         : 두 칸 모두 잠기고 남은 내역만 보인다
+  const stage = progressOf(item);
+  const isDone = stage === '완료';
+  const isActing = stage === '조치 중';
+  const canWrite = adminUnlocked && !isActing && !isDone;   // 진행상황 기록 입력
+  const canWriteAction = adminUnlocked && isActing;          // 조치사항 입력
+  // 조치사항은 조치 중부터 보이고, 한 번 작성한 내용은 이후 단계에서도 계속 보인다.
+  const showAction = isActing || isDone || !!item.action_taken;
 
   // 목록이 동기화로 갱신되면 조치사항 입력칸도 최신 값을 따라간다.
   useEffect(() => { setAction(item.action_taken || ''); }, [item.action_taken]);
@@ -859,8 +867,13 @@ function ProgressNotePanel({ item, adminUnlocked, currentMember, onAppend, onSav
       )}
       {adminUnlocked && isDone && (
         <p className="text-[11px] text-emerald-600 mb-2">
-          ✓ 완료 처리된 건입니다 — 진행상황·조치사항 모두 더 이상 수정할 수 없습니다.
+          ✓ 완료 처리된 건입니다 — 진행상황·조치사항 모두 더 이상 수정할 수 없고 내역만 남습니다.
           다시 작성하려면 위 진행상황을 완료가 아닌 단계로 되돌리세요.
+        </p>
+      )}
+      {adminUnlocked && isActing && (
+        <p className="text-[11px] text-amber-600 mb-2">
+          조치 중 단계입니다 — 진행상황 기록은 닫혔습니다. 아래 조치사항을 작성하세요.
         </p>
       )}
 
@@ -886,16 +899,18 @@ function ProgressNotePanel({ item, adminUnlocked, currentMember, onAppend, onSav
         </div>
       )}
 
-      {/* 조치사항 — 어떤 조치로 마무리하는지 정리하는 칸. 완료 처리 전까지
-          작성·수정할 수 있고, 완료로 표시하면 기록이 확정되어 잠긴다. */}
+      {/* 조치사항 — "조치 중"일 때만 작성할 수 있고, 완료로 넘어가면 확정되어 잠긴다. */}
+      {showAction && (
       <div className="mt-3 pt-3 border-t border-gray-200">
         <div className="flex items-center gap-2 mb-1.5">
           <span className="text-xs font-semibold text-emerald-700">✅ 조치사항</span>
           <span className="text-[11px] text-gray-400">
-            {isDone ? '완료되어 확정된 내용입니다' : '완료로 표시하면 더 이상 수정할 수 없습니다'}
+            {isDone ? '완료되어 확정된 내용입니다'
+              : isActing ? '완료로 표시하면 더 이상 수정할 수 없습니다'
+              : '조치 중 단계에서만 작성할 수 있습니다'}
           </span>
         </div>
-        {adminUnlocked && !isDone ? (
+        {canWriteAction ? (
           <div className="flex items-start gap-2">
             <textarea value={action} onChange={e => setAction(e.target.value)} rows={2}
               className="flex-1 border border-emerald-200 rounded px-2 py-1.5 text-xs"
@@ -911,6 +926,7 @@ function ProgressNotePanel({ item, adminUnlocked, currentMember, onAppend, onSav
           <p className="text-xs text-gray-600 whitespace-pre-wrap">{item.action_taken || '아직 작성된 조치사항이 없습니다.'}</p>
         )}
       </div>
+      )}
     </div>
   );
 }
