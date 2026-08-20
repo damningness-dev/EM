@@ -318,7 +318,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
     }
   }
 
-  // 현재 화면에 보이는 목록(검색·대분류 필터가 적용된 그대로)을 A4 세로 PDF로
+  // 현재 화면에 보이는 목록(검색·대분류 필터가 적용된 그대로)을 A4 가로 PDF로
   // 만들어 기본 뷰어로 연다 — 달력 인쇄와 같은 방식(Windows 인쇄 대화상자가
   // 방향 설정을 무시하는 문제를 피하려고 PDF로 만든 뒤 뷰어에서 인쇄).
   async function handlePrintPdf() {
@@ -334,10 +334,11 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
     document.body.appendChild(portal);
     document.body.classList.add('is-printing');
 
-    // 표는 세로 방향으로 여러 페이지에 걸쳐 흐르게 한다(달력처럼 한 페이지에
-    // 맞출 필요가 없음). @page는 선택자로 조건부 지정이 안 되므로 덮어쓴다.
+    // 열이 많아 세로 폭에 다 안 들어가므로 가로로 강제한다. 여러 페이지에 걸쳐
+    // 흐르는 건 그대로(달력처럼 한 페이지에 맞출 필요는 없음). @page는 선택자로
+    // 조건부 지정이 안 되므로 덮어쓴다.
     const styleEl = document.createElement('style');
-    styleEl.textContent = '@page { size: A4 portrait; margin: 10mm; }';
+    styleEl.textContent = '@page { size: A4 landscape; margin: 10mm; }';
     document.head.appendChild(styleEl);
 
     const cleanup = () => {
@@ -349,7 +350,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
     try {
       if (isElectron) {
         await new Promise(r => requestAnimationFrame(() => r())); // 렌더 안정화
-        const r = await printDoc({ landscape: false, pageSize: 'A4', fileName: '사용점관리' });
+        const r = await printDoc({ landscape: true, pageSize: 'A4', fileName: '사용점관리' });
         if (r?.ok) showNotice('PDF로 열었습니다. 뷰어에서 인쇄(Ctrl+P)하세요.');
         else showNotice('PDF 생성 실패: ' + (r?.error || ''), true);
       } else {
@@ -450,7 +451,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
             <button onClick={openCatManager} className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200">🏷️ 분류 관리</button>
           )}
           <button onClick={handlePrintPdf} disabled={printing}
-            title="지금 화면에 보이는 목록(검색·분류 필터 적용)을 A4 세로 PDF로 만듭니다."
+            title="지금 화면에 보이는 목록(검색·분류 필터 적용)을 A4 가로 PDF로 만듭니다."
             className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-50">
             {printing ? '🖨 준비 중…' : '🖨 PDF 출력'}
           </button>
@@ -478,37 +479,45 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
           </p>
           <table>
             <colgroup>
-              <col style={{ width: '4%' }} /><col style={{ width: '6%' }} /><col style={{ width: '8%' }} />
+              <col style={{ width: '3%' }} /><col style={{ width: '7%' }} /><col style={{ width: '9%' }} />
               <col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '7%' }} />
-              <col style={{ width: '7%' }} /><col style={{ width: '9%' }} /><col style={{ width: '6%' }} />
-              <col style={{ width: '8%' }} /><col style={{ width: '13%' }} /><col style={{ width: '6%' }} />
-              <col style={{ width: '11%' }} /><col style={{ width: '6%' }} />
+              <col style={{ width: '7%' }} /><col style={{ width: '11%' }} /><col style={{ width: '7%' }} />
+              <col style={{ width: '9%' }} /><col style={{ width: '17%' }} /><col style={{ width: '7%' }} />
             </colgroup>
             <thead>
               <tr>
                 <th>번호</th><th>대분류</th><th>소분류</th><th>작성일</th><th>작업일</th>
                 <th>작성자</th><th>작업자</th><th>실명</th><th>실번호</th><th>사용점번호</th>
-                <th>사유</th><th>진행상황</th><th>조치사항</th><th>비고</th>
+                <th>사유</th><th>비고</th>
               </tr>
             </thead>
             <tbody>
               {sorted.map((u, i) => (
-                <tr key={u.id}>
-                  <td className="up-center">{i + 1}</td>
-                  <td className="up-center">{u.major_category || ''}</td>
-                  <td className="up-center">{u.minor_category || ''}</td>
-                  <td className="up-center">{u.created_at || ''}</td>
-                  <td className="up-center">{u.created_date || ''}</td>
-                  <td className="up-center">{u.author_name || ''}</td>
-                  <td className="up-center">{u.worker_name || ''}</td>
-                  <td>{u.room_name || ''}</td>
-                  <td className="up-center">{u.room_number || ''}</td>
-                  <td className="up-center">{u.point_number || ''}</td>
-                  <td>{u.reason || ''}</td>
-                  <td className="up-center">{progressOf(u)}</td>
-                  <td>{u.action_taken || ''}</td>
-                  <td>{u.note || ''}</td>
-                </tr>
+                // 진행상황·조치사항은 열이 좁아 잘리기 쉬워서, 항목 아래에 한 줄로
+                // 펼쳐 전체 폭을 쓰게 한다. 두 행이 페이지 경계에서 떨어지지 않도록
+                // page-break-after/before로 서로 붙여둔다.
+                <FragmentRow key={u.id}>
+                  <tr style={{ pageBreakAfter: 'avoid', breakAfter: 'avoid' }}>
+                    <td className="up-center">{i + 1}</td>
+                    <td className="up-center">{u.major_category || ''}</td>
+                    <td className="up-center">{u.minor_category || ''}</td>
+                    <td className="up-center">{u.created_at || ''}</td>
+                    <td className="up-center">{u.created_date || ''}</td>
+                    <td className="up-center">{u.author_name || ''}</td>
+                    <td className="up-center">{u.worker_name || ''}</td>
+                    <td>{u.room_name || ''}</td>
+                    <td className="up-center">{u.room_number || ''}</td>
+                    <td className="up-center">{u.point_number || ''}</td>
+                    <td>{u.reason || ''}</td>
+                    <td>{u.note || ''}</td>
+                  </tr>
+                  <tr className="up-detail" style={{ pageBreakBefore: 'avoid', breakBefore: 'avoid' }}>
+                    <td colSpan={12}>
+                      <div>진행상황 : {progressOf(u)}</div>
+                      <div>조치사항 : {u.action_taken || ''}</div>
+                    </td>
+                  </tr>
+                </FragmentRow>
               ))}
             </tbody>
           </table>

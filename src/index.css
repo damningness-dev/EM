@@ -154,6 +154,20 @@ body {
 .print-portal .up-print td.up-center {
   text-align: center;
 }
+/* 항목 아래에 붙는 진행상황·조치사항 줄 — 위 데이터 행과 한 묶음으로 보이도록
+   위쪽 테두리를 없애고(바로 위 행과 이어짐), 살짝 옅은 배경으로 구분한다. */
+.print-portal .up-print tr.up-detail td {
+  border-top: none;
+  background: #f9fafb !important;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.print-portal .up-print tr.up-detail div {
+  padding-left: 6px;
+}
+.print-portal .up-print tr.up-detail div + div {
+  margin-top: 2px;
+}
 
 @media print {
   @page {
