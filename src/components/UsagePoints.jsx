@@ -33,6 +33,19 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// 조사 중 단계의 기한을 D-day로 표시한다. 지났으면 D+n(빨강), 오늘이면 D-DAY(빨강),
+// 임박(3일 이하)이면 주황, 그 외엔 회색.
+function dDayInfo(dueDate) {
+  if (!dueDate) return null;
+  const due = new Date(dueDate + 'T00:00:00');
+  if (Number.isNaN(due.getTime())) return null;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const diff = Math.round((due - today) / 86400000);
+  const text = diff === 0 ? 'D-DAY' : diff > 0 ? `D-${diff}` : `D+${-diff}`;
+  const color = diff <= 0 ? 'text-red-600' : diff <= 3 ? 'text-amber-600' : 'text-gray-500';
+  return { text, color };
+}
+
 function emptyForm(currentMember) {
   return {
     // created_date는 화면상 "작업일"이다(실제 작업한 날 — 사용자가 바꿀 수 있음).
@@ -40,6 +53,7 @@ function emptyForm(currentMember) {
     major_category: '', minor_category: '', created_date: todayStr(), created_at: '',
     author_id: currentMember?.id || '', author_name: currentMember?.username || '',
     worker_name: '',
+    assignee: '', due_date: '', // 조사 중 담당자·기한
     room_name: '', room_number: '', point_number: '', reason: '',
     photoThumb: '', photoFileName: '', photoFilePath: '', photoGistKey: '',
     progress: PROGRESS_OPTIONS[0], progress_note: '', progress_logs: [], action_taken: '', note: '',
@@ -79,6 +93,9 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   const [doneFilter, setDoneFilter] = useState('open'); // 'all' | 'open'(미완료) | 'done'(완료)
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  // null이면 평소처럼 수정 가능한 팝업. 항목이 들어있으면 "상세보기"로 열렸는데
+  // 수정 권한이 없는 경우라, 입력칸을 잠그고 읽기 전용으로 보여준다.
+  const [viewItem, setViewItem] = useState(null);
   const [form, setForm] = useState(() => emptyForm(currentMember));
   const [saving, setSaving] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -103,6 +120,18 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   }, []);
 
   useEffect(() => { reload(); }, [reload]);
+
+  // 수정 팝업을 열어둔 채로 하단 진행상황 패널에서 기록을 남기면, 그 즉시
+  // upsertUsagePoint로 저장되어 data가 갱신된다. 이때 form의 progress_logs·
+  // action_taken·progress가 그 변화를 모르는 옛 값 그대로면, 사용자가 다른 칸을
+  // 고치고 "저장"을 눌렀을 때 방금 남긴 기록을 옛 값으로 덮어써 지워버린다.
+  // data가 바뀔 때마다 이 세 필드만 최신으로 맞춰 그 사고를 막는다.
+  useEffect(() => {
+    if (!editingId) return;
+    const latest = data.find(d => d.id === editingId);
+    if (!latest) return;
+    setForm(f => ({ ...f, progress_logs: latest.progress_logs, action_taken: latest.action_taken, progress: latest.progress }));
+  }, [data, editingId]);
 
   // 공유 동기화로 새 내용이 들어오면 화면을 바로 최신화한다 — 예전에는 이 창을
   // 열어둔 채로는 반영되지 않아 다른 메뉴에 갔다 와야 보였다.
@@ -179,12 +208,23 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   function openAdd() {
     setEditingId(null);
     setForm(emptyForm(currentMember));
+    setViewItem(null);
     setShowForm(true);
   }
   function openEdit(item) {
     if (!canManage(item)) { showNotice('수정 권한이 없습니다.', true); return; }
     setEditingId(item.id);
     setForm({ ...emptyForm(currentMember), ...item });
+    setViewItem(null);
+    setShowForm(true);
+  }
+  // 목록에 다 못 보여주는 항목을, 수정 권한 여부와 관계없이 누구나 상세히 볼 수
+  // 있게 처음 작성했던 팝업을 그대로 연다. 수정 권한이 없으면 입력칸을 잠가
+  // 읽기 전용으로 보여준다(작성한 값을 훼손하지 않도록).
+  function openDetail(item) {
+    setEditingId(item.id);
+    setForm({ ...emptyForm(currentMember), ...item });
+    setViewItem(canManage(item) ? null : item); // 잠금 여부 판단용
     setShowForm(true);
   }
   function toggleExpand(id) {
@@ -250,9 +290,15 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
       // 예전에 저장된 기록에는 이 값이 없으므로, 수정 시 작업일을 그대로 물려준다.
       const existing = editingId ? data.find(d => d.id === editingId) : null;
       const createdAt = existing?.created_at || (editingId ? (existing?.created_date || '') : todayStr());
-      const item = editingId
-        ? { ...form, id: editingId, created_at: createdAt }
-        : { ...form, created_at: createdAt };
+      // 작업일·작업자를 비워두면 작성일·작성자를 그대로 쓴다 — 보통 발견한 사람이
+      // 그날 바로 처리하는 경우가 많아, 매번 똑같은 값을 다시 입력하지 않아도 되게.
+      const item = {
+        ...form,
+        created_at: createdAt,
+        created_date: form.created_date || createdAt,
+        worker_name: form.worker_name.trim() || form.author_name,
+        ...(editingId ? { id: editingId } : {}),
+      };
       const saved = await upsertUsagePoint(item);
       setData(prev => editingId ? prev.map(d => d.id === editingId ? saved : d) : [...prev, saved]);
       window.electronAPI?.notifyDataChanged?.();
@@ -589,7 +635,14 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                     <td className="px-3 py-2 text-center text-gray-600">{item.room_name || '—'}</td>
                     <td className="px-3 py-2 text-center text-gray-600">{item.room_number || '—'}</td>
                     <td className="px-3 py-2 text-center font-medium text-gray-800">{item.point_number || '—'}</td>
-                    <td className="px-3 py-2 text-center text-gray-500 text-xs max-w-[160px] truncate" title={item.reason || ''}>{item.reason || '—'}</td>
+                    <td className="px-3 py-2 text-center text-gray-500 text-xs max-w-[160px] truncate">
+                      {/* 목록 칸이 좁아 사유가 잘리므로, 눌러서 작성 팝업(상세보기)을 연다.
+                          진행상황·조치사항까지 함께 보이므로 펼치기 화살표 없이도 전체를 볼 수 있다. */}
+                      <button onClick={() => openDetail(item)} className="hover:underline hover:text-blue-600 max-w-full truncate block mx-auto"
+                        title={item.reason || '눌러서 상세보기'}>
+                        {item.reason || '—'}
+                      </button>
+                    </td>
                     <td className="px-3 py-2 text-center">
                       {item.photoThumb ? (
                         <img src={item.photoThumb} onClick={() => setLightbox(item)} alt="사진"
@@ -612,6 +665,16 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                         )
                       ) : (
                         <span className={`text-xs rounded-full px-2.5 py-1 font-medium inline-block ${PROGRESS_COLOR[progressOf(item)] || PROGRESS_COLOR[PROGRESS_OPTIONS[0]]}`}>{progressOf(item)}</span>
+                      )}
+                      {/* 조사 중일 때만 담당자·기한을 함께 보여준다 — 다른 단계에서는 의미가 없으므로. */}
+                      {progressOf(item) === '조사 중' && (item.assignee || item.due_date) && (
+                        <div className="text-[11px] text-gray-500 mt-1 leading-tight">
+                          {item.assignee && <div className="truncate">👤 {item.assignee}</div>}
+                          {item.due_date && (() => {
+                            const d = dDayInfo(item.due_date);
+                            return d ? <div className={`font-semibold ${d.color}`}>{d.text}</div> : null;
+                          })()}
+                        </div>
                       )}
                     </td>
                     <td className="px-3 py-2 text-center text-gray-500 text-xs max-w-[140px] truncate" title={item.note || ''}>{item.note || '—'}</td>
@@ -646,7 +709,15 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
       {showForm && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto">
-            <h2 className="font-bold text-gray-800">{editingId ? '사용점 수정' : '사용점 추가'}</h2>
+            <h2 className="font-bold text-gray-800">
+              {viewItem ? '사용점 상세보기' : editingId ? '사용점 수정' : '사용점 추가'}
+            </h2>
+            {viewItem && (
+              <p className="text-xs text-amber-600 -mt-2">🔒 수정 권한이 없어 읽기 전용으로 보고 있습니다.</p>
+            )}
+            {/* fieldset(display:contents)으로 grid 레이아웃은 그대로 두고, 읽기 전용일
+                때만 안의 입력칸을 한 번에 잠근다. */}
+            <fieldset disabled={!!viewItem} className="contents">
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-gray-500">대분류</label>
@@ -701,6 +772,17 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                 <label className="text-xs text-gray-500">사용점번호</label>
                 <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.point_number} onChange={e => setForm(f => ({ ...f, point_number: e.target.value }))} />
               </div>
+              <div>
+                {/* 조사 담당자 — 조사 중 단계에서 목록에 D-day와 함께 표시된다. */}
+                <label className="text-xs text-gray-500">조사 담당자</label>
+                <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.assignee || ''}
+                  onChange={e => setForm(f => ({ ...f, assignee: e.target.value }))} placeholder="조사를 맡은 사람" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">조사 기한</label>
+                <input type="date" className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.due_date || ''}
+                  onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} />
+              </div>
               <div className="col-span-2">
                 <label className="text-xs text-gray-500">사유</label>
                 <textarea className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" rows={2} value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} />
@@ -719,11 +801,32 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                 </div>
               </div>
             </div>
+            </fieldset>
+
+            {/* 진행상황·조치사항 — 목록의 펼치기 화살표와 같은 내용을 팝업 하단에도
+                보여준다. 목록 칸이 좁아 다 안 보이던 것을 여기서 전부 확인할 수 있다. */}
+            {editingId && (() => {
+              const currentItem = data.find(d => d.id === editingId) || form;
+              return (
+                <div className="border-t border-gray-100 -mx-6 px-6 pt-3">
+                  <ProgressNotePanel item={currentItem} adminUnlocked={adminUnlocked} currentMember={currentMember}
+                    onAppend={text => appendProgressLog(currentItem, text)}
+                    onSaveAction={text => saveActionTaken(currentItem, text)} />
+                </div>
+              );
+            })()}
+
             <div className="flex gap-2 pt-2">
-              <button onClick={handleSave} disabled={saving} className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
-                {saving ? '저장 중…' : '저장'}
-              </button>
-              <button onClick={() => setShowForm(false)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">취소</button>
+              {viewItem ? (
+                <button onClick={() => { setShowForm(false); setViewItem(null); }} className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">닫기</button>
+              ) : (
+                <>
+                  <button onClick={handleSave} disabled={saving} className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+                    {saving ? '저장 중…' : '저장'}
+                  </button>
+                  <button onClick={() => { setShowForm(false); setViewItem(null); }} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">취소</button>
+                </>
+              )}
             </div>
           </div>
         </div>
