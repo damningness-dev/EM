@@ -46,6 +46,17 @@ function dDayInfo(dueDate) {
   return { text, color };
 }
 
+// 사진을 여러 장 지원하기 전(예전) 데이터는 photoThumb 등 단일 필드였다.
+// 새 photos 배열이 있으면 그걸 쓰고, 없으면 예전 단일 필드를 배열 하나로 감싸
+// 화면 어디서든 똑같이 다룰 수 있게 한다.
+function photosOf(item) {
+  if (Array.isArray(item?.photos) && item.photos.length) return item.photos;
+  if (item?.photoThumb || item?.photoFilePath || item?.photoGistKey) {
+    return [{ id: 'legacy', thumb: item.photoThumb, fileName: item.photoFileName, filePath: item.photoFilePath, gistKey: item.photoGistKey }];
+  }
+  return [];
+}
+
 function emptyForm(currentMember) {
   return {
     // created_date는 화면상 "작업일"이다(실제 작업한 날 — 사용자가 바꿀 수 있음).
@@ -55,7 +66,7 @@ function emptyForm(currentMember) {
     worker_name: '',
     assignee: '', due_date: '', // 조사 중 담당자·기한
     room_name: '', room_number: '', point_number: '', reason: '',
-    photoThumb: '', photoFileName: '', photoFilePath: '', photoGistKey: '',
+    photos: [], // [{ id, thumb, fileName, filePath, gistKey }, ...]
     progress: PROGRESS_OPTIONS[0], progress_note: '', progress_logs: [], action_taken: '', note: '',
   };
 }
@@ -101,7 +112,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [notice, setNotice] = useState(null);
-  const [lightbox, setLightbox] = useState(null);
+  const [lightbox, setLightbox] = useState(null); // { photos: [...], index } | null
   const [hqUrl, setHqUrl] = useState(null);
   const [hqLoading, setHqLoading] = useState(false);
   const [expanded, setExpanded] = useState(() => new Set());
@@ -142,13 +153,15 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
 
   // 미리보기(사진)를 클릭해 확대창을 열면, 로컬/캐시에 없으면 공유 Gist에서
   // 원본을 받아 캐시에 저장한 뒤 항상 고화질(최대 2000px 저장본)로 보여준다.
-  // 받는 동안에는 압축된 작은 미리보기를 대신 보여준다.
+  // 받는 동안에는 압축된 작은 미리보기를 대신 보여준다. 여러 장이면 지금 보고
+  // 있는 장(index)이 바뀔 때마다 그 장의 원본을 다시 받는다.
+  const lightboxPhoto = lightbox ? lightbox.photos[lightbox.index] : null;
   useEffect(() => {
     setHqUrl(null);
-    if (!lightbox || !isElectron) return;
-    if (!lightbox.photoFilePath && !lightbox.photoGistKey) return;
+    if (!lightboxPhoto || !isElectron) return;
+    if (!lightboxPhoto.filePath && !lightboxPhoto.gistKey) return;
     setHqLoading(true);
-    resolveCalibImage(lightbox.photoFilePath, lightbox.photoGistKey, lightbox.photoFileName, 'usagepoints')
+    resolveCalibImage(lightboxPhoto.filePath, lightboxPhoto.gistKey, lightboxPhoto.fileName, 'usagepoints')
       .then(r => {
         if (r?.ok) setHqUrl(r.dataUrl);
         else showNotice('고화질 이미지를 불러오지 못했습니다: ' + (r?.error || ''), true);
@@ -156,7 +169,26 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
       .catch(e => showNotice('고화질 이미지를 불러오지 못했습니다: ' + e.message, true))
       .finally(() => setHqLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lightbox?.id]);
+  }, [lightbox?.itemId, lightbox?.index]);
+
+  function gotoPhoto(delta) {
+    setLightbox(l => {
+      if (!l || l.photos.length <= 1) return l;
+      const n = l.photos.length;
+      return { ...l, index: (l.index + delta + n) % n };
+    });
+  }
+  // 확대창이 떠 있는 동안 방향키로도 다음/이전 사진, Esc로 닫기.
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = e => {
+      if (e.key === 'ArrowRight') gotoPhoto(1);
+      else if (e.key === 'ArrowLeft') gotoPhoto(-1);
+      else if (e.key === 'Escape') setLightbox(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lightbox]);
 
   function showNotice(text, isError) {
     setNotice({ text, isError });
@@ -214,7 +246,9 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   function openEdit(item) {
     if (!canManage(item)) { showNotice('수정 권한이 없습니다.', true); return; }
     setEditingId(item.id);
-    setForm({ ...emptyForm(currentMember), ...item });
+    // photosOf()로 예전 단일 필드 사진도 배열 형태로 맞춰 넣는다 — 안 그러면 여러
+    // 장 지원 전에 등록된 사진이 폼에서는 안 보이다가 저장할 때 사라져버린다.
+    setForm({ ...emptyForm(currentMember), ...item, photos: photosOf(item) });
     setViewItem(null);
     setShowForm(true);
   }
@@ -223,7 +257,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   // 읽기 전용으로 보여준다(작성한 값을 훼손하지 않도록).
   function openDetail(item) {
     setEditingId(item.id);
-    setForm({ ...emptyForm(currentMember), ...item });
+    setForm({ ...emptyForm(currentMember), ...item, photos: photosOf(item) });
     setViewItem(canManage(item) ? null : item); // 잠금 여부 판단용
     setShowForm(true);
   }
@@ -231,51 +265,67 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
     setExpanded(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   }
 
-  async function handlePhotoChange(e) {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    setUploadingPhoto(true);
+  // 한 장씩 처리해 끝나는 대로 갤러리에 추가한다(여러 장을 동시에 올리면
+  // 파일명 충돌·업로드 순서가 꼬이기 쉬워 순서대로 처리한다).
+  async function addOnePhoto(file) {
+    // 원본을 손대지 않고 그대로 올리면 휴대폰 사진(수 MB)이 공유 첨부파일 Gist
+    // 업로드에서 실패하기 쉬워 다른 PC에서 "사진이 안 보이는" 문제로 이어진다.
+    // 확대해서 봐도 충분한 선(최대 3000px, JPEG 품질 0.92)까지만 제한해 저장하고,
+    // 목록 미리보기는 이보다 훨씬 작은 썸네일을 따로 만든다.
+    let thumb, capped;
     try {
-      // 원본을 손대지 않고 그대로 올리면 휴대폰 사진(수 MB)이 공유 첨부파일 Gist
-      // 업로드에서 실패하기 쉬워 다른 PC에서 "사진이 안 보이는" 문제로 이어진다.
-      // 확대해서 봐도 충분한 선(최대 3000px, JPEG 품질 0.92)까지만 제한해 저장하고,
-      // 목록 미리보기는 이보다 훨씬 작은 썸네일을 따로 만든다.
-      let thumb, capped;
-      try {
-        [thumb, capped] = await Promise.all([resizeImage(file, 260, 0.6), resizeImage(file, 3000, 0.92)]);
-      } catch {
-        showNotice('사진을 불러올 수 없습니다. 지원하지 않는 이미지 형식일 수 있습니다(예: 아이폰 HEIC) — JPG·PNG로 다시 시도해보세요.', true);
+      [thumb, capped] = await Promise.all([resizeImage(file, 260, 0.6), resizeImage(file, 3000, 0.92)]);
+    } catch {
+      showNotice(`"${file.name}"을(를) 불러올 수 없습니다. 지원하지 않는 이미지 형식일 수 있습니다(예: 아이폰 HEIC) — JPG·PNG로 다시 시도해보세요.`, true);
+      return;
+    }
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    let entry = { id, thumb, fileName: file.name, filePath: '', gistKey: '' };
+    if (isElectron) {
+      const b64 = capped.split(',')[1];
+      const dot = file.name.lastIndexOf('.');
+      const baseName = (dot > 0 ? file.name.slice(0, dot) : file.name).replace(/[^\w.\-가-힣 ()]/g, '_');
+      // 캔버스로 다시 인코딩한 결과는 항상 JPEG이므로 원래 확장자 대신 .jpg로 저장한다.
+      const desired = `usagepoint_${id}_${baseName}.jpg`;
+      const r = await saveCalibFile(desired, b64, 'usagepoints');
+      if (r?.ok) {
+        let gistKey = '';
+        try {
+          const cfg = await syncGetConfig();
+          if (cfg?.hasToken) {
+            gistKey = `attach_up_${id}.jpg.b64`;
+            const ur = await uploadCalibAttachment(gistKey, b64);
+            if (!ur?.ok) { gistKey = ''; showNotice('사진은 저장됐지만 공유 업로드 실패: ' + (ur?.error || ''), true); }
+          }
+        } catch { /* 공유 설정 없으면 로컬 저장만 유지 */ }
+        entry = { ...entry, fileName: r.name, filePath: r.path, gistKey };
+      } else {
+        showNotice(`"${file.name}" 저장 실패: ` + (r?.error || ''), true);
         return;
       }
-      setForm(f => ({ ...f, photoThumb: thumb }));
-      if (isElectron) {
-        const b64 = capped.split(',')[1];
-        const dot = file.name.lastIndexOf('.');
-        const baseName = (dot > 0 ? file.name.slice(0, dot) : file.name).replace(/[^\w.\-가-힣 ()]/g, '_');
-        // 캔버스로 다시 인코딩한 결과는 항상 JPEG이므로 원래 확장자 대신 .jpg로 저장한다.
-        const desired = `usagepoint_${Date.now()}_${baseName}.jpg`;
-        const r = await saveCalibFile(desired, b64, 'usagepoints');
-        if (r?.ok) {
-          let gistKey = '';
-          try {
-            const cfg = await syncGetConfig();
-            if (cfg?.hasToken) {
-              gistKey = `attach_up_${Date.now()}.jpg.b64`;
-              const ur = await uploadCalibAttachment(gistKey, b64);
-              if (!ur?.ok) { gistKey = ''; showNotice('사진은 저장됐지만 공유 업로드 실패: ' + (ur?.error || ''), true); }
-            }
-          } catch { /* 공유 설정 없으면 로컬 저장만 유지 */ }
-          setForm(f => ({ ...f, photoFileName: r.name, photoFilePath: r.path, photoGistKey: gistKey }));
-        } else {
-          showNotice('사진 저장 실패: ' + (r?.error || ''), true);
-        }
+    }
+    setForm(f => ({ ...f, photos: [...f.photos, entry] }));
+  }
+
+  async function handlePhotoChange(e) {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (!files.length) return;
+    setUploadingPhoto(true);
+    try {
+      for (const file of files) {
+        // eslint-disable-next-line no-await-in-loop
+        await addOnePhoto(file);
       }
     } catch (err) {
       showNotice('사진 처리 실패: ' + err.message, true);
     } finally {
       setUploadingPhoto(false);
     }
+  }
+
+  function removePhoto(photoId) {
+    setForm(f => ({ ...f, photos: f.photos.filter(p => p.id !== photoId) }));
   }
 
   async function handleSave() {
@@ -644,10 +694,21 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                       </button>
                     </td>
                     <td className="px-3 py-2 text-center">
-                      {item.photoThumb ? (
-                        <img src={item.photoThumb} onClick={() => setLightbox(item)} alt="사진"
-                          className="w-12 h-12 object-cover rounded-lg cursor-pointer mx-auto border border-gray-200 hover:opacity-80" />
-                      ) : <span className="text-gray-300 text-xs">—</span>}
+                      {(() => {
+                        const photos = photosOf(item);
+                        if (!photos.length) return <span className="text-gray-300 text-xs">—</span>;
+                        return (
+                          <div className="relative inline-block">
+                            <img src={photos[0].thumb} onClick={() => setLightbox({ itemId: item.id, photos, index: 0 })} alt="사진"
+                              className="w-12 h-12 object-cover rounded-lg cursor-pointer mx-auto border border-gray-200 hover:opacity-80" />
+                            {photos.length > 1 && (
+                              <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold leading-[18px] text-center shadow">
+                                {photos.length}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td className="px-3 py-2 text-center">
                       {adminUnlocked ? (
@@ -772,17 +833,6 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                 <label className="text-xs text-gray-500">사용점번호</label>
                 <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.point_number} onChange={e => setForm(f => ({ ...f, point_number: e.target.value }))} />
               </div>
-              <div>
-                {/* 조사 담당자 — 조사 중 단계에서 목록에 D-day와 함께 표시된다. */}
-                <label className="text-xs text-gray-500">조사 담당자</label>
-                <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.assignee || ''}
-                  onChange={e => setForm(f => ({ ...f, assignee: e.target.value }))} placeholder="조사를 맡은 사람" />
-              </div>
-              <div>
-                <label className="text-xs text-gray-500">조사 기한</label>
-                <input type="date" className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.due_date || ''}
-                  onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} />
-              </div>
               <div className="col-span-2">
                 <label className="text-xs text-gray-500">사유</label>
                 <textarea className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" rows={2} value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} />
@@ -792,16 +842,51 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                 <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} />
               </div>
               <div className="col-span-2">
-                <label className="text-xs text-gray-500">사진첨부</label>
-                <div className="flex items-center gap-3 mt-1">
-                  {form.photoThumb && <img src={form.photoThumb} alt="미리보기" className="w-16 h-16 object-cover rounded-lg border border-gray-200" />}
-                  <input type="file" accept="image/*" onChange={handlePhotoChange} disabled={uploadingPhoto}
+                <label className="text-xs text-gray-500">사진첨부 {form.photos.length > 0 && `(${form.photos.length}장)`}</label>
+                {form.photos.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-1">
+                    {form.photos.map(p => (
+                      <div key={p.id} className="relative">
+                        <img src={p.thumb} alt="미리보기" className="w-16 h-16 object-cover rounded-lg border border-gray-200" />
+                        {!viewItem && (
+                          <button type="button" onClick={() => removePhoto(p.id)}
+                            className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] leading-4 text-center hover:bg-red-600"
+                            title="사진 삭제">✕</button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-center gap-3 mt-1.5">
+                  <input type="file" accept="image/*" multiple onChange={handlePhotoChange} disabled={uploadingPhoto}
                     className="text-xs text-gray-500 file:mr-2 file:px-2 file:py-1 file:rounded file:border-0 file:bg-gray-100 file:text-gray-600 file:text-xs" />
                   {uploadingPhoto && <span className="text-xs text-gray-400">처리 중…</span>}
                 </div>
               </div>
             </div>
             </fieldset>
+
+            {/* 조사 담당자·기한 — 신청 단계에서는 아직 조사를 배정하기 전이라 숨기고,
+                조사 중으로 넘어간 뒤부터(그 이후 단계 포함) 보여준다. */}
+            {progressOf(form) !== PROGRESS_OPTIONS[0] && (
+              <div className="border-t border-gray-100 pt-3">
+                <p className="text-xs font-semibold text-gray-500 mb-2">🔍 조사 정보</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-gray-500">조사 담당자</label>
+                    <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.assignee || ''}
+                      disabled={!!viewItem}
+                      onChange={e => setForm(f => ({ ...f, assignee: e.target.value }))} placeholder="조사를 맡은 사람" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500">조사 기한</label>
+                    <input type="date" className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.due_date || ''}
+                      disabled={!!viewItem}
+                      onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} />
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* 진행상황·조치사항 — 목록의 펼치기 화살표와 같은 내용을 팝업 하단에도
                 보여준다. 목록 칸이 좁아 다 안 보이던 것을 여기서 전부 확인할 수 있다. */}
@@ -869,26 +954,40 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[300] p-6" onClick={() => setLightbox(null)}>
           <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-4 space-y-3" onClick={e => e.stopPropagation()}>
             <div className="relative">
-              <img src={hqUrl || lightbox.photoThumb} alt="사진" className="w-full max-h-[70vh] object-contain rounded-lg" />
+              <img src={hqUrl || lightboxPhoto?.thumb} alt="사진"
+                onContextMenu={e => { e.preventDefault(); if (lightbox.photos.length > 1) gotoPhoto(1); }}
+                className="w-full max-h-[70vh] object-contain rounded-lg" />
               {hqLoading && !hqUrl && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/30 rounded-lg">
                   <span className="text-white text-xs bg-black/50 px-3 py-1.5 rounded-full">⏳ 고화질 사진 받는 중…</span>
                 </div>
               )}
+              {/* 여러 장일 때만 좌우 이동 — 화살표 버튼, 우클릭(다음), 방향키로 넘길 수 있다. */}
+              {lightbox.photos.length > 1 && (
+                <>
+                  <button onClick={() => gotoPhoto(-1)} title="이전 사진 (←)"
+                    className="absolute left-1.5 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/40 hover:bg-black/60 text-white text-lg flex items-center justify-center">‹</button>
+                  <button onClick={() => gotoPhoto(1)} title="다음 사진 (→ 또는 우클릭)"
+                    className="absolute right-1.5 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/40 hover:bg-black/60 text-white text-lg flex items-center justify-center">›</button>
+                  <span className="absolute bottom-1.5 left-1/2 -translate-x-1/2 text-[11px] bg-black/50 text-white px-2 py-0.5 rounded-full">
+                    {lightbox.index + 1} / {lightbox.photos.length}
+                  </span>
+                </>
+              )}
             </div>
             <p className="text-[11px] text-gray-400">
               {hqUrl ? '고화질 사진(최대 3000px)입니다.'
                 : hqLoading ? ''
-                : !lightbox.photoGistKey
+                : !lightboxPhoto?.gistKey
                   // 원본이 공유 Gist에 없으면 올린 PC에만 있어 다른 PC는 받을 수 없다.
                   ? '작게 압축된 미리보기입니다 — 원본이 아직 공유되지 않았습니다. 이 사진을 올린 PC에서 "📤 사진 공유"를 눌러주세요.'
                   : '작게 압축된 미리보기입니다.'}
             </p>
             <div className="flex justify-between items-center">
-              <p className="text-xs text-gray-400 truncate">{lightbox.photoFileName || ''}</p>
+              <p className="text-xs text-gray-400 truncate">{lightboxPhoto?.fileName || ''}</p>
               <div className="flex gap-2">
-                {(lightbox.photoFilePath || lightbox.photoGistKey) && isElectron && (
-                  <button onClick={() => revealCalibFile(lightbox.photoFilePath, lightbox.photoGistKey, lightbox.photoFileName, 'usagepoints')}
+                {(lightboxPhoto?.filePath || lightboxPhoto?.gistKey) && isElectron && (
+                  <button onClick={() => revealCalibFile(lightboxPhoto.filePath, lightboxPhoto.gistKey, lightboxPhoto.fileName, 'usagepoints')}
                     className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs">📁 폴더 열기</button>
                 )}
                 <button onClick={() => setLightbox(null)} className="px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50">닫기</button>

@@ -1603,17 +1603,26 @@ function registerHandlers() {
       // 이걸 세지 않으면 올릴 게 없다는 이유로 "모두 공유됨"이라고 잘못 안내하게 된다.
       let missingLocal = 0;
       (data.usagePoints || []).forEach((u, itemIdx) => {
-        const shared = u.photoGistKey && existingKeys.has(u.photoGistKey);
-        const hasLocal = u.photoFilePath && fs.existsSync(u.photoFilePath);
-        if (!hasLocal) {
-          // 사진은 등록돼 있는데(미리보기 존재) 공유본도 원본도 이 PC에 없는 경우
-          if ((u.photoThumb || u.photoFileName) && !shared) missingLocal++;
-          return;
-        }
-        const gistKey = u.photoGistKey || `attach_up_${u.id}.jpg.b64`;
-        if (!existingKeys.has(gistKey)) {
-          pending.push({ kind: 'usagepoint', itemIdx, filePath: u.photoFilePath, gistKey });
-        }
+        // 여러 장 지원 전 데이터(단일 필드)와 photos 배열을 같은 방식으로 훑는다.
+        const photoList = Array.isArray(u.photos) && u.photos.length
+          ? u.photos.map((p, photoIdx) => ({ photoIdx, thumb: p.thumb, fileName: p.fileName, filePath: p.filePath, gistKey: p.gistKey }))
+          : (u.photoThumb || u.photoFilePath || u.photoGistKey)
+            ? [{ photoIdx: -1, thumb: u.photoThumb, fileName: u.photoFileName, filePath: u.photoFilePath, gistKey: u.photoGistKey }]
+            : [];
+        photoList.forEach(p => {
+          const shared = p.gistKey && existingKeys.has(p.gistKey);
+          const hasLocal = p.filePath && fs.existsSync(p.filePath);
+          if (!hasLocal) {
+            // 사진은 등록돼 있는데(미리보기 존재) 공유본도 원본도 이 PC에 없는 경우
+            if ((p.thumb || p.fileName) && !shared) missingLocal++;
+            return;
+          }
+          const key = p.photoIdx >= 0 ? `up_${u.id}_${p.photoIdx}` : `up_${u.id}`;
+          const gistKey = p.gistKey || `attach_${key}.jpg.b64`;
+          if (!existingKeys.has(gistKey)) {
+            pending.push({ kind: 'usagepoint', itemIdx, photoIdx: p.photoIdx, filePath: p.filePath, gistKey });
+          }
+        });
       });
       if (!pending.length) return { ok: true, uploaded: 0, total: 0, failed: [], missingLocal };
       sendProgress('uploading', { done: 0, total: pending.length });
@@ -1632,8 +1641,11 @@ function registerHandlers() {
             await ghRequest('PATCH', `https://api.github.com/gists/${attachGistId}`, { token, body: { files } });
             batch.forEach(p => {
               if (!files[p.gistKey]) return;
-              if (p.kind === 'usagepoint') data.usagePoints[p.itemIdx].photoGistKey = p.gistKey;
-              else data.calibration[p.itemIdx].history[p.histIdx].gistKey = p.gistKey;
+              if (p.kind === 'usagepoint') {
+                const u = data.usagePoints[p.itemIdx];
+                if (p.photoIdx >= 0 && Array.isArray(u.photos)) u.photos[p.photoIdx].gistKey = p.gistKey;
+                else u.photoGistKey = p.gistKey; // 예전 단일 필드 데이터
+              } else data.calibration[p.itemIdx].history[p.histIdx].gistKey = p.gistKey;
               uploaded++;
             });
           } catch (e) {
