@@ -198,11 +198,11 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
     try {
       // 원본을 손대지 않고 그대로 올리면 휴대폰 사진(수 MB)이 공유 첨부파일 Gist
       // 업로드에서 실패하기 쉬워 다른 PC에서 "사진이 안 보이는" 문제로 이어진다.
-      // 화질 손상이 거의 느껴지지 않는 선(최대 2000px, JPEG 품질 0.85)까지만
-      // 제한해 저장하고, 목록 미리보기는 이보다 훨씬 작은 썸네일을 따로 만든다.
+      // 확대해서 봐도 충분한 선(최대 3000px, JPEG 품질 0.92)까지만 제한해 저장하고,
+      // 목록 미리보기는 이보다 훨씬 작은 썸네일을 따로 만든다.
       let thumb, capped;
       try {
-        [thumb, capped] = await Promise.all([resizeImage(file, 260, 0.6), resizeImage(file, 2000, 0.85)]);
+        [thumb, capped] = await Promise.all([resizeImage(file, 260, 0.6), resizeImage(file, 3000, 0.92)]);
       } catch {
         showNotice('사진을 불러올 수 없습니다. 지원하지 않는 이미지 형식일 수 있습니다(예: 아이폰 HEIC) — JPG·PNG로 다시 시도해보세요.', true);
         return;
@@ -371,10 +371,21 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
     try {
       const r = await backfillCalibAttachments();
       if (!r?.ok) { showNotice('사진 공유 실패: ' + (r?.error || ''), true); return; }
-      if (r.total === 0) { showNotice('모든 사진이 이미 공유되어 있습니다.'); return; }
+      // 원본이 이 PC에 없는 사진은 여기서 올릴 수 없다 — 그 사진을 등록한 PC에서
+      // 실행해야 한다. 예전에는 이 경우에도 "모두 공유됨"이라고 잘못 안내했다.
+      const otherPc = r.missingLocal
+        ? ` 원본이 이 PC에 없는 사진 ${r.missingLocal}건은 올리지 못했습니다 — 그 사진을 등록한 PC에서 눌러주세요.`
+        : '';
+      if (r.total === 0) {
+        showNotice(r.missingLocal
+          ? `이 PC에서 올릴 사진은 없습니다.${otherPc}`
+          : '모든 사진이 이미 공유되어 있습니다.', !!r.missingLocal);
+        return;
+      }
       if (r.uploaded > 0) await reload();
       const failMsg = r.failed?.length ? ` (실패 ${r.failed.length}건)` : '';
-      showNotice(`📤 사진 ${r.uploaded}/${r.total}건을 공유했습니다.${failMsg}`, r.failed?.length > 0);
+      showNotice(`📤 사진 ${r.uploaded}/${r.total}건을 공유했습니다.${failMsg}${otherPc}`,
+        r.failed?.length > 0 || !!r.missingLocal);
     } catch (e) {
       showNotice('사진 공유 중 오류: ' + e.message, true);
     } finally {
@@ -753,7 +764,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
               )}
             </div>
             <p className="text-[11px] text-gray-400">
-              {hqUrl ? '고화질 사진(최대 2000px)입니다.'
+              {hqUrl ? '고화질 사진(최대 3000px)입니다.'
                 : hqLoading ? ''
                 : !lightbox.photoGistKey
                   // 원본이 공유 Gist에 없으면 올린 PC에만 있어 다른 PC는 받을 수 없다.

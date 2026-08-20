@@ -834,6 +834,21 @@ function minIntervalMin(cfg) {
   return effectiveToken(cfg) ? 1 : 3;
 }
 
+// 첨부파일(사진·성적서) 자동 공유 — registerHandlers에서 실제 함수가 채워진다.
+// 토큰이 없거나 실패해서 원본이 이 PC에만 남은 첨부파일을, 나중에 조건이 갖춰지면
+// 버튼을 누르지 않아도 스스로 올려 다른 PC에서도 고화질로 볼 수 있게 한다.
+let autoBackfillAttachments = null;
+let lastAutoBackfillAt = 0;
+const AUTO_BACKFILL_INTERVAL_MS = 30 * 60 * 1000;
+async function maybeAutoBackfill() {
+  if (!autoBackfillAttachments) return;
+  if (Date.now() - lastAutoBackfillAt < AUTO_BACKFILL_INTERVAL_MS) return;
+  const cfg = loadSyncConfig();
+  if (!cfg.gistId || !effectiveToken(cfg)) return;
+  lastAutoBackfillAt = Date.now();
+  try { await autoBackfillAttachments(); } catch { /* 실패해도 다음 주기에 다시 시도 */ }
+}
+
 let syncTimer = null;
 function restartSyncTimer() {
   if (syncTimer) { clearInterval(syncTimer); syncTimer = null; }
@@ -844,7 +859,7 @@ function restartSyncTimer() {
     // 사용자가 설정한 1분을 3분으로 되돌려 저장해버리기 때문이다. 최소 주기 정리는
     // 설정 저장(sync:setConfig) 때만 하고, 여기서는 타이머 간격만 안전하게 잡는다.
     const ms = Math.max(1, cfg.intervalMin || 5) * 60 * 1000;
-    syncTimer = setInterval(() => { syncPull(false); }, ms);
+    syncTimer = setInterval(() => { syncPull(false); maybeAutoBackfill(); }, ms);
   }
 }
 
@@ -1551,12 +1566,7 @@ function registerHandlers() {
   // 한 번에 첨부파일 전용 Gist로 올려 다른 PC와 공유되게 하는 일회성 이관 기능.
   // 이미 gistKey가 있는(공유된) 항목은 건너뛰고, 로컬 파일이 실제로 존재하는
   // 항목만 올린다. 요청 수를 줄이려고 여러 파일을 한 PATCH에 묶어서 보낸다.
-  ipcMain.handle('calibFile:backfillAttachments', async (event) => {
-    // 렌더러에 진행 상황을 실시간으로 알려준다 — 전체 과정이 IPC 호출 하나로
-    // 끝나면 완료될 때까지 화면에 아무 반응이 없어 보이는 문제를 막기 위함.
-    const sendProgress = (phase, extra = {}) => {
-      try { event.sender.send('calibFile:backfillProgress', { phase, ...extra }); } catch { /* 창이 닫혔으면 무시 */ }
-    };
+  async function runAttachmentBackfill(sendProgress = () => {}) {
     try {
       sendProgress('checking');
       const cfg = loadSyncConfig();
@@ -1589,14 +1599,23 @@ function registerHandlers() {
       // 등록하면 공유 Gist에 못 올라가 photoGistKey가 비게 되고, 그러면 다른 PC는
       // 작게 압축된 미리보기만 볼 수 있다("다른 사람이 올린 사진이 고화질로
       // 안 열린다"의 원인). 여기서 뒤늦게 올려 모든 PC가 원본을 볼 수 있게 한다.
+      // 원본이 이 PC에 없어 올릴 수 없는 사진 수 — 다른 PC에서 등록한 사진이다.
+      // 이걸 세지 않으면 올릴 게 없다는 이유로 "모두 공유됨"이라고 잘못 안내하게 된다.
+      let missingLocal = 0;
       (data.usagePoints || []).forEach((u, itemIdx) => {
-        if (!u.photoFilePath || !fs.existsSync(u.photoFilePath)) return;
+        const shared = u.photoGistKey && existingKeys.has(u.photoGistKey);
+        const hasLocal = u.photoFilePath && fs.existsSync(u.photoFilePath);
+        if (!hasLocal) {
+          // 사진은 등록돼 있는데(미리보기 존재) 공유본도 원본도 이 PC에 없는 경우
+          if ((u.photoThumb || u.photoFileName) && !shared) missingLocal++;
+          return;
+        }
         const gistKey = u.photoGistKey || `attach_up_${u.id}.jpg.b64`;
         if (!existingKeys.has(gistKey)) {
           pending.push({ kind: 'usagepoint', itemIdx, filePath: u.photoFilePath, gistKey });
         }
       });
-      if (!pending.length) return { ok: true, uploaded: 0, total: 0, failed: [] };
+      if (!pending.length) return { ok: true, uploaded: 0, total: 0, failed: [], missingLocal };
       sendProgress('uploading', { done: 0, total: pending.length });
       const BATCH = 10;
       let uploaded = 0;
@@ -1628,9 +1647,16 @@ function registerHandlers() {
         sendProgress('finalizing', { done: pending.length, total: pending.length });
         try { await syncUpload(); } catch { /* 메타데이터 반영 실패해도 파일 업로드 자체는 성공 */ }
       }
-      return { ok: true, uploaded, total: pending.length, failed };
+      return { ok: true, uploaded, total: pending.length, failed, missingLocal };
     } catch (e) { return { ok: false, error: e.message }; }
-  });
+  }
+  // 주기적 자동 실행에서도 쓸 수 있게 밖으로 노출한다(아래 maybeAutoBackfill 참고).
+  autoBackfillAttachments = runAttachmentBackfill;
+  // 렌더러에 진행 상황을 실시간으로 알려준다 — 전체 과정이 IPC 호출 하나로
+  // 끝나면 완료될 때까지 화면에 아무 반응이 없어 보이는 문제를 막기 위함.
+  ipcMain.handle('calibFile:backfillAttachments', (event) => runAttachmentBackfill((phase, extra = {}) => {
+    try { event.sender.send('calibFile:backfillProgress', { phase, ...extra }); } catch { /* 창이 닫혔으면 무시 */ }
+  }));
 
   // ── 부팅 시 자동 시작 ──
   ipcMain.handle('app:getAutoStart', () => getAutoStartEnabled());
