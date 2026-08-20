@@ -35,7 +35,7 @@ function todayStr() {
 
 function emptyForm(currentMember) {
   return {
-    // created_date는 화면상 "발견일"이다(문제를 발견한 날 — 사용자가 바꿀 수 있음).
+    // created_date는 화면상 "작업일"이다(실제 작업한 날 — 사용자가 바꿀 수 있음).
     // created_at은 "작성일" — 이 기록을 처음 저장한 날로, 자동으로 채워지고 수정할 수 없다.
     major_category: '', minor_category: '', created_date: todayStr(), created_at: '',
     author_id: currentMember?.id || '', author_name: currentMember?.username || '',
@@ -247,7 +247,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
     setSaving(true);
     try {
       // 작성일(created_at)은 처음 저장할 때 한 번만 채우고 이후에는 건드리지 않는다.
-      // 예전에 저장된 기록에는 이 값이 없으므로, 수정 시 발견일을 그대로 물려준다.
+      // 예전에 저장된 기록에는 이 값이 없으므로, 수정 시 작업일을 그대로 물려준다.
       const existing = editingId ? data.find(d => d.id === editingId) : null;
       const createdAt = existing?.created_at || (editingId ? (existing?.created_date || '') : todayStr());
       const item = editingId
@@ -486,7 +486,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
             </colgroup>
             <thead>
               <tr>
-                <th>번호</th><th>대분류</th><th>소분류</th><th>발견일</th><th>작성일</th>
+                <th>번호</th><th>대분류</th><th>소분류</th><th>작성일</th><th>작업일</th>
                 <th>작성자</th><th>작업자</th><th>실명</th><th>실번호</th><th>사용점번호</th>
                 <th>사유</th><th>진행상황</th><th>조치사항</th><th>비고</th>
               </tr>
@@ -497,8 +497,8 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                   <td className="up-center">{i + 1}</td>
                   <td className="up-center">{u.major_category || ''}</td>
                   <td className="up-center">{u.minor_category || ''}</td>
-                  <td className="up-center">{u.created_date || ''}</td>
                   <td className="up-center">{u.created_at || ''}</td>
+                  <td className="up-center">{u.created_date || ''}</td>
                   <td className="up-center">{u.author_name || ''}</td>
                   <td className="up-center">{u.worker_name || ''}</td>
                   <td>{u.room_name || ''}</td>
@@ -549,7 +549,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
               <th className="px-1 py-3"></th>
               <th className="px-3 py-3 text-gray-500 font-medium text-center">대분류</th>
               <th className="px-3 py-3 text-gray-500 font-medium text-center">소분류</th>
-              <th className="px-3 py-3 text-gray-500 font-medium text-center">발견일</th>
+              <th className="px-3 py-3 text-gray-500 font-medium text-center">작업일</th>
               <th className="px-3 py-3 text-gray-500 font-medium text-center">작성자</th>
               <th className="px-3 py-3 text-gray-500 font-medium text-center">작업자</th>
               <th className="px-3 py-3 text-gray-500 font-medium text-center">실명</th>
@@ -656,22 +656,22 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                   {(categories[form.major_category] || []).map(v => <option key={v} value={v} />)}
                 </datalist>
               </div>
+              {/* 작성일·작성자 = 기록을 남긴 시점과 사람(자동, 수정 불가)
+                  작업일·작업자 = 실제 작업한 날과 사람(직접 입력) */}
               <div>
-                <label className="text-xs text-gray-500">발견일</label>
-                <input type="date" className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.created_date} onChange={e => setForm(f => ({ ...f, created_date: e.target.value }))} />
-              </div>
-              <div>
-                {/* 기록을 처음 저장한 날 — 자동으로 채워지고 고칠 수 없다. */}
                 <label className="text-xs text-gray-500">작성일 <span className="text-gray-400">(자동)</span></label>
                 <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5 bg-gray-50 text-gray-400"
                   value={form.created_at || (editingId ? (form.created_date || '—') : todayStr())} disabled readOnly />
               </div>
               <div>
                 <label className="text-xs text-gray-500">작성자</label>
-                <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5 disabled:bg-gray-50 disabled:text-gray-400"
-                  value={form.author_name} disabled={!!currentMember}
-                  onChange={e => setForm(f => ({ ...f, author_name: e.target.value }))}
+                <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5 bg-gray-50 text-gray-400"
+                  value={form.author_name} disabled readOnly
                   placeholder={currentMember ? '' : '로그인하면 자동으로 채워집니다'} />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">작업일</label>
+                <input type="date" className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.created_date} onChange={e => setForm(f => ({ ...f, created_date: e.target.value }))} />
               </div>
               <div>
                 <label className="text-xs text-gray-500">작업자</label>
