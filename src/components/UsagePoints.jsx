@@ -26,7 +26,7 @@ const PROGRESS_COLOR = {
   '완료': 'bg-emerald-100 text-emerald-700',
   '보류': 'bg-red-100 text-red-700',
 };
-const USAGEPOINT_COLS = 14; // 작업자 열 추가
+const USAGEPOINT_COLS = 15; // No.·작업자 열 추가
 
 function todayStr() {
   const d = new Date();
@@ -267,7 +267,12 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
 
   // 한 장씩 처리해 끝나는 대로 갤러리에 추가한다(여러 장을 동시에 올리면
   // 파일명 충돌·업로드 순서가 꼬이기 쉬워 순서대로 처리한다).
-  async function addOnePhoto(file) {
+  // 사진 한 장을 (썸네일 + 원본 저장 + 공유 업로드까지) 끝까지 처리해 항목을
+  // 만든다. 중간에 실패하면 null을 반환하고 아무 것도 반영하지 않는다 —
+  // 예전 코드는 실패해도 썸네일만 먼저 바꿔놔서, 목록 미리보기와 실제 열리는
+  // 사진(원본 파일 경로)이 서로 다른 사진을 가리키는 사고가 있었다. 항상 전부
+  // 성공했을 때만 한 번에 반영해서 이 둘이 어긋나지 않게 한다.
+  async function buildPhotoEntry(file) {
     // 원본을 손대지 않고 그대로 올리면 휴대폰 사진(수 MB)이 공유 첨부파일 Gist
     // 업로드에서 실패하기 쉬워 다른 PC에서 "사진이 안 보이는" 문제로 이어진다.
     // 확대해서 봐도 충분한 선(최대 3000px, JPEG 품질 0.92)까지만 제한해 저장하고,
@@ -277,7 +282,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
       [thumb, capped] = await Promise.all([resizeImage(file, 260, 0.6), resizeImage(file, 3000, 0.92)]);
     } catch {
       showNotice(`"${file.name}"을(를) 불러올 수 없습니다. 지원하지 않는 이미지 형식일 수 있습니다(예: 아이폰 HEIC) — JPG·PNG로 다시 시도해보세요.`, true);
-      return;
+      return null;
     }
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     let entry = { id, thumb, fileName: file.name, filePath: '', gistKey: '' };
@@ -288,23 +293,40 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
       // 캔버스로 다시 인코딩한 결과는 항상 JPEG이므로 원래 확장자 대신 .jpg로 저장한다.
       const desired = `usagepoint_${id}_${baseName}.jpg`;
       const r = await saveCalibFile(desired, b64, 'usagepoints');
-      if (r?.ok) {
-        let gistKey = '';
-        try {
-          const cfg = await syncGetConfig();
-          if (cfg?.hasToken) {
-            gistKey = `attach_up_${id}.jpg.b64`;
-            const ur = await uploadCalibAttachment(gistKey, b64);
-            if (!ur?.ok) { gistKey = ''; showNotice('사진은 저장됐지만 공유 업로드 실패: ' + (ur?.error || ''), true); }
-          }
-        } catch { /* 공유 설정 없으면 로컬 저장만 유지 */ }
-        entry = { ...entry, fileName: r.name, filePath: r.path, gistKey };
-      } else {
+      if (!r?.ok) {
         showNotice(`"${file.name}" 저장 실패: ` + (r?.error || ''), true);
-        return;
+        return null;
       }
+      let gistKey = '';
+      try {
+        const cfg = await syncGetConfig();
+        if (cfg?.hasToken) {
+          gistKey = `attach_up_${id}.jpg.b64`;
+          const ur = await uploadCalibAttachment(gistKey, b64);
+          if (!ur?.ok) { gistKey = ''; showNotice('사진은 저장됐지만 공유 업로드 실패: ' + (ur?.error || ''), true); }
+        }
+      } catch { /* 공유 설정 없으면 로컬 저장만 유지 */ }
+      entry = { ...entry, fileName: r.name, filePath: r.path, gistKey };
     }
-    setForm(f => ({ ...f, photos: [...f.photos, entry] }));
+    return entry;
+  }
+
+  async function addOnePhoto(file) {
+    const entry = await buildPhotoEntry(file);
+    if (entry) setForm(f => ({ ...f, photos: [...f.photos, entry] }));
+  }
+
+  // 이미 등록된 사진을 다른 사진으로 통째로 바꾼다 — 썸네일과 실제 저장되는
+  // 원본이 항상 같은 사진을 가리키도록, 새 사진 처리가 전부 끝난 뒤 한 번에
+  // 교체한다(추가만 되고 원본이 안 바뀌는 사고 방지).
+  async function replacePhoto(photoId, file) {
+    setUploadingPhoto(true);
+    try {
+      const entry = await buildPhotoEntry(file);
+      if (entry) setForm(f => ({ ...f, photos: f.photos.map(p => p.id === photoId ? { ...entry, id: photoId } : p) }));
+    } finally {
+      setUploadingPhoto(false);
+    }
   }
 
   async function handlePhotoChange(e) {
@@ -651,6 +673,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
         <table className="text-sm w-full">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200">
+              <th className="px-2 py-3 text-gray-500 font-medium text-center">No.</th>
               <th className="px-1 py-3"></th>
               <th className="px-3 py-3 text-gray-500 font-medium text-center">대분류</th>
               <th className="px-3 py-3 text-gray-500 font-medium text-center">소분류</th>
@@ -668,12 +691,13 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
-            {sorted.map(item => {
+            {sorted.map((item, idx) => {
               const editable = canManage(item);
               const isExp = expanded.has(item.id);
               return (
                 <FragmentRow key={item.id}>
                   <tr className="hover:bg-gray-50">
+                    <td className="px-2 py-2 text-center text-gray-400 text-xs">{idx + 1}</td>
                     <td className="px-1 text-center text-gray-300">
                       <button onClick={() => toggleExpand(item.id)} className={`text-[10px] transition-transform ${isExp ? 'rotate-90 text-blue-500' : ''}`} title="진행상황 메모">▶</button>
                     </td>
@@ -849,9 +873,19 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                       <div key={p.id} className="relative">
                         <img src={p.thumb} alt="미리보기" className="w-16 h-16 object-cover rounded-lg border border-gray-200" />
                         {!viewItem && (
-                          <button type="button" onClick={() => removePhoto(p.id)}
-                            className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] leading-4 text-center hover:bg-red-600"
-                            title="사진 삭제">✕</button>
+                          <>
+                            <button type="button" onClick={() => removePhoto(p.id)}
+                              className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] leading-4 text-center hover:bg-red-600"
+                              title="사진 삭제">✕</button>
+                            {/* 다른 사진으로 통째로 바꾼다 — 미리보기와 실제 저장되는 원본이
+                                항상 같은 사진이 되도록 buildPhotoEntry가 한 번에 처리한다. */}
+                            <label className="absolute -bottom-1.5 -right-1.5 w-4 h-4 rounded-full bg-blue-600 text-white text-[9px] leading-4 text-center hover:bg-blue-700 cursor-pointer"
+                              title="이 사진 바꾸기">
+                              🔄
+                              <input type="file" accept="image/*" className="hidden" disabled={uploadingPhoto}
+                                onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) replacePhoto(p.id, f); }} />
+                            </label>
+                          </>
                         )}
                       </div>
                     ))}
