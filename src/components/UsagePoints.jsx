@@ -75,7 +75,8 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [majorFilter, setMajorFilter] = useState('all');
-  const [doneFilter, setDoneFilter] = useState('all'); // 'all' | 'open'(미완료) | 'done'(완료)
+  // 기본값은 미완료 — 처리해야 할 건이 먼저 보이도록.
+  const [doneFilter, setDoneFilter] = useState('open'); // 'all' | 'open'(미완료) | 'done'(완료)
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(() => emptyForm(currentMember));
