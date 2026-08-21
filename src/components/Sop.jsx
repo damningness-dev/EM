@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   fetchSops, upsertSop, deleteSop, fetchSopTags, addSopTagIfMissing,
   saveCalibFile, uploadCalibAttachment, revealCalibFile, resolveCalibImage,
@@ -29,11 +29,26 @@ function resizeImage(file, maxDim, quality) {
   });
 }
 
+function newBlockId() { return `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`; }
+
+// 본문은 텍스트 문단과 사진을 순서대로 섞어 쓸 수 있는 블록 목록이다 — 사진을
+// 글 사이 어디에나 넣을 수 있도록. blocks가 없는(이 기능 이전에 저장된) 글은
+// 예전 content 문자열 하나 + photos 배열을 블록 하나+사진들로 변환해서 그대로
+// 이어서 편집·조회할 수 있게 한다.
+function blocksOf(post) {
+  if (Array.isArray(post?.blocks) && post.blocks.length) return post.blocks;
+  const blocks = [];
+  if (post?.content) blocks.push({ id: 'legacy-text', type: 'text', text: post.content });
+  (post?.photos || []).forEach(p => blocks.push({ id: p.id, type: 'photo', photo: p, width: 220, height: 220 }));
+  if (!blocks.length) blocks.push({ id: newBlockId(), type: 'text', text: '' });
+  return blocks;
+}
+
 function emptyForm(currentMember) {
   return {
-    title: '', tags: [], content: '',
+    title: '', tags: [],
+    blocks: [{ id: newBlockId(), type: 'text', text: '' }],
     author_id: currentMember?.id || '', author_name: currentMember?.username || '',
-    photos: [],
   };
 }
 
@@ -57,6 +72,7 @@ export default function Sop({ adminUnlocked, currentMember }) {
   const [newTag, setNewTag] = useState('');
   const [saving, setSaving] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [dragBlockId, setDragBlockId] = useState(null); // 본문 블록 드래그 순서 변경
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [notice, setNotice] = useState(null);
   const [lightbox, setLightbox] = useState(null); // { photos, index } | null
@@ -128,7 +144,7 @@ export default function Sop({ adminUnlocked, currentMember }) {
   function openEdit(post) {
     if (!canManage(post)) { showNotice('수정 권한이 없습니다.', true); return; }
     setEditingId(post.id);
-    setForm({ ...emptyForm(currentMember), ...post });
+    setForm({ ...emptyForm(currentMember), ...post, blocks: blocksOf(post) });
     setNewTag('');
     setShowForm(true);
   }
@@ -150,6 +166,41 @@ export default function Sop({ adminUnlocked, currentMember }) {
     setForm(f => f.tags.includes(name) ? f : { ...f, tags: [...f.tags, name] });
   }
 
+  // ── 본문 블록(문단/사진) 편집 ──
+  function addTextBlock() {
+    setForm(f => ({ ...f, blocks: [...f.blocks, { id: newBlockId(), type: 'text', text: '' }] }));
+  }
+  function updateBlockText(id, text) {
+    setForm(f => ({ ...f, blocks: f.blocks.map(b => b.id === id ? { ...b, text } : b) }));
+  }
+  function removeBlock(id) {
+    setForm(f => ({ ...f, blocks: f.blocks.filter(b => b.id !== id) }));
+  }
+  function reorderBlocks(fromId, toId) {
+    setForm(f => {
+      const arr = [...f.blocks];
+      const fromIdx = arr.findIndex(b => b.id === fromId), toIdx = arr.findIndex(b => b.id === toId);
+      if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return f;
+      const [moved] = arr.splice(fromIdx, 1);
+      arr.splice(toIdx, 0, moved);
+      return { ...f, blocks: arr };
+    });
+  }
+  // 사진 블록 크기 조절 — 컨테이너 기준 %가 아니라 픽셀 값을 그대로 옮기면 되므로
+  // (글 흐름 속 한 블록일 뿐, 자유 좌표 캔버스가 아니라서) 마우스 이동량만큼 더한다.
+  function startResizeBlock(e, block) {
+    e.preventDefault(); e.stopPropagation();
+    const startX = e.clientX, startY = e.clientY;
+    const startW = block.width || 220, startH = block.height || 220;
+    const onMove = ev => {
+      const nw = Math.max(60, startW + (ev.clientX - startX));
+      const nh = Math.max(60, startH + (ev.clientY - startY));
+      setForm(f => ({ ...f, blocks: f.blocks.map(b => b.id === block.id ? { ...b, width: nw, height: nh } : b) }));
+    };
+    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
+  }
+
   // 사진 한 장을 끝까지 처리한다(썸네일+원본 저장+공유 업로드). 실패하면 null —
   // 실패해도 미리보기만 먼저 바뀌는 일이 없도록 전부 끝난 뒤에만 반영한다.
   async function buildPhotoEntry(file) {
@@ -160,7 +211,7 @@ export default function Sop({ adminUnlocked, currentMember }) {
       showNotice(`"${file.name}"을(를) 불러올 수 없습니다. 지원하지 않는 이미지 형식일 수 있습니다(예: 아이폰 HEIC) — JPG·PNG로 다시 시도해보세요.`, true);
       return null;
     }
-    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const id = newBlockId();
     let entry = { id, thumb, fileName: file.name, filePath: '', gistKey: '' };
     if (isElectron) {
       const b64 = capped.split(',')[1];
@@ -186,6 +237,8 @@ export default function Sop({ adminUnlocked, currentMember }) {
     return entry;
   }
 
+  // 새 사진은 본문 블록 맨 끝에 추가된다 — 이후 ⠿ 손잡이로 원하는 문단 사이로
+  // 끌어다 놓으면 "글 사이"에 배치할 수 있다.
   async function handlePhotoChange(e) {
     const files = Array.from(e.target.files || []);
     e.target.value = '';
@@ -195,7 +248,7 @@ export default function Sop({ adminUnlocked, currentMember }) {
       for (const file of files) {
         // eslint-disable-next-line no-await-in-loop
         const entry = await buildPhotoEntry(file);
-        if (entry) setForm(f => ({ ...f, photos: [...f.photos, entry] }));
+        if (entry) setForm(f => ({ ...f, blocks: [...f.blocks, { id: entry.id, type: 'photo', photo: entry, width: 220, height: 220 }] }));
       }
     } catch (err) {
       showNotice('사진 처리 실패: ' + err.message, true);
@@ -204,15 +257,11 @@ export default function Sop({ adminUnlocked, currentMember }) {
     }
   }
 
-  function removePhoto(photoId) {
-    setForm(f => ({ ...f, photos: f.photos.filter(p => p.id !== photoId) }));
-  }
-
-  async function replacePhoto(photoId, file) {
+  async function replaceBlockPhoto(blockId, file) {
     setUploadingPhoto(true);
     try {
       const entry = await buildPhotoEntry(file);
-      if (entry) setForm(f => ({ ...f, photos: f.photos.map(p => p.id === photoId ? { ...entry, id: photoId } : p) }));
+      if (entry) setForm(f => ({ ...f, blocks: f.blocks.map(b => b.id === blockId ? { ...b, photo: { ...entry, id: blockId } } : b) }));
     } finally {
       setUploadingPhoto(false);
     }
@@ -226,7 +275,14 @@ export default function Sop({ adminUnlocked, currentMember }) {
     if (!form.title.trim()) { showNotice('제목을 입력하세요.', true); return; }
     setSaving(true);
     try {
-      const item = { ...form, ...(editingId ? { id: editingId } : {}) };
+      // content(검색용 본문 텍스트)와 photos(목록 썸네일·뒤늦은 사진 공유용)는
+      // blocks에서 매번 다시 뽑아 저장한다 — blocks가 실제 내용의 기준이다.
+      const contentText = form.blocks.filter(b => b.type === 'text').map(b => b.text).join('\n\n').trim();
+      const photosArr = form.blocks.filter(b => b.type === 'photo').map(b => b.photo);
+      const item = {
+        ...form, content: contentText, photos: photosArr,
+        ...(editingId ? { id: editingId } : {}),
+      };
       const saved = await upsertSop(item);
       setPosts(prev => editingId ? prev.map(p => p.id === editingId ? saved : p) : [saved, ...prev]);
       window.electronAPI?.notifyDataChanged?.();
@@ -294,6 +350,26 @@ export default function Sop({ adminUnlocked, currentMember }) {
     return <div className="p-6 text-sm text-gray-400">불러오는 중...</div>;
   }
 
+  // 본문(텍스트+사진 블록)을 순서대로 렌더링 — 상세 화면 전용(읽기 전용).
+  function renderBlocksReadOnly(post) {
+    const blocks = blocksOf(post);
+    const photoList = blocks.filter(b => b.type === 'photo').map(b => b.photo);
+    return (
+      <div className="space-y-3 border-t border-gray-100 pt-4">
+        {blocks.map(b => b.type === 'text' ? (
+          b.text ? (
+            <p key={b.id} className="text-sm text-gray-700 whitespace-pre-wrap break-words leading-relaxed">{b.text}</p>
+          ) : null
+        ) : (
+          <img key={b.id} src={b.photo.thumb} alt="사진"
+            style={{ width: b.width || 220, height: b.height || 220, maxWidth: '100%' }}
+            className="object-cover rounded-lg border border-gray-200 cursor-pointer hover:opacity-90"
+            onClick={() => setLightbox({ itemId: post.id, photos: photoList, index: photoList.findIndex(p => p.id === b.photo.id) })} />
+        ))}
+      </div>
+    );
+  }
+
   // ── 상세 보기 화면 ──
   if (viewingPost) {
     const editable = canManage(viewingPost);
@@ -325,13 +401,7 @@ export default function Sop({ adminUnlocked, currentMember }) {
               ))}
             </div>
           )}
-          <p className="text-sm text-gray-700 whitespace-pre-wrap break-words leading-relaxed border-t border-gray-100 pt-4">
-            {viewingPost.content || ''}
-          </p>
-          {(viewingPost.photos || []).length > 0 && (
-            <PhotoCanvas photos={viewingPost.photos} editable={false}
-              onOpen={i => setLightbox({ itemId: viewingPost.id, photos: viewingPost.photos, index: i })} />
-          )}
+          {renderBlocksReadOnly(viewingPost)}
         </div>
 
         {renderForm()}
@@ -403,8 +473,6 @@ export default function Sop({ adminUnlocked, currentMember }) {
   );
 
   // 글쓰기/수정 팝업 — 상세 화면(수정 버튼)과 목록 화면(새 글쓰기) 양쪽에서 쓴다.
-  // 예전에는 목록 화면 return문 안에만 있어서, 상세 화면에서 "수정"을 눌러도
-  // showForm이 true가 돼도 이 블록 자체가 렌더링되지 않아 아무 반응이 없었다.
   function renderForm() {
     if (!showForm) return null;
     return (
@@ -435,25 +503,55 @@ export default function Sop({ adminUnlocked, currentMember }) {
               </div>
             </div>
           </div>
+
           <div>
-            <label className="text-xs text-gray-500">내용</label>
-            <textarea className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" rows={10} value={form.content}
-              onChange={e => setForm(f => ({ ...f, content: e.target.value }))} placeholder="본문을 입력하세요" />
-          </div>
-          <div>
-            <label className="text-xs text-gray-500">사진첨부 {form.photos.length > 0 && `(${form.photos.length}장)`}</label>
-            {form.photos.length > 0 && (
-              <p className="text-[11px] text-gray-400 mt-0.5 mb-1">사진을 드래그해서 옮기고, 오른쪽 아래 모서리를 끌어 크기를 조절하세요.</p>
-            )}
-            <PhotoCanvas photos={form.photos} editable
-              onChange={photos => setForm(f => ({ ...f, photos }))}
-              onRemove={removePhoto} onReplace={replacePhoto} uploadingPhoto={uploadingPhoto} />
-            <div className="flex items-center gap-3 mt-1.5">
-              <input type="file" accept="image/*" multiple onChange={handlePhotoChange} disabled={uploadingPhoto}
-                className="text-xs text-gray-500 file:mr-2 file:px-2 file:py-1 file:rounded file:border-0 file:bg-gray-100 file:text-gray-600 file:text-xs" />
+            <label className="text-xs text-gray-500">본문</label>
+            <p className="text-[11px] text-gray-400 mt-0.5 mb-1">
+              ⠿ 손잡이를 끌어 문단·사진 순서를 바꿀 수 있습니다 — 사진을 글 사이 원하는 위치로 옮기세요.
+            </p>
+            <div className="space-y-2">
+              {form.blocks.map(b => (
+                <div key={b.id}
+                  onDragOver={e => { if (dragBlockId && dragBlockId !== b.id) e.preventDefault(); }}
+                  onDrop={e => { e.preventDefault(); if (dragBlockId && dragBlockId !== b.id) reorderBlocks(dragBlockId, b.id); setDragBlockId(null); }}
+                  className={`flex items-start gap-2 rounded-lg border border-gray-200 p-2 ${dragBlockId === b.id ? 'opacity-40' : ''}`}>
+                  <span draggable
+                    onDragStart={e => { e.dataTransfer.effectAllowed = 'move'; setDragBlockId(b.id); }}
+                    onDragEnd={() => setDragBlockId(null)}
+                    className="cursor-move select-none text-gray-300 hover:text-gray-500 shrink-0 mt-1.5" title="드래그하여 순서 변경">⠿</span>
+                  {b.type === 'text' ? (
+                    <textarea value={b.text} onChange={e => updateBlockText(b.id, e.target.value)} rows={3}
+                      className="flex-1 border border-gray-100 rounded px-2 py-1.5 text-sm resize-y" placeholder="문단을 입력하세요" />
+                  ) : (
+                    <div className="relative shrink-0" style={{ width: b.width || 220, height: b.height || 220, maxWidth: '100%' }}>
+                      <img src={b.photo.thumb} alt="사진" draggable={false} className="w-full h-full object-cover rounded-lg border border-gray-200" />
+                      <label onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}
+                        className="absolute top-1 right-1 w-5 h-5 rounded-full bg-blue-600 text-white text-[10px] leading-5 text-center hover:bg-blue-700 cursor-pointer" title="이 사진 바꾸기">
+                        🔄
+                        <input type="file" accept="image/*" className="hidden" disabled={uploadingPhoto}
+                          onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) replaceBlockPhoto(b.id, f); }} />
+                      </label>
+                      <div onMouseDown={e => startResizeBlock(e, b)}
+                        className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize bg-gray-400/70 hover:bg-blue-500 rounded-tl"
+                        style={{ clipPath: 'polygon(100% 0, 0 100%, 100% 100%)' }} title="드래그해서 크기 조절" />
+                    </div>
+                  )}
+                  <button type="button" onClick={() => removeBlock(b.id)}
+                    className="shrink-0 text-gray-300 hover:text-red-500 text-xs mt-1.5" title="이 블록 삭제">✕</button>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-3 mt-2">
+              <button type="button" onClick={addTextBlock}
+                className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50">+ 문단 추가</button>
+              <label className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50 cursor-pointer">
+                + 사진 추가
+                <input type="file" accept="image/*" multiple className="hidden" onChange={handlePhotoChange} disabled={uploadingPhoto} />
+              </label>
               {uploadingPhoto && <span className="text-xs text-gray-400">처리 중…</span>}
             </div>
           </div>
+
           <div className="flex gap-2 pt-2">
             <button onClick={handleSave} disabled={saving} className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
               {saving ? '저장 중…' : '저장'}
@@ -539,91 +637,4 @@ export default function Sop({ adminUnlocked, currentMember }) {
       </div>
     );
   }
-}
-
-// 사진을 정해진 격자가 아니라 자유로운 위치·크기로 배치한다. 좌표(x,y)와
-// 크기(w,h)는 캔버스 크기에 대한 %로 저장해, 화면 폭이 달라져도 배치가
-// 그대로 유지되게 한다. editable=false(상세 화면)에서는 저장된 배치 그대로
-// 보여주기만 하고, editable=true(글쓰기 폼)에서는 드래그 이동·모서리로 크기
-// 조절이 가능하다.
-const PHOTO_CANVAS_H = 340; // px — 배치 캔버스의 세로 크기(고정)
-const PHOTO_MIN_PCT = 8;    // 사진 최소 크기(캔버스 대비 %) — 너무 작아져 다루기 어려워지는 것 방지
-
-function ensurePhotoLayout(photos) {
-  // 아직 배치 값이 없는(막 추가된) 사진에 기본 격자 위치를 채워 넣는다.
-  return photos.map((p, i) => {
-    if (p.x != null && p.y != null && p.w != null && p.h != null) return p;
-    const col = i % 3, row = Math.floor(i / 3);
-    return { ...p, x: p.x ?? col * 34, y: p.y ?? row * 34, w: p.w ?? 30, h: p.h ?? 30 };
-  });
-}
-
-function PhotoCanvas({ photos, editable, onChange, onOpen, onRemove, onReplace, uploadingPhoto }) {
-  const containerRef = useRef(null);
-  const laidOut = ensurePhotoLayout(photos);
-  if (!laidOut.length) return null;
-
-  function startDrag(e, photo) {
-    if (!editable) return;
-    e.preventDefault(); e.stopPropagation();
-    const rect = containerRef.current.getBoundingClientRect();
-    const startX = e.clientX, startY = e.clientY;
-    const startXPct = photo.x, startYPct = photo.y;
-    const maxX = Math.max(0, 100 - photo.w), maxY = Math.max(0, 100 - photo.h);
-    const onMove = ev => {
-      const nx = Math.min(Math.max(0, startXPct + (ev.clientX - startX) / rect.width * 100), maxX);
-      const ny = Math.min(Math.max(0, startYPct + (ev.clientY - startY) / rect.height * 100), maxY);
-      onChange(laidOut.map(p => p.id === photo.id ? { ...p, x: nx, y: ny } : p));
-    };
-    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
-    document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
-  }
-
-  function startResize(e, photo) {
-    if (!editable) return;
-    e.preventDefault(); e.stopPropagation();
-    const rect = containerRef.current.getBoundingClientRect();
-    const startX = e.clientX, startY = e.clientY;
-    const startW = photo.w, startH = photo.h;
-    const maxW = 100 - photo.x, maxH = 100 - photo.y;
-    const onMove = ev => {
-      const nw = Math.min(Math.max(PHOTO_MIN_PCT, startW + (ev.clientX - startX) / rect.width * 100), maxW);
-      const nh = Math.min(Math.max(PHOTO_MIN_PCT, startH + (ev.clientY - startY) / rect.height * 100), maxH);
-      onChange(laidOut.map(p => p.id === photo.id ? { ...p, w: nw, h: nh } : p));
-    };
-    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
-    document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
-  }
-
-  return (
-    <div ref={containerRef}
-      className={`relative w-full rounded-lg overflow-hidden ${editable ? 'border border-dashed border-gray-300 bg-gray-50' : ''}`}
-      style={{ height: PHOTO_CANVAS_H }}>
-      {laidOut.map(p => (
-        <div key={p.id}
-          onMouseDown={e => startDrag(e, p)}
-          onClick={() => { if (!editable) onOpen?.(laidOut.findIndex(x => x.id === p.id)); }}
-          className={`absolute rounded-lg overflow-hidden border border-gray-200 bg-white shadow-sm ${editable ? 'cursor-move' : 'cursor-pointer hover:opacity-90'}`}
-          style={{ left: `${p.x}%`, top: `${p.y}%`, width: `${p.w}%`, height: `${p.h}%` }}
-        >
-          <img src={p.thumb} alt="사진" draggable={false} className="w-full h-full object-cover pointer-events-none" />
-          {editable && (
-            <>
-              <button type="button" onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onRemove(p.id); }}
-                className="absolute top-1 right-1 w-5 h-5 rounded-full bg-red-500 text-white text-[11px] leading-5 text-center hover:bg-red-600" title="사진 삭제">✕</button>
-              <label onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}
-                className="absolute top-1 right-7 w-5 h-5 rounded-full bg-blue-600 text-white text-[10px] leading-5 text-center hover:bg-blue-700 cursor-pointer" title="이 사진 바꾸기">
-                🔄
-                <input type="file" accept="image/*" className="hidden" disabled={uploadingPhoto}
-                  onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onReplace(p.id, f); }} />
-              </label>
-              <div onMouseDown={e => startResize(e, p)}
-                className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize bg-gray-400/70 hover:bg-blue-500"
-                style={{ clipPath: 'polygon(100% 0, 0 100%, 100% 100%)' }} title="드래그해서 크기 조절" />
-            </>
-          )}
-        </div>
-      ))}
-    </div>
-  );
 }
