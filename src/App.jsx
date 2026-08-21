@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import Dashboard from './components/Dashboard';
+import Sop from './components/Sop';
 import Calibration from './components/Calibration';
 import UsagePoints from './components/UsagePoints';
 import WeeklyDuty from './components/WeeklyDuty';
@@ -28,6 +29,10 @@ const MENU = [
   { id: 'calibration', label: '교정 관리', icon: '⚙️' },
   { id: 'usagepoints', label: '업무별 진행상황', icon: '📍' },
   { id: 'weeklyduty', label: '주간근무', icon: '🗓️' },
+  // requiresLogin: 게스트 메뉴 제한을 꺼둔(전체 공개) PC에서도 로그인하지 않으면
+  // 절대 보이지 않는다 — 권한 설정의 "로그인하지 않았을 때" 허용 목록과 무관하게
+  // 아래 visibleMenu에서 항상 걸러진다.
+  { id: 'sop', label: 'SOP', icon: '📘', requiresLogin: true },
 ];
 
 export default function App() {
@@ -59,9 +64,10 @@ export default function App() {
   }
   useEffect(() => { reloadGuestAccess(); }, []);
 
-  const visibleMenu = currentMember
+  const visibleMenu = (currentMember
     ? MENU.filter(m => (currentMember.allowedTabs || []).includes(m.id))
-    : (guestAllowedTabs ? MENU.filter(m => guestAllowedTabs.includes(m.id)) : MENU);
+    : (guestAllowedTabs ? MENU.filter(m => guestAllowedTabs.includes(m.id)) : MENU)
+  ).filter(m => !m.requiresLogin || currentMember); // SOP처럼 로그인 필수인 메뉴는 게스트 설정과 무관하게 숨김
 
   function handleLoggedIn(member, remember) {
     setCurrentMember(member);
@@ -97,8 +103,12 @@ export default function App() {
   // 없으면 허용된 첫 메뉴로 보정한다 — 앱 시작 시 재수화, 로그인·로그아웃, 관리자가
   // 게스트 제한을 방금 켠 경우 등 모두 여기서 한 번에 처리된다.
   useEffect(() => {
-    const allowed = currentMember ? (currentMember.allowedTabs || []) : guestAllowedTabs;
-    if (allowed && !allowed.includes(page)) setPage(allowed[0] || 'dashboard');
+    // visibleMenu 자체가 이미 계정 권한·게스트 제한·requiresLogin(SOP 등)을 모두
+    // 반영한 목록이라, 로그아웃 등으로 그 목록에서 현재 페이지가 빠지면 첫 메뉴로
+    // 보정한다 — 예: SOP를 보다가 로그아웃하면(게스트 제한이 전혀 없어도 SOP는
+    // 로그인 전용이라) 화면이 빈 채로 남지 않고 첫 메뉴로 돌아간다.
+    const allowedIds = visibleMenu.map(m => m.id);
+    if (!allowedIds.includes(page)) setPage(allowedIds[0] || 'dashboard');
   }, [currentMember, guestAllowedTabs]);
 
   // 로그인 상태가 바뀔 때마다(로그인·로그아웃·앱 시작 시 재수화 포함) main
@@ -260,6 +270,7 @@ export default function App() {
           {page === 'calibration' && <Calibration adminUnlocked={adminUnlocked} />}
           {page === 'usagepoints' && <UsagePoints adminUnlocked={adminUnlocked} currentMember={currentMember} />}
           {page === 'weeklyduty' && <WeeklyDuty adminUnlocked={adminUnlocked} />}
+          {page === 'sop' && <Sop adminUnlocked={adminUnlocked} currentMember={currentMember} />}
         </main>
       </div>
     </div>

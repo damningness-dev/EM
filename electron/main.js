@@ -258,7 +258,10 @@ const DEFAULT_AHUS = ['AHU-01', 'AHU-02', 'AHU-15', 'AHU-16', 'AHU-19', 'AHU-31'
 const DEFAULT_USAGE_POINT_CATEGORIES = { '공조': [], '가스': [], '용수': [], '기타': [] };
 
 // 기본 관리자 계정을 처음 만들 때 허용할 탭 — App.jsx의 MENU와 같은 id 목록.
-const DEFAULT_ADMIN_TABS = ['dashboard', 'todo', 'calendar', 'status', 'gantt', 'annual', 'calibration', 'usagepoints', 'weeklyduty'];
+const DEFAULT_ADMIN_TABS = ['dashboard', 'todo', 'calendar', 'status', 'gantt', 'annual', 'calibration', 'usagepoints', 'weeklyduty', 'sop'];
+
+// SOP(업무 매뉴얼) 기본 태그 — 관리자가 화면에서 자유롭게 추가·삭제할 수 있다.
+const DEFAULT_SOP_TAGS = ['모니터링', '적격성평가', '작동방법'];
 
 // 주간근무 화면 기본값 — 사용자가 올려준 "주간근무" 시트 내용을 그대로 옮겨 심어
 // 처음부터 실제 로테이션이 채워진 상태로 시작한다. 이후 관리자가 화면에서
@@ -302,7 +305,7 @@ function getDataPath() {
 function loadData() {
   const p = getDataPath();
   if (!fs.existsSync(p)) {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES }, guestAllowedTabs: null, weeklyDuty: JSON.parse(JSON.stringify(DEFAULT_WEEKLY_DUTY)) };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES }, guestAllowedTabs: null, weeklyDuty: JSON.parse(JSON.stringify(DEFAULT_WEEKLY_DUTY)), sops: [], sopTags: [...DEFAULT_SOP_TAGS] };
   }
   try {
     const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
@@ -316,6 +319,8 @@ function loadData() {
     if (!data.scheduleAssignees) data.scheduleAssignees = {};
     if (!data.usagePoints) data.usagePoints = [];
     if (!data.usagePointCategories) data.usagePointCategories = { ...DEFAULT_USAGE_POINT_CATEGORIES };
+    if (!data.sops) data.sops = [];
+    if (!data.sopTags) data.sopTags = [...DEFAULT_SOP_TAGS];
     // 로그인하지 않았을 때 보이는 메뉴 — null(기본값)이면 지금까지처럼 전체 메뉴가 보이고,
     // 배열이면 그 탭들만 보인다(계정별 allowedTabs와 같은 방식, 로그인 전 상태에 적용).
     if (!('guestAllowedTabs' in data)) data.guestAllowedTabs = null;
@@ -328,7 +333,7 @@ function loadData() {
     if (typeof data.weeklyDuty.autoAlarm !== 'boolean') data.weeklyDuty.autoAlarm = true;
     return data;
   } catch {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES }, guestAllowedTabs: null, weeklyDuty: JSON.parse(JSON.stringify(DEFAULT_WEEKLY_DUTY)) };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES }, guestAllowedTabs: null, weeklyDuty: JSON.parse(JSON.stringify(DEFAULT_WEEKLY_DUTY)), sops: [], sopTags: [...DEFAULT_SOP_TAGS] };
   }
 }
 
@@ -744,10 +749,11 @@ function explainGistError(err) {
 }
 
 // 모든 PC가 함께 쓰는(누구나 추가·수정하고 서로 공유하는) 항목.
-// 사용점 관리만 여기에 해당한다. 나머지(월간모니터링·구역별현황·간트차트·연간계획·
-// 교정관리·주간근무·계정 설정 등)는 "기준 PC"(sync-config의 role='admin')의 내용이
-// 공유 기준이 되고, 일반 PC가 올릴 때는 건드리지 않는다.
-const COLLAB_KEYS = ['usagePoints'];
+// 업무별 진행상황(사용점)과 SOP 글·태그가 여기에 해당한다. 나머지(월간모니터링·
+// 구역별현황·간트차트·연간계획·교정관리·주간근무·계정 설정 등)는 "기준 PC"
+// (sync-config의 role='admin')의 내용이 공유 기준이 되고, 일반 PC가 올릴 때는
+// 건드리지 않는다.
+const COLLAB_KEYS = ['usagePoints', 'sops', 'sopTags'];
 
 // 일반 PC가 올릴 내용을 만든다 — 원격(기준 PC가 올린 내용)을 그대로 두고,
 // 함께 쓰는 항목만 이 PC 내용을 합쳐 넣는다. 이렇게 해야 일반 PC가 사용점을
@@ -1397,7 +1403,7 @@ function registerHandlers() {
   // ── 첨부파일(교정 성적서·사용점 사진 등) ──
   // 화면(카테고리)별로 다운로드 폴더를 분리해 둔다 — 교정관리 첨부파일과
   // 사용점관리 사진이 한 폴더에 섞이지 않도록.
-  const CALIB_FILE_CATEGORIES = { calibration: 'calibration', usagepoints: 'usagepoints' };
+  const CALIB_FILE_CATEGORIES = { calibration: 'calibration', usagepoints: 'usagepoints', sop: 'sop' };
   const calibFilesDir = (category) => {
     const sub = CALIB_FILE_CATEGORIES[category] || 'calibration';
     const d = path.join(app.getPath('userData'), 'calib-files', sub);
@@ -1624,6 +1630,21 @@ function registerHandlers() {
           }
         });
       });
+      // SOP 글에 첨부한 사진도 같은 방식으로 뒤늦게 올린다.
+      (data.sops || []).forEach((s, itemIdx) => {
+        (Array.isArray(s.photos) ? s.photos : []).forEach((p, photoIdx) => {
+          const shared = p.gistKey && existingKeys.has(p.gistKey);
+          const hasLocal = p.filePath && fs.existsSync(p.filePath);
+          if (!hasLocal) {
+            if ((p.thumb || p.fileName) && !shared) missingLocal++;
+            return;
+          }
+          const gistKey = p.gistKey || `attach_sop_${s.id}_${photoIdx}.jpg.b64`;
+          if (!existingKeys.has(gistKey)) {
+            pending.push({ kind: 'sop', itemIdx, photoIdx, filePath: p.filePath, gistKey });
+          }
+        });
+      });
       if (!pending.length) return { ok: true, uploaded: 0, total: 0, failed: [], missingLocal };
       sendProgress('uploading', { done: 0, total: pending.length });
       const BATCH = 10;
@@ -1645,6 +1666,8 @@ function registerHandlers() {
                 const u = data.usagePoints[p.itemIdx];
                 if (p.photoIdx >= 0 && Array.isArray(u.photos)) u.photos[p.photoIdx].gistKey = p.gistKey;
                 else u.photoGistKey = p.gistKey; // 예전 단일 필드 데이터
+              } else if (p.kind === 'sop') {
+                data.sops[p.itemIdx].photos[p.photoIdx].gistKey = p.gistKey;
               } else data.calibration[p.itemIdx].history[p.histIdx].gistKey = p.gistKey;
               uploaded++;
             });
@@ -1972,6 +1995,53 @@ function registerHandlers() {
     data.usagePointCategories = categories;
     saveData(data);
     return data.usagePointCategories;
+  });
+
+  // ── SOP(업무 매뉴얼) — 로그인해야 보이는 블로그 형태의 글 목록. 태그로
+  // 분류하고, 로그인한 모든 계정이 작성할 수 있으며 작성자 본인 또는
+  // 관리자만 수정·삭제할 수 있다(사용점 관리와 같은 방식). ──
+  ipcMain.handle('sops:getAll', () => loadData().sops || []);
+  ipcMain.handle('sops:upsert', (_e, post) => {
+    const data = loadData();
+    if (!data.sops) data.sops = [];
+    // 여러 PC가 같은 글을 고쳤을 때 어느 쪽이 최신인지 판단하는 기준 (합치기용)
+    post.updatedAt = new Date().toISOString();
+    if (post.id) {
+      const idx = data.sops.findIndex(s => s.id === post.id);
+      if (idx >= 0) data.sops[idx] = post;
+      else data.sops.push(post);
+    } else {
+      post.id = newId();
+      post.createdAt = post.updatedAt;
+      data.sops.push(post);
+    }
+    saveData(data);
+    return post;
+  });
+  ipcMain.handle('sops:delete', (_e, id) => {
+    const data = loadData();
+    data.sops = (data.sops || []).filter(s => s.id !== id);
+    saveData(data);
+  });
+
+  // 태그 목록 — 관리자가 추가·삭제한다. 글을 쓸 때 목록에 없는 태그를 새로
+  // 입력하면 여기에도 함께 추가된다(sopTags:addIfMissing).
+  ipcMain.handle('sopTags:get', () => loadData().sopTags || [...DEFAULT_SOP_TAGS]);
+  ipcMain.handle('sopTags:set', (_e, tags) => {
+    const data = loadData();
+    data.sopTags = Array.isArray(tags) ? tags : [];
+    saveData(data);
+    return data.sopTags;
+  });
+  ipcMain.handle('sopTags:addIfMissing', (_e, tag) => {
+    const data = loadData();
+    if (!data.sopTags) data.sopTags = [...DEFAULT_SOP_TAGS];
+    const name = String(tag || '').trim();
+    if (name && !data.sopTags.includes(name)) {
+      data.sopTags.push(name);
+      saveData(data);
+    }
+    return data.sopTags;
   });
 
   // ── 모니터링 구역 ──

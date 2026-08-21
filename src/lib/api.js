@@ -59,6 +59,26 @@ export async function saveUsagePointCategories(categories) {
   return api.invoke('usagePointCategories:set', categories);
 }
 
+// ─── SOP(업무 매뉴얼) ─────────────────────────────────────────────────────────
+export async function fetchSops() {
+  return api.invoke('sops:getAll');
+}
+export async function upsertSop(post) {
+  return api.invoke('sops:upsert', post);
+}
+export async function deleteSop(id) {
+  return api.invoke('sops:delete', id);
+}
+export async function fetchSopTags() {
+  return api.invoke('sopTags:get');
+}
+export async function saveSopTags(tags) {
+  return api.invoke('sopTags:set', tags);
+}
+export async function addSopTagIfMissing(tag) {
+  return api.invoke('sopTags:addIfMissing', tag);
+}
+
 // ─── 구역 ─────────────────────────────────────────────────────────────────────
 
 export async function fetchZones() {

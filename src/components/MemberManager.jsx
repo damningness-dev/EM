@@ -193,11 +193,15 @@ function GuestAccessSection({ menu }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
 
+  // SOP처럼 로그인해야만 보이는 메뉴는 여기 체크해도 의미가 없다(App.jsx가
+  // 게스트에게는 항상 숨김) — 혼동을 막기 위해 목록에서 아예 뺀다.
+  const guestMenu = menu.filter(m => !m.requiresLogin);
+
   useEffect(() => {
     fetchGuestAccess().then(c => {
       const allowed = c?.allowedTabs || null;
       setRestrict(Array.isArray(allowed));
-      setTabs(allowed || menu.map(m => m.id));
+      setTabs(allowed || guestMenu.map(m => m.id));
       setLoaded(true);
     }).catch(() => setLoaded(true));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -231,7 +235,7 @@ function GuestAccessSection({ menu }) {
       </label>
       {restrict && (
         <div className="flex flex-wrap gap-x-3 gap-y-1.5 pl-0.5 pt-0.5">
-          {menu.map(item => (
+          {guestMenu.map(item => (
             <label key={item.id} className="flex items-center gap-1 text-xs text-gray-600 cursor-pointer select-none">
               <input type="checkbox" checked={tabs.includes(item.id)} onChange={() => toggleTab(item.id)} />
               {item.icon} {item.label}
