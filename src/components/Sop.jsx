@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   fetchSops, upsertSop, deleteSop, fetchSopTags, addSopTagIfMissing,
   saveCalibFile, uploadCalibAttachment, revealCalibFile, resolveCalibImage,
@@ -329,15 +329,12 @@ export default function Sop({ adminUnlocked, currentMember }) {
             {viewingPost.content || ''}
           </p>
           {(viewingPost.photos || []).length > 0 && (
-            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 pt-2">
-              {viewingPost.photos.map((p, i) => (
-                <img key={p.id} src={p.thumb} alt="사진" onClick={() => setLightbox({ itemId: viewingPost.id, photos: viewingPost.photos, index: i })}
-                  className="w-full aspect-square object-cover rounded-lg cursor-pointer border border-gray-200 hover:opacity-80" />
-              ))}
-            </div>
+            <PhotoCanvas photos={viewingPost.photos} editable={false}
+              onOpen={i => setLightbox({ itemId: viewingPost.id, photos: viewingPost.photos, index: i })} />
           )}
         </div>
 
+        {renderForm()}
         {renderLightbox()}
         {renderConfirmDelete()}
         {renderNotice()}
@@ -398,80 +395,75 @@ export default function Sop({ adminUnlocked, currentMember }) {
         </div>
       )}
 
-      {showForm && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl p-6 space-y-3 max-h-[90vh] overflow-y-auto">
-            <h2 className="font-bold text-gray-800">{editingId ? '글 수정' : '새 글쓰기'}</h2>
-            <div>
-              <label className="text-xs text-gray-500">제목</label>
-              <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.title}
-                onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="예: 청구서 작성방법" />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500">태그</label>
-              <div className="flex flex-wrap gap-1.5 mt-1">
-                {tags.map(t => (
-                  <button key={t} type="button" onClick={() => toggleTag(t)}
-                    className={`px-2.5 py-1 rounded-full text-xs font-medium border ${form.tags.includes(t) ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
-                    #{t}
-                  </button>
-                ))}
-                <div className="flex items-center gap-1">
-                  <input value={newTag} onChange={e => setNewTag(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addNewTag(); } }}
-                    placeholder="+ 새 태그" className="w-20 border border-dashed border-gray-300 rounded-full px-2 py-1 text-xs" />
-                  {newTag.trim() && (
-                    <button type="button" onClick={addNewTag} className="text-xs text-blue-600 hover:underline">추가</button>
-                  )}
-                </div>
-              </div>
-            </div>
-            <div>
-              <label className="text-xs text-gray-500">내용</label>
-              <textarea className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" rows={10} value={form.content}
-                onChange={e => setForm(f => ({ ...f, content: e.target.value }))} placeholder="본문을 입력하세요" />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500">사진첨부 {form.photos.length > 0 && `(${form.photos.length}장)`}</label>
-              {form.photos.length > 0 && (
-                <div className="flex flex-wrap gap-2 mt-1">
-                  {form.photos.map(p => (
-                    <div key={p.id} className="relative">
-                      <img src={p.thumb} alt="미리보기" className="w-16 h-16 object-cover rounded-lg border border-gray-200" />
-                      <button type="button" onClick={() => removePhoto(p.id)}
-                        className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] leading-4 text-center hover:bg-red-600"
-                        title="사진 삭제">✕</button>
-                      <label className="absolute -bottom-1.5 -right-1.5 w-4 h-4 rounded-full bg-blue-600 text-white text-[9px] leading-4 text-center hover:bg-blue-700 cursor-pointer"
-                        title="이 사진 바꾸기">
-                        🔄
-                        <input type="file" accept="image/*" className="hidden" disabled={uploadingPhoto}
-                          onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) replacePhoto(p.id, f); }} />
-                      </label>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div className="flex items-center gap-3 mt-1.5">
-                <input type="file" accept="image/*" multiple onChange={handlePhotoChange} disabled={uploadingPhoto}
-                  className="text-xs text-gray-500 file:mr-2 file:px-2 file:py-1 file:rounded file:border-0 file:bg-gray-100 file:text-gray-600 file:text-xs" />
-                {uploadingPhoto && <span className="text-xs text-gray-400">처리 중…</span>}
-              </div>
-            </div>
-            <div className="flex gap-2 pt-2">
-              <button onClick={handleSave} disabled={saving} className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
-                {saving ? '저장 중…' : '저장'}
-              </button>
-              <button onClick={() => setShowForm(false)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">취소</button>
-            </div>
-          </div>
-        </div>
-      )}
-
+      {renderForm()}
       {renderLightbox()}
       {renderConfirmDelete()}
       {renderNotice()}
     </div>
   );
+
+  // 글쓰기/수정 팝업 — 상세 화면(수정 버튼)과 목록 화면(새 글쓰기) 양쪽에서 쓴다.
+  // 예전에는 목록 화면 return문 안에만 있어서, 상세 화면에서 "수정"을 눌러도
+  // showForm이 true가 돼도 이 블록 자체가 렌더링되지 않아 아무 반응이 없었다.
+  function renderForm() {
+    if (!showForm) return null;
+    return (
+      <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl p-6 space-y-3 max-h-[90vh] overflow-y-auto">
+          <h2 className="font-bold text-gray-800">{editingId ? '글 수정' : '새 글쓰기'}</h2>
+          <div>
+            <label className="text-xs text-gray-500">제목</label>
+            <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.title}
+              onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="예: 청구서 작성방법" />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500">태그</label>
+            <div className="flex flex-wrap gap-1.5 mt-1">
+              {tags.map(t => (
+                <button key={t} type="button" onClick={() => toggleTag(t)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-medium border ${form.tags.includes(t) ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                  #{t}
+                </button>
+              ))}
+              <div className="flex items-center gap-1">
+                <input value={newTag} onChange={e => setNewTag(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addNewTag(); } }}
+                  placeholder="+ 새 태그" className="w-20 border border-dashed border-gray-300 rounded-full px-2 py-1 text-xs" />
+                {newTag.trim() && (
+                  <button type="button" onClick={addNewTag} className="text-xs text-blue-600 hover:underline">추가</button>
+                )}
+              </div>
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-gray-500">내용</label>
+            <textarea className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" rows={10} value={form.content}
+              onChange={e => setForm(f => ({ ...f, content: e.target.value }))} placeholder="본문을 입력하세요" />
+          </div>
+          <div>
+            <label className="text-xs text-gray-500">사진첨부 {form.photos.length > 0 && `(${form.photos.length}장)`}</label>
+            {form.photos.length > 0 && (
+              <p className="text-[11px] text-gray-400 mt-0.5 mb-1">사진을 드래그해서 옮기고, 오른쪽 아래 모서리를 끌어 크기를 조절하세요.</p>
+            )}
+            <PhotoCanvas photos={form.photos} editable
+              onChange={photos => setForm(f => ({ ...f, photos }))}
+              onRemove={removePhoto} onReplace={replacePhoto} uploadingPhoto={uploadingPhoto} />
+            <div className="flex items-center gap-3 mt-1.5">
+              <input type="file" accept="image/*" multiple onChange={handlePhotoChange} disabled={uploadingPhoto}
+                className="text-xs text-gray-500 file:mr-2 file:px-2 file:py-1 file:rounded file:border-0 file:bg-gray-100 file:text-gray-600 file:text-xs" />
+              {uploadingPhoto && <span className="text-xs text-gray-400">처리 중…</span>}
+            </div>
+          </div>
+          <div className="flex gap-2 pt-2">
+            <button onClick={handleSave} disabled={saving} className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+              {saving ? '저장 중…' : '저장'}
+            </button>
+            <button onClick={() => setShowForm(false)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">취소</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   function renderLightbox() {
     if (!lightbox) return null;
@@ -547,4 +539,91 @@ export default function Sop({ adminUnlocked, currentMember }) {
       </div>
     );
   }
+}
+
+// 사진을 정해진 격자가 아니라 자유로운 위치·크기로 배치한다. 좌표(x,y)와
+// 크기(w,h)는 캔버스 크기에 대한 %로 저장해, 화면 폭이 달라져도 배치가
+// 그대로 유지되게 한다. editable=false(상세 화면)에서는 저장된 배치 그대로
+// 보여주기만 하고, editable=true(글쓰기 폼)에서는 드래그 이동·모서리로 크기
+// 조절이 가능하다.
+const PHOTO_CANVAS_H = 340; // px — 배치 캔버스의 세로 크기(고정)
+const PHOTO_MIN_PCT = 8;    // 사진 최소 크기(캔버스 대비 %) — 너무 작아져 다루기 어려워지는 것 방지
+
+function ensurePhotoLayout(photos) {
+  // 아직 배치 값이 없는(막 추가된) 사진에 기본 격자 위치를 채워 넣는다.
+  return photos.map((p, i) => {
+    if (p.x != null && p.y != null && p.w != null && p.h != null) return p;
+    const col = i % 3, row = Math.floor(i / 3);
+    return { ...p, x: p.x ?? col * 34, y: p.y ?? row * 34, w: p.w ?? 30, h: p.h ?? 30 };
+  });
+}
+
+function PhotoCanvas({ photos, editable, onChange, onOpen, onRemove, onReplace, uploadingPhoto }) {
+  const containerRef = useRef(null);
+  const laidOut = ensurePhotoLayout(photos);
+  if (!laidOut.length) return null;
+
+  function startDrag(e, photo) {
+    if (!editable) return;
+    e.preventDefault(); e.stopPropagation();
+    const rect = containerRef.current.getBoundingClientRect();
+    const startX = e.clientX, startY = e.clientY;
+    const startXPct = photo.x, startYPct = photo.y;
+    const maxX = Math.max(0, 100 - photo.w), maxY = Math.max(0, 100 - photo.h);
+    const onMove = ev => {
+      const nx = Math.min(Math.max(0, startXPct + (ev.clientX - startX) / rect.width * 100), maxX);
+      const ny = Math.min(Math.max(0, startYPct + (ev.clientY - startY) / rect.height * 100), maxY);
+      onChange(laidOut.map(p => p.id === photo.id ? { ...p, x: nx, y: ny } : p));
+    };
+    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
+  }
+
+  function startResize(e, photo) {
+    if (!editable) return;
+    e.preventDefault(); e.stopPropagation();
+    const rect = containerRef.current.getBoundingClientRect();
+    const startX = e.clientX, startY = e.clientY;
+    const startW = photo.w, startH = photo.h;
+    const maxW = 100 - photo.x, maxH = 100 - photo.y;
+    const onMove = ev => {
+      const nw = Math.min(Math.max(PHOTO_MIN_PCT, startW + (ev.clientX - startX) / rect.width * 100), maxW);
+      const nh = Math.min(Math.max(PHOTO_MIN_PCT, startH + (ev.clientY - startY) / rect.height * 100), maxH);
+      onChange(laidOut.map(p => p.id === photo.id ? { ...p, w: nw, h: nh } : p));
+    };
+    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
+  }
+
+  return (
+    <div ref={containerRef}
+      className={`relative w-full rounded-lg overflow-hidden ${editable ? 'border border-dashed border-gray-300 bg-gray-50' : ''}`}
+      style={{ height: PHOTO_CANVAS_H }}>
+      {laidOut.map(p => (
+        <div key={p.id}
+          onMouseDown={e => startDrag(e, p)}
+          onClick={() => { if (!editable) onOpen?.(laidOut.findIndex(x => x.id === p.id)); }}
+          className={`absolute rounded-lg overflow-hidden border border-gray-200 bg-white shadow-sm ${editable ? 'cursor-move' : 'cursor-pointer hover:opacity-90'}`}
+          style={{ left: `${p.x}%`, top: `${p.y}%`, width: `${p.w}%`, height: `${p.h}%` }}
+        >
+          <img src={p.thumb} alt="사진" draggable={false} className="w-full h-full object-cover pointer-events-none" />
+          {editable && (
+            <>
+              <button type="button" onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); onRemove(p.id); }}
+                className="absolute top-1 right-1 w-5 h-5 rounded-full bg-red-500 text-white text-[11px] leading-5 text-center hover:bg-red-600" title="사진 삭제">✕</button>
+              <label onClick={e => e.stopPropagation()} onMouseDown={e => e.stopPropagation()}
+                className="absolute top-1 right-7 w-5 h-5 rounded-full bg-blue-600 text-white text-[10px] leading-5 text-center hover:bg-blue-700 cursor-pointer" title="이 사진 바꾸기">
+                🔄
+                <input type="file" accept="image/*" className="hidden" disabled={uploadingPhoto}
+                  onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onReplace(p.id, f); }} />
+              </label>
+              <div onMouseDown={e => startResize(e, p)}
+                className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize bg-gray-400/70 hover:bg-blue-500"
+                style={{ clipPath: 'polygon(100% 0, 0 100%, 100% 100%)' }} title="드래그해서 크기 조절" />
+            </>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
