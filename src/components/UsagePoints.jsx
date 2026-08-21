@@ -468,7 +468,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
     try {
       if (isElectron) {
         await new Promise(r => requestAnimationFrame(() => r())); // 렌더 안정화
-        const r = await printDoc({ landscape: true, pageSize: 'A4', fileName: '사용점관리' });
+        const r = await printDoc({ landscape: true, pageSize: 'A4', fileName: '업무별진행상황' });
         if (r?.ok) showNotice('PDF로 열었습니다. 뷰어에서 인쇄(Ctrl+P)하세요.');
         else showNotice('PDF 생성 실패: ' + (r?.error || ''), true);
       } else {
@@ -563,7 +563,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-2xl font-bold text-gray-800">사용점 관리</h1>
+        <h1 className="text-2xl font-bold text-gray-800">업무별 진행상황</h1>
         <div className="flex items-center gap-2">
           {adminUnlocked && (
             <button onClick={openCatManager} className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200">🏷️ 분류 관리</button>
@@ -589,7 +589,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
           요소를 빼고 순수 내용만 담아 인쇄물이 깔끔하게 나오게 한다. */}
       <div style={{ display: 'none' }} aria-hidden="true">
         <div ref={printRef} className="up-print">
-          <h1>사용점 관리</h1>
+          <h1>업무별 진행상황</h1>
           <p className="up-print-meta">
             출력일 {todayStr()} · 총 {sorted.length}건
             {majorFilter !== 'all' && ` · 대분류: ${majorFilter}`}

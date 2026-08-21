@@ -26,7 +26,7 @@ const MENU = [
   { id: 'gantt',  label: '간트 차트',  icon: '📊' },
   { id: 'annual', label: '연간 계획 (AHU)', icon: '🔧' },
   { id: 'calibration', label: '교정 관리', icon: '⚙️' },
-  { id: 'usagepoints', label: '사용점 관리', icon: '📍' },
+  { id: 'usagepoints', label: '업무별 진행상황', icon: '📍' },
   { id: 'weeklyduty', label: '주간근무', icon: '🗓️' },
 ];
 
