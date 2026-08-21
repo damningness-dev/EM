@@ -237,24 +237,36 @@ export default function Sop({ adminUnlocked, currentMember }) {
     return entry;
   }
 
-  // 새 사진은 본문 블록 맨 끝에 추가된다 — 이후 ⠿ 손잡이로 원하는 문단 사이로
-  // 끌어다 놓으면 "글 사이"에 배치할 수 있다.
-  async function handlePhotoChange(e) {
-    const files = Array.from(e.target.files || []);
-    e.target.value = '';
-    if (!files.length) return;
+  // 사진을 원하는 자리에 바로 끼워 넣는다(atIndex 위치 앞에 삽입). atIndex가
+  // 없으면 맨 끝에 추가한다. 순서 변경(드래그) 없이 "글 사이"에 한 번에 넣을
+  // 수 있도록, 문단과 문단 사이에도 삽입 지점을 둔다(아래 렌더링 부분 참고).
+  async function insertPhotosAt(files, atIndex) {
     setUploadingPhoto(true);
     try {
+      let pos = atIndex;
       for (const file of files) {
         // eslint-disable-next-line no-await-in-loop
         const entry = await buildPhotoEntry(file);
-        if (entry) setForm(f => ({ ...f, blocks: [...f.blocks, { id: entry.id, type: 'photo', photo: entry, width: 220, height: 220 }] }));
+        if (!entry) continue;
+        setForm(f => {
+          const blocks = [...f.blocks];
+          const insertPos = pos == null ? blocks.length : Math.min(Math.max(0, pos), blocks.length);
+          blocks.splice(insertPos, 0, { id: entry.id, type: 'photo', photo: entry, width: 220, height: 220 });
+          if (pos != null) pos = insertPos + 1; // 여러 장을 한 번에 고르면 선택한 순서대로 이어 붙인다
+          return { ...f, blocks };
+        });
       }
     } catch (err) {
       showNotice('사진 처리 실패: ' + err.message, true);
     } finally {
       setUploadingPhoto(false);
     }
+  }
+
+  async function handlePhotoChange(e) {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (files.length) await insertPhotosAt(files, null); // 맨 끝에 추가(하단 버튼)
   }
 
   async function replaceBlockPhoto(blockId, file) {
@@ -507,10 +519,19 @@ export default function Sop({ adminUnlocked, currentMember }) {
           <div>
             <label className="text-xs text-gray-500">본문</label>
             <p className="text-[11px] text-gray-400 mt-0.5 mb-1">
-              ⠿ 손잡이를 끌어 문단·사진 순서를 바꿀 수 있습니다 — 사진을 글 사이 원하는 위치로 옮기세요.
+              문단 사이의 <b>"+ 여기에 사진"</b>을 누르면 그 자리에 바로 들어갑니다. ⠿ 손잡이로 순서를 다시 옮길 수도 있습니다.
             </p>
-            <div className="space-y-2">
-              {form.blocks.map(b => (
+            <div className="space-y-1">
+              {/* 맨 위(0번)를 포함해 각 블록 앞마다 삽입 지점을 둔다 — 눌러서 파일을
+                  고르면 드래그로 옮길 필요 없이 그 위치에 곧바로 사진이 들어간다. */}
+              {form.blocks.flatMap((b, i) => ([
+                <div key={`gap-${i}`} className="flex justify-center py-0.5">
+                  <label className="text-[10px] text-gray-400 hover:text-blue-600 border border-dashed border-gray-200 hover:border-blue-300 rounded-full px-2.5 py-0.5 cursor-pointer select-none transition-colors">
+                    + 여기에 사진
+                    <input type="file" accept="image/*" multiple className="hidden" disabled={uploadingPhoto}
+                      onChange={e => { const files = Array.from(e.target.files || []); e.target.value = ''; if (files.length) insertPhotosAt(files, i); }} />
+                  </label>
+                </div>,
                 <div key={b.id}
                   onDragOver={e => { if (dragBlockId && dragBlockId !== b.id) e.preventDefault(); }}
                   onDrop={e => { e.preventDefault(); if (dragBlockId && dragBlockId !== b.id) reorderBlocks(dragBlockId, b.id); setDragBlockId(null); }}
@@ -538,8 +559,8 @@ export default function Sop({ adminUnlocked, currentMember }) {
                   )}
                   <button type="button" onClick={() => removeBlock(b.id)}
                     className="shrink-0 text-gray-300 hover:text-red-500 text-xs mt-1.5" title="이 블록 삭제">✕</button>
-                </div>
-              ))}
+                </div>,
+              ]))}
             </div>
             <div className="flex items-center gap-3 mt-2">
               <button type="button" onClick={addTextBlock}
