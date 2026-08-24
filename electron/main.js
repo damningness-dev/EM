@@ -1306,8 +1306,15 @@ if (applyUpdateArg) {
 
 } else {
   // Normal startup
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     migrateLegacyTodosOnce();
+    // 이미 공유 설정(Gist ID)이 있는 PC라면, 기본 관리자를 심기 전에 먼저 한 번
+    // 받아본다 — 안 그러면 "이미 진짜 관리자 계정이 공유에 있는데 이 PC가
+    // 아직 못 받아왔을 뿐"인 순간에 기본 관리자(이름 고정·비밀번호 123456)를
+    // 새로 만들어버려, 같은 이름인데 id도 비밀번호도 다른 계정이 두 개
+    // 생기는 원인이 된다(실제로 겪은 문제). 오프라인 등으로 실패해도 무시하고
+    // 이어서 진행한다 — 그때는 기존처럼 기본 관리자를 심어 앱이 잠기지 않게 한다.
+    if (loadSyncConfig().gistId) { try { await syncPull(false); } catch { /* 오프라인 등은 무시 */ } }
     seedDefaultAdminOnce();
     registerHandlers();
     createWindow();
