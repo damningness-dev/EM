@@ -4,7 +4,7 @@ import {
   fetchUsagePoints, upsertUsagePoint, deleteUsagePoint,
   fetchUsagePointCategories, saveUsagePointCategories,
   saveCalibFile, uploadCalibAttachment, revealCalibFile, resolveCalibImage, syncGetConfig, syncUpload,
-  backfillCalibAttachments, printDoc,
+  backfillCalibAttachments, printDoc, fetchMembers,
 } from '../lib/api';
 
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
@@ -31,17 +31,17 @@ const PROGRESS_COLOR = {
   '완료': 'bg-emerald-100 text-emerald-700',
   '보류': 'bg-red-100 text-red-700',
 };
-const USAGEPOINT_COLS = 16; // No.(화살표 합침)+담당자+완료기한
+const USAGEPOINT_COLS = 17; // No.(화살표 합침)+제목+담당자+완료기한
 
 // 목록 표 열 너비 — 헤더 사이 구분선을 드래그해 조절할 수 있다(교정관리와 같은 방식).
-// 화살표(펼치기)는 No.와 한 열로 합쳐져 있고, 진행상황은 No. 바로 다음(대분류 앞)에 온다.
-const UP_COL_KEYS = ['no', 'progress', 'major', 'minor', 'workDate', 'author', 'worker', 'room', 'roomNo', 'point', 'reason', 'photo', 'note', 'assignee', 'dueDate', 'manage'];
+// 화살표(펼치기)는 No.와 한 열로 합쳐져 있고, 진행상황은 No. 바로 다음(제목·대분류 앞)에 온다.
+const UP_COL_KEYS = ['no', 'progress', 'title', 'major', 'minor', 'workDate', 'author', 'worker', 'room', 'roomNo', 'point', 'reason', 'photo', 'note', 'assignee', 'dueDate', 'manage'];
 const UP_COL_DEFAULT_W = {
-  no: 64, progress: 100, major: 76, minor: 90, workDate: 96, author: 76, worker: 76,
+  no: 64, progress: 100, title: 140, major: 76, minor: 90, workDate: 96, author: 76, worker: 76,
   room: 90, roomNo: 76, point: 100, reason: 160, photo: 76, note: 140,
-  assignee: 88, dueDate: 88, manage: 96,
+  assignee: 110, dueDate: 88, manage: 96,
 };
-const UP_COL_STORE_KEY = 'em-usagepoints-table-cols-v2'; // 열 구성이 바뀌어 예전 저장값과 섞이지 않도록 키를 바꿈
+const UP_COL_STORE_KEY = 'em-usagepoints-table-cols-v3'; // 열 구성이 또 바뀌어(제목 추가) 예전 저장값과 섞이지 않도록 키를 바꿈
 
 function todayStr() {
   const d = new Date();
@@ -72,17 +72,26 @@ function photosOf(item) {
   return [];
 }
 
+// 담당자는 계정 목록에서 여러 명을 고르는 방식(assignees 배열)이다. 자유 입력
+// 한 명이던 예전 데이터(assignee 문자열)는 배열 하나로 감싸 그대로 읽는다.
+function assigneesOf(item) {
+  if (Array.isArray(item?.assignees)) return item.assignees;
+  if (item?.assignee) return [item.assignee];
+  return [];
+}
+
 function emptyForm(currentMember) {
   return {
+    title: '', // 목록에서 눌러 상세보기를 여는 제목 — 폼 맨 위에 있다.
     // created_date는 화면상 "작업일"이다(실제 작업한 날 — 사용자가 바꿀 수 있음).
     // created_at은 "작성일" — 이 기록을 처음 저장한 날로, 자동으로 채워지고 수정할 수 없다.
     major_category: '', minor_category: '', created_date: todayStr(), created_at: '',
     author_id: currentMember?.id || '', author_name: currentMember?.username || '',
     worker_name: '',
-    assignee: '', due_date: '', // 담당자·완료기한 — 둘 다 채워지면 접수 ➜ 조사 중으로 자동 전환
+    assignees: [], due_date: '', // 담당자(여러 명)·완료기한 — 둘 다 채워지면 접수 ➜ 조사 중으로 자동 전환
     room_name: '', room_number: '', point_number: '', reason: '',
     photos: [], // [{ id, thumb, fileName, filePath, gistKey }, ...]
-    progress: PROGRESS_OPTIONS[0], progress_note: '', progress_logs: [], action_taken: '', note: '',
+    progress: PROGRESS_OPTIONS[0], progress_note: '', progress_logs: [], action_taken: '', conclusion: '', note: '',
   };
 }
 
@@ -112,6 +121,7 @@ function resizeImage(file, maxDim, quality) {
 export default function UsagePoints({ adminUnlocked, currentMember }) {
   const [data, setData] = useState([]);
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  const [memberNames, setMemberNames] = useState([]); // 담당자 체크박스 후보 = 등록된 계정 목록
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [majorFilter, setMajorFilter] = useState('all');
@@ -177,6 +187,10 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   }, []);
 
   useEffect(() => { reload(); }, [reload]);
+
+  useEffect(() => {
+    fetchMembers().then(ms => setMemberNames((ms || []).map(m => m.username))).catch(() => {});
+  }, []);
 
   // 수정 팝업을 열어둔 채로 하단 진행상황 패널에서 기록을 남기면, 그 즉시
   // upsertUsagePoint로 저장되어 data가 갱신된다. 이때 form의 progress_logs·
@@ -276,7 +290,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
     else if (doneFilter !== 'all') list = list.filter(u => progressOf(u) === doneFilter);
     const q = search.trim().toLowerCase();
     if (q) {
-      list = list.filter(u => [u.major_category, u.minor_category, u.author_name, u.worker_name, u.room_name, u.room_number, u.point_number, u.reason, u.note]
+      list = list.filter(u => [u.title, u.major_category, u.minor_category, u.author_name, u.worker_name, u.room_name, u.room_number, u.point_number, u.reason, u.note, ...assigneesOf(u)]
         .some(v => String(v || '').toLowerCase().includes(q)));
     }
     return list;
@@ -295,7 +309,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
     setEditingId(item.id);
     // photosOf()로 예전 단일 필드 사진도 배열 형태로 맞춰 넣는다 — 안 그러면 여러
     // 장 지원 전에 등록된 사진이 폼에서는 안 보이다가 저장할 때 사라져버린다.
-    setForm({ ...emptyForm(currentMember), ...item, photos: photosOf(item) });
+    setForm({ ...emptyForm(currentMember), ...item, photos: photosOf(item), assignees: assigneesOf(item) });
     setViewItem(null);
     setShowForm(true);
   }
@@ -304,7 +318,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   // 읽기 전용으로 보여준다(작성한 값을 훼손하지 않도록).
   function openDetail(item) {
     setEditingId(item.id);
-    setForm({ ...emptyForm(currentMember), ...item, photos: photosOf(item) });
+    setForm({ ...emptyForm(currentMember), ...item, photos: photosOf(item), assignees: assigneesOf(item) });
     setViewItem(canManage(item) ? null : item); // 잠금 여부 판단용
     setShowForm(true);
   }
@@ -418,8 +432,8 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
         worker_name: form.worker_name.trim() || form.author_name,
         ...(editingId ? { id: editingId } : {}),
       };
-      // 접수 단계에서 담당자·완료기한이 모두 채워지면 자동으로 조사 중으로 넘어간다.
-      if (progressOf(item) === '접수' && item.assignee?.trim() && item.due_date) {
+      // 접수 단계에서 담당자(1명 이상)·완료기한이 모두 채워지면 자동으로 조사 중으로 넘어간다.
+      if (progressOf(item) === '접수' && item.assignees?.length > 0 && item.due_date) {
         item.progress = '조사 중';
       }
       const saved = await upsertUsagePoint(item);
@@ -464,13 +478,13 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   // 진행상황은 덮어쓰지 않고 한 줄씩 덧붙인다 — 누가 언제 무엇을 적었는지 남기기 위함.
   // 조사내역은 담당자 본인이 직접 남길 수 있어야 하므로 관리자로만 제한하지 않는다.
   function isAssigneeOf(item) {
-    return !!currentMember && !!item.assignee && currentMember.username === item.assignee;
+    return !!currentMember && assigneesOf(item).includes(currentMember.username);
   }
 
   async function appendProgressLog(item, text) {
     if (!adminUnlocked && !isAssigneeOf(item)) { showNotice('담당자 또는 관리자만 작성할 수 있습니다.', true); return; }
     const stage = progressOf(item);
-    if (!['조사 중', '보류'].includes(stage)) { showNotice('조사 중 단계에서만 진행상황을 기록할 수 있습니다.', true); return; }
+    if (!['조사 중', '보류'].includes(stage)) { showNotice('조사 중 단계에서만 조사내용을 기록할 수 있습니다.', true); return; }
     const body = String(text || '').trim();
     if (!body) return;
     const now = new Date();
@@ -483,19 +497,12 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
       at: stamp,
     };
     const logs = [...(Array.isArray(item.progress_logs) ? item.progress_logs : []), entry];
-    // 담당자가 조사내역을 남기고 관리자가 조치사항을 남기면(둘 다 채워지면) 자동으로
-    // 조치 중으로 넘어간다 — 조사 중일 때만(보류에서는 넘기지 않음, 보류는 관리자가
-    // 직접 다시 조사 중 등으로 되돌려야 함).
-    const patch = { ...item, progress_logs: logs };
-    if (stage === '조사 중' && logs.length > 0 && String(item.action_taken || '').trim()) {
-      patch.progress = '조치 중';
-    }
     try {
-      const saved = await upsertUsagePoint(patch);
+      const saved = await upsertUsagePoint({ ...item, progress_logs: logs });
       setData(prev => prev.map(d => d.id === item.id ? saved : d));
       window.electronAPI?.notifyDataChanged?.();
       syncAfterChange();
-      showNotice(patch.progress === '조치 중' ? '진행상황이 기록되고 조치 중 단계로 넘어갔습니다.' : '진행상황이 기록되었습니다.');
+      showNotice('조사내용이 기록되었습니다.');
     } catch (e) {
       showNotice('저장 실패: ' + e.message, true);
     }
@@ -579,20 +586,33 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   }
 
   // 완료 처리된 건의 조치사항 — 무엇을 해서 마무리했는지 적는 칸.
+  // 조치사항은 조치 중 단계에서만 쓴다(조사내용 기록은 반대로 조치 중이 되면
+  // 잠긴다) — 조사 중 ➜ 조치 중은 관리자가 목록의 단계 선택으로 직접 넘긴다.
   async function saveActionTaken(item, action_taken) {
     if (!requireAdmin()) return;
     const stage = progressOf(item);
-    if (stage !== '조사 중') { showNotice('조사 중 단계에서만 조치사항을 작성할 수 있습니다.', true); return; }
+    if (stage !== '조치 중') { showNotice('조치 중 단계에서만 조치사항을 작성할 수 있습니다.', true); return; }
     try {
-      const logs = Array.isArray(item.progress_logs) ? item.progress_logs : [];
-      // 조사내역(진행상황 기록)이 이미 있고 조치사항도 채워지면 자동으로 조치 중으로 넘어간다.
-      const patch = { ...item, action_taken };
-      if (logs.length > 0 && String(action_taken || '').trim()) patch.progress = '조치 중';
-      const saved = await upsertUsagePoint(patch);
+      const saved = await upsertUsagePoint({ ...item, action_taken });
       setData(prev => prev.map(d => d.id === item.id ? saved : d));
       window.electronAPI?.notifyDataChanged?.();
       syncAfterChange();
-      showNotice(patch.progress === '조치 중' ? '조치사항이 저장되고 조치 중 단계로 넘어갔습니다.' : '조치사항이 저장되었습니다.');
+      showNotice('조치사항이 저장되었습니다.');
+    } catch (e) {
+      showNotice('저장 실패: ' + e.message, true);
+    }
+  }
+
+  // 조치사항까지 다 쓴 뒤, 관리자가 결론을 남기며 완료 또는 보류로 확정한다.
+  async function finalizeProgress(item, finalStage, conclusion) {
+    if (!requireAdmin()) return;
+    if (progressOf(item) !== '조치 중') { showNotice('조치 중 단계에서만 완료·보류로 처리할 수 있습니다.', true); return; }
+    try {
+      const saved = await upsertUsagePoint({ ...item, progress: finalStage, conclusion: String(conclusion || '').trim() });
+      setData(prev => prev.map(d => d.id === item.id ? saved : d));
+      window.electronAPI?.notifyDataChanged?.();
+      syncAfterChange();
+      showNotice(finalStage === '완료' ? '완료 처리되었습니다.' : '보류 처리되었습니다.');
     } catch (e) {
       showNotice('저장 실패: ' + e.message, true);
     }
@@ -649,7 +669,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
             className="px-3 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-200 disabled:opacity-50">
             {sharingPhotos ? '📤 공유 중…' : '📤 사진 공유'}
           </button>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="검색 (분류·작성자·작업자·실명·사용점번호 등)"
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="검색 (제목·분류·작성자·작업자·담당자·실명·사용점번호 등)"
             className="px-3 py-2 border border-gray-200 rounded-lg text-sm w-64" />
           <button onClick={openAdd} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">+ 추가</button>
         </div>
@@ -668,16 +688,16 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
           </p>
           <table>
             <colgroup>
-              <col style={{ width: '3%' }} /><col style={{ width: '7%' }} /><col style={{ width: '9%' }} />
-              <col style={{ width: '8%' }} /><col style={{ width: '8%' }} /><col style={{ width: '7%' }} />
-              <col style={{ width: '7%' }} /><col style={{ width: '11%' }} /><col style={{ width: '7%' }} />
-              <col style={{ width: '9%' }} /><col style={{ width: '17%' }} /><col style={{ width: '7%' }} />
+              <col style={{ width: '3%' }} /><col style={{ width: '10%' }} /><col style={{ width: '6%' }} /><col style={{ width: '8%' }} />
+              <col style={{ width: '7%' }} /><col style={{ width: '7%' }} /><col style={{ width: '6%' }} />
+              <col style={{ width: '6%' }} /><col style={{ width: '10%' }} /><col style={{ width: '6%' }} />
+              <col style={{ width: '8%' }} /><col style={{ width: '15%' }} /><col style={{ width: '6%' }} />
             </colgroup>
             <thead>
               <tr>
-                <th>번호</th><th>대분류</th><th>소분류</th><th>작성일</th><th>작업일</th>
+                <th>번호</th><th>제목</th><th>대분류</th><th>소분류</th><th>작성일</th><th>작업일</th>
                 <th>작성자</th><th>작업자</th><th>실명</th><th>실번호</th><th>사용점번호</th>
-                <th>사유</th><th>비고</th>
+                <th>내용</th><th>비고</th>
               </tr>
             </thead>
             <tbody>
@@ -688,6 +708,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                 <FragmentRow key={u.id}>
                   <tr style={{ pageBreakAfter: 'avoid', breakAfter: 'avoid' }}>
                     <td className="up-center">{i + 1}</td>
+                    <td>{u.title || ''}</td>
                     <td className="up-center">{u.major_category || ''}</td>
                     <td className="up-center">{u.minor_category || ''}</td>
                     <td className="up-center">{u.created_at || ''}</td>
@@ -701,9 +722,11 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                     <td>{u.note || ''}</td>
                   </tr>
                   <tr className="up-detail" style={{ pageBreakBefore: 'avoid', breakBefore: 'avoid' }}>
-                    <td colSpan={12}>
+                    <td colSpan={13}>
                       <div>진행상황 : {progressOf(u)}</div>
+                      <div>담당자 : {assigneesOf(u).join(', ')}{u.due_date ? ` (완료기한 ${u.due_date})` : ''}</div>
                       <div>조치사항 : {u.action_taken || ''}</div>
+                      {u.conclusion && <div>결론 : {u.conclusion}</div>}
                     </td>
                   </tr>
                 </FragmentRow>
@@ -762,6 +785,11 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+                제목
+                <span onMouseDown={e => startColResize(e, 'title')} draggable={false} onDragStart={e => e.preventDefault()}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+              </th>
+              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
                 대분류
                 <span onMouseDown={e => startColResize(e, 'major')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
@@ -802,7 +830,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
-                사유
+                내용
                 <span onMouseDown={e => startColResize(e, 'reason')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
@@ -845,8 +873,8 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                         progressOf(item) === PROGRESS_OPTIONS[0] ? (
                           <button onClick={() => quickSetProgress(item, '접수')}
                             className="text-xs rounded-full px-2.5 py-1 font-medium bg-gray-100 text-gray-600 hover:bg-sky-100 hover:text-sky-700"
-                            title="관리자가 확인했다는 뜻으로 접수 처리합니다 — 접수로 바꾸면 작성자는 더 이상 수정할 수 없습니다">
-                            신청 ➜ 접수
+                            title="눌러서 접수 처리합니다(관리자가 확인했다는 뜻) — 접수로 바뀌면 작성자는 더 이상 수정할 수 없습니다">
+                            신청
                           </button>
                         ) : (
                           <select value={progressOf(item)} onChange={e => quickSetProgress(item, e.target.value)}
@@ -858,6 +886,14 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                         <span className={`text-xs rounded-full px-2.5 py-1 font-medium inline-block ${PROGRESS_COLOR[progressOf(item)] || PROGRESS_COLOR[PROGRESS_OPTIONS[0]]}`}>{progressOf(item)}</span>
                       )}
                     </td>
+                    <td className="px-3 py-2 text-center text-gray-800 text-xs max-w-[140px] truncate">
+                      {/* 제목을 누르면 작성 팝업(상세보기)이 열린다 — 진행상황·조사내용·조치사항까지
+                          함께 보이므로 펼치기 화살표 없이도 전체를 볼 수 있다. */}
+                      <button onClick={() => openDetail(item)} className="hover:underline hover:text-blue-600 max-w-full truncate block mx-auto font-medium"
+                        title={item.title || '눌러서 상세보기'}>
+                        {item.title || '(제목 없음)'}
+                      </button>
+                    </td>
                     <td className="px-3 py-2 text-center text-gray-600">{item.major_category || '—'}</td>
                     <td className="px-3 py-2 text-center text-gray-600">{item.minor_category || '—'}</td>
                     <td className="px-3 py-2 text-center text-gray-500 text-xs">{formatDate(item.created_date)}</td>
@@ -866,13 +902,8 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                     <td className="px-3 py-2 text-center text-gray-600">{item.room_name || '—'}</td>
                     <td className="px-3 py-2 text-center text-gray-600">{item.room_number || '—'}</td>
                     <td className="px-3 py-2 text-center font-medium text-gray-800">{item.point_number || '—'}</td>
-                    <td className="px-3 py-2 text-center text-gray-500 text-xs max-w-[160px] truncate">
-                      {/* 목록 칸이 좁아 사유가 잘리므로, 눌러서 작성 팝업(상세보기)을 연다.
-                          진행상황·조치사항까지 함께 보이므로 펼치기 화살표 없이도 전체를 볼 수 있다. */}
-                      <button onClick={() => openDetail(item)} className="hover:underline hover:text-blue-600 max-w-full truncate block mx-auto"
-                        title={item.reason || '눌러서 상세보기'}>
-                        {item.reason || '—'}
-                      </button>
+                    <td className="px-3 py-2 text-center text-gray-500 text-xs max-w-[160px] truncate" title={item.reason || ''}>
+                      {item.reason || '—'}
                     </td>
                     <td className="px-3 py-2 text-center">
                       {(() => {
@@ -892,7 +923,9 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                       })()}
                     </td>
                     <td className="px-3 py-2 text-center text-gray-500 text-xs max-w-[140px] truncate" title={item.note || ''}>{item.note || '—'}</td>
-                    <td className="px-3 py-2 text-center text-gray-600 text-xs truncate">{item.assignee || '—'}</td>
+                    <td className="px-3 py-2 text-center text-gray-600 text-xs truncate" title={assigneesOf(item).join(', ')}>
+                      {assigneesOf(item).join(', ') || '—'}
+                    </td>
                     <td className="px-3 py-2 text-center text-xs">
                       {item.due_date ? (() => {
                         const d = dDayInfo(item.due_date);
@@ -919,7 +952,8 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                         <ProgressNotePanel item={item} adminUnlocked={adminUnlocked} currentMember={currentMember}
                           isAssignee={isAssigneeOf(item)}
                           onAppend={text => appendProgressLog(item, text)}
-                          onSaveAction={text => saveActionTaken(item, text)} />
+                          onSaveAction={text => saveActionTaken(item, text)}
+                          onFinalize={(stage, conclusion) => finalizeProgress(item, stage, conclusion)} />
                       </td>
                     </tr>
                   )}
@@ -946,6 +980,11 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                 때만 안의 입력칸을 한 번에 잠근다. */}
             <fieldset disabled={!!viewItem} className="contents">
             <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <label className="text-xs text-gray-500">제목</label>
+                <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.title}
+                  onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="목록에서 이 항목을 대표하는 제목" />
+              </div>
               <div>
                 <label className="text-xs text-gray-500">대분류</label>
                 <select className="w-full border rounded px-2 py-1.5 text-sm mt-0.5"
@@ -1000,7 +1039,9 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                 <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.point_number} onChange={e => setForm(f => ({ ...f, point_number: e.target.value }))} />
               </div>
               <div className="col-span-2">
-                <label className="text-xs text-gray-500">사유</label>
+                {/* 데이터 필드 이름(reason)은 예전 그대로 두고 화면 표시만 "내용"으로 바꿨다
+                    — 저장된 기존 데이터를 옮기지 않아도 되도록. */}
+                <label className="text-xs text-gray-500">내용</label>
                 <textarea className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" rows={2} value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} />
               </div>
               <div className="col-span-2">
@@ -1048,22 +1089,32 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
             {progressOf(form) !== PROGRESS_OPTIONS[0] && (
               <div className="border-t border-gray-100 pt-3">
                 <p className="text-xs font-semibold text-gray-500 mb-2">👤 담당자 배정</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-gray-500">담당자</label>
-                    <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.assignee || ''}
-                      disabled={!!viewItem}
-                      onChange={e => setForm(f => ({ ...f, assignee: e.target.value }))} placeholder="조사를 맡은 사람" />
-                  </div>
-                  <div>
-                    <label className="text-xs text-gray-500">완료기한</label>
-                    <input type="date" className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.due_date || ''}
-                      disabled={!!viewItem}
-                      onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} />
+                <div>
+                  <label className="text-xs text-gray-500">담당자 (여러 명 선택 가능)</label>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1.5 mt-1 border rounded px-2 py-1.5">
+                    {memberNames.length === 0 ? (
+                      <span className="text-xs text-gray-300">등록된 계정이 없습니다.</span>
+                    ) : memberNames.map(name => (
+                      <label key={name} className="flex items-center gap-1 text-xs text-gray-600 cursor-pointer select-none">
+                        <input type="checkbox" checked={form.assignees.includes(name)}
+                          disabled={!!viewItem}
+                          onChange={() => setForm(f => ({
+                            ...f,
+                            assignees: f.assignees.includes(name) ? f.assignees.filter(n => n !== name) : [...f.assignees, name],
+                          }))} />
+                        {name}
+                      </label>
+                    ))}
                   </div>
                 </div>
+                <div className="mt-3">
+                  <label className="text-xs text-gray-500">완료기한</label>
+                  <input type="date" className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.due_date || ''}
+                    disabled={!!viewItem}
+                    onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} />
+                </div>
                 {progressOf(form) === '접수' && (
-                  <p className="text-[11px] text-gray-400 mt-1.5">담당자와 완료기한을 모두 입력하고 저장하면 자동으로 조사 중 단계로 넘어갑니다.</p>
+                  <p className="text-[11px] text-gray-400 mt-1.5">담당자(1명 이상)와 완료기한을 모두 입력하고 저장하면 자동으로 조사 중 단계로 넘어갑니다.</p>
                 )}
               </div>
             )}
@@ -1080,7 +1131,8 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                   <ProgressNotePanel item={currentItem} adminUnlocked={adminUnlocked} currentMember={currentMember}
                     isAssignee={isAssigneeOf(currentItem)} className="py-3"
                     onAppend={text => appendProgressLog(currentItem, text)}
-                    onSaveAction={text => saveActionTaken(currentItem, text)} />
+                    onSaveAction={text => saveActionTaken(currentItem, text)}
+                    onFinalize={(stage, conclusion) => finalizeProgress(currentItem, stage, conclusion)} />
                 </div>
               );
             })()}
@@ -1210,28 +1262,33 @@ function FragmentRow({ children }) { return <>{children}</>; }
 // 진행상황은 고쳐 쓰는 메모가 아니라 기록(로그)이다. 저장할 때마다 내용·작성자·
 // 시각이 아래에 한 줄씩 쌓이고, 지난 기록은 고치거나 지울 수 없다.
 // 예전 방식(progress_note 한 칸에 덮어쓰기)으로 저장된 내용은 맨 위에 함께 보여준다.
-function ProgressNotePanel({ item, adminUnlocked, currentMember, isAssignee, onAppend, onSaveAction, className = 'px-8 py-3' }) {
+function ProgressNotePanel({ item, adminUnlocked, currentMember, isAssignee, onAppend, onSaveAction, onFinalize, className = 'px-8 py-3' }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [action, setAction] = useState(item.action_taken || '');
   const [actionBusy, setActionBusy] = useState(false);
+  const [finalizeModal, setFinalizeModal] = useState(null); // '완료' | '보류' | null
+  const [conclusion, setConclusion] = useState('');
+  const [finalizeBusy, setFinalizeBusy] = useState(false);
   const logs = Array.isArray(item.progress_logs) ? item.progress_logs : [];
   // 단계에 따라 어느 칸을 여는지 정한다 — 신청 ➜ 접수 ➜ 조사 중 ➜ 조치 중 ➜ 완료/보류.
   //  신청·접수     : 아직 배정 전이라 둘 다 잠김
-  //  조사 중       : 담당자(or 관리자)가 진행상황을 기록하고, 관리자가 조치사항을
-  //                  적는다 — 둘 다 채워지면 자동으로 조치 중으로 넘어간다
-  //  보류          : 조사 중으로 되돌아간 것처럼 진행상황은 계속 기록할 수 있다
-  //  조치 중·완료  : 둘 다 잠기고 남은 내역만 보인다(조치 중은 관리자가 완료/보류로
-  //                  직접 넘겨야 함)
+  //  조사 중       : 담당자(or 관리자)가 조사내용을 기록한다. 조치사항은 아직 잠김
+  //  조치 중       : 반대로 조사내용 기록은 잠기고, 관리자가 조치사항을 쓴다.
+  //                  조치사항을 저장하면 그 아래 완료/보류 버튼이 나타나고, 눌러
+  //                  결론을 적으면 그 단계로 확정된다
+  //  보류          : 조사 중으로 되돌아간 것처럼 조사내용은 계속 기록할 수 있다
+  //  완료          : 모두 잠기고 남은 내역만 보인다
   const stage = progressOf(item);
   const isDone = stage === '완료';
   const isActing = stage === '조치 중';
   const isInvestigating = stage === '조사 중';
   const isHold = stage === '보류';
-  const canWrite = (isInvestigating || isHold) && (adminUnlocked || isAssignee); // 진행상황 기록 입력
-  const canWriteAction = adminUnlocked && isInvestigating;                        // 조치사항 입력
-  // 조치사항은 조사 중부터 보이고, 한 번 작성한 내용은 이후 단계에서도 계속 보인다.
-  const showAction = isInvestigating || isActing || isDone || isHold || !!item.action_taken;
+  const canWrite = (isInvestigating || isHold) && (adminUnlocked || isAssignee); // 조사내용 기록 입력
+  const canWriteAction = adminUnlocked && isActing;                              // 조치사항 입력
+  // 조치사항은 조치 중부터 보이고, 한 번 작성한 내용은 이후 단계에서도 계속 보인다.
+  const showAction = isActing || isDone || isHold || !!item.action_taken;
+  const canFinalize = adminUnlocked && isActing && !!String(item.action_taken || '').trim();
 
   // 목록이 동기화로 갱신되면 조치사항 입력칸도 최신 값을 따라간다.
   useEffect(() => { setAction(item.action_taken || ''); }, [item.action_taken]);
@@ -1246,10 +1303,20 @@ function ProgressNotePanel({ item, adminUnlocked, currentMember, isAssignee, onA
     } finally { setBusy(false); }
   }
 
+  async function submitFinalize() {
+    if (!conclusion.trim() || finalizeBusy) return;
+    setFinalizeBusy(true);
+    try {
+      await onFinalize(finalizeModal, conclusion);
+      setFinalizeModal(null);
+      setConclusion('');
+    } finally { setFinalizeBusy(false); }
+  }
+
   return (
     <div className={className}>
       <div className="flex items-center gap-2 mb-2">
-        <span className="text-xs font-semibold text-gray-500">📝 진행상황 기록</span>
+        <span className="text-xs font-semibold text-gray-500">📝 조사내용 기록</span>
         <span className="text-[11px] text-gray-400">저장할 때마다 아래에 쌓이며, 지난 기록은 수정할 수 없습니다.</span>
       </div>
 
@@ -1258,7 +1325,7 @@ function ProgressNotePanel({ item, adminUnlocked, currentMember, isAssignee, onA
           <textarea value={text} onChange={e => setText(e.target.value)} rows={2}
             onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submit(); }}
             className="flex-1 border border-gray-200 rounded px-2 py-1.5 text-xs"
-            placeholder="조사내역을 입력하고 저장하세요 (Ctrl+Enter)" />
+            placeholder="조사내용을 입력하고 저장하세요 (Ctrl+Enter)" />
           <button disabled={!text.trim() || busy} onClick={submit}
             className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded font-semibold disabled:opacity-40 shrink-0">
             {busy ? '저장 중…' : '저장'}
@@ -1266,25 +1333,25 @@ function ProgressNotePanel({ item, adminUnlocked, currentMember, isAssignee, onA
         </div>
       )}
       {(stage === '신청' || stage === '접수') && (
-        <p className="text-[11px] text-gray-400 mb-2">담당자 배정 후 조사 중 단계부터 진행상황을 기록할 수 있습니다.</p>
+        <p className="text-[11px] text-gray-400 mb-2">담당자 배정 후 조사 중 단계부터 조사내용을 기록할 수 있습니다.</p>
       )}
       {adminUnlocked && isDone && (
         <p className="text-[11px] text-emerald-600 mb-2">
-          ✓ 완료 처리된 건입니다 — 진행상황·조치사항 모두 더 이상 수정할 수 없고 내역만 남습니다.
+          ✓ 완료 처리된 건입니다 — 조사내용·조치사항 모두 더 이상 수정할 수 없고 내역만 남습니다.
           다시 작성하려면 위 진행상황을 완료가 아닌 단계로 되돌리세요.
         </p>
       )}
       {isActing && (
         <p className="text-[11px] text-amber-600 mb-2">
-          조치 중 단계입니다 — 조사내역·조치사항이 모두 채워져 자동으로 넘어왔습니다. 완료되면 관리자가 완료 또는 보류로 바꿔주세요.
+          조치 중 단계입니다 — 조사내용 기록은 잠기고 아래 조치사항을 작성할 수 있습니다.
         </p>
       )}
       {!adminUnlocked && isInvestigating && !isAssignee && (
-        <p className="text-[11px] text-gray-400 mb-2">담당자({item.assignee || '—'}) 또는 관리자만 작성할 수 있습니다.</p>
+        <p className="text-[11px] text-gray-400 mb-2">담당자({assigneesOf(item).join(', ') || '—'}) 또는 관리자만 작성할 수 있습니다.</p>
       )}
 
       {logs.length === 0 && !item.progress_note ? (
-        <p className="text-xs text-gray-400">아직 작성된 진행상황이 없습니다.</p>
+        <p className="text-xs text-gray-400">아직 작성된 조사내용이 없습니다.</p>
       ) : (
         <div className="space-y-1.5">
           {/* 최신 기록이 위로 오도록 역순 표시 */}
@@ -1305,16 +1372,17 @@ function ProgressNotePanel({ item, adminUnlocked, currentMember, isAssignee, onA
         </div>
       )}
 
-      {/* 조치사항 — "조사 중"일 때 관리자가 작성한다. 조사내역과 함께 채워지면
-          자동으로 조치 중으로 넘어가면서 확정되어 잠긴다. */}
+      {/* 조치사항 — "조치 중"일 때 관리자가 작성한다. 저장되면 그 아래에 완료/보류
+          버튼이 나타나고, 눌러서 결론을 적으면 그 단계로 확정된다. */}
       {showAction && (
       <div className="mt-3 pt-3 border-t border-gray-200">
         <div className="flex items-center gap-2 mb-1.5">
           <span className="text-xs font-semibold text-emerald-700">✅ 조치사항</span>
           <span className="text-[11px] text-gray-400">
             {isDone ? '완료되어 확정된 내용입니다'
-              : isInvestigating ? '조사내역과 함께 채워지면 자동으로 조치 중으로 넘어갑니다'
-              : '조사 중 단계에서만 작성할 수 있습니다'}
+              : isHold ? '보류 처리되어 확정된 내용입니다'
+              : isActing ? '작성 후 아래에서 완료 또는 보류로 처리하세요'
+              : '조치 중 단계에서만 작성할 수 있습니다'}
           </span>
         </div>
         {canWriteAction ? (
@@ -1332,7 +1400,43 @@ function ProgressNotePanel({ item, adminUnlocked, currentMember, isAssignee, onA
         ) : (
           <p className="text-xs text-gray-600 whitespace-pre-wrap">{item.action_taken || '아직 작성된 조치사항이 없습니다.'}</p>
         )}
+
+        {canFinalize && (
+          <div className="flex gap-2 mt-2">
+            <button onClick={() => { setConclusion(''); setFinalizeModal('완료'); }}
+              className="flex-1 py-1.5 bg-emerald-600 text-white rounded text-xs font-semibold hover:bg-emerald-700">완료</button>
+            <button onClick={() => { setConclusion(''); setFinalizeModal('보류'); }}
+              className="flex-1 py-1.5 bg-red-500 text-white rounded text-xs font-semibold hover:bg-red-600">보류</button>
+          </div>
+        )}
+
+        {item.conclusion && (isDone || isHold) && (
+          <div className="mt-3 pt-3 border-t border-gray-200">
+            <p className="text-xs font-semibold text-gray-700 mb-1">🏁 결론</p>
+            <p className="text-xs text-gray-600 whitespace-pre-wrap">{item.conclusion}</p>
+          </div>
+        )}
       </div>
+      )}
+
+      {finalizeModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[500] p-4" onClick={() => setFinalizeModal(null)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-5 space-y-3" onClick={e => e.stopPropagation()}>
+            <h3 className="font-bold text-gray-800">{finalizeModal === '완료' ? '완료 처리' : '보류 처리'}</h3>
+            <div>
+              <label className="text-xs text-gray-500">결론</label>
+              <textarea value={conclusion} onChange={e => setConclusion(e.target.value)} rows={3}
+                className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" placeholder="최종 결론을 입력하세요" />
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button onClick={submitFinalize} disabled={!conclusion.trim() || finalizeBusy}
+                className={`flex-1 py-2 rounded text-sm font-medium text-white disabled:opacity-40 ${finalizeModal === '완료' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-red-500 hover:bg-red-600'}`}>
+                {finalizeBusy ? '처리 중…' : `${finalizeModal} 처리`}
+              </button>
+              <button onClick={() => setFinalizeModal(null)} className="flex-1 py-2 border border-gray-200 rounded text-sm text-gray-600 hover:bg-gray-50">취소</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
