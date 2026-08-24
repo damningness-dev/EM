@@ -105,6 +105,11 @@ export default function SyncControl({ adminUnlocked }) {
             </div>
           </div>
           {statusText && <div className={`mb-1.5 ${status?.type === 'error' ? 'text-red-400' : 'text-blue-400'}`}>{statusText}</div>}
+          {cfg.pendingLocal && !cfg.hasToken && (
+            <div className="mb-1.5 text-amber-400" title="이 PC에 GitHub 토큰이 없어 방금 바뀐 내용이 다른 PC와 아직 공유되지 않았습니다.">
+              ⚠ 이 PC에만 저장된 변경 있음 (토큰 필요)
+            </div>
+          )}
           <button onClick={doPull} disabled={busy || onCooldown}
             title={onCooldown ? `너무 자주 요청하지 않도록 잠시 후 다시 시도하세요 (${cooldownLeft}초)` : undefined}
             className="w-full py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed">
