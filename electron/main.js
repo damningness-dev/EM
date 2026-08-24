@@ -1789,7 +1789,14 @@ function registerHandlers() {
     saveData(data);
     return { ok: true };
   });
-  ipcMain.handle('members:login', (_e, { username, password } = {}) => {
+  ipcMain.handle('members:login', async (_e, { username, password } = {}) => {
+    // 다른 PC에서 방금 바꾼 비밀번호·권한이 자동 동기화 주기(기본 5분)를 기다리지
+    // 않고도 바로 반영되도록, 로그인 시도 시 먼저 최신 데이터를 받아온다. 이게
+    // 없으면 "분명 새 비밀번호로 바꿨는데 다른 PC에서 로그인이 안 된다"가 생긴다
+    // — 그 PC의 자동 동기화가 아직 안 돌았을 뿐인데도 실패로 보인다. 오프라인 등
+    // 실패해도 로그인 자체는 막지 않고 갖고 있는 로컬 데이터로 계속 진행한다.
+    const syncCfg = loadSyncConfig();
+    if (syncCfg.gistId) { try { await syncPull(false); } catch { /* 무시하고 로컬로 계속 */ } }
     const data = loadData();
     const m = (data.memberAccounts || []).find(m => m.username === String(username || '').trim());
     if (!m || hashPassword(password) !== m.passwordHash) return { ok: false, error: '사용자이름 또는 비밀번호가 올바르지 않습니다' };
