@@ -302,6 +302,24 @@ function getDataPath() {
   return path.join(app.getPath('userData'), 'em-data.json');
 }
 
+// 계정은 id 기준으로 병합되는데(COLLAB_KEYS), 계정이 "기준 PC 전용"이던 시절
+// (50e1fea 이전)에는 서로 다른 PC에서 독립적으로 같은 이름의 계정이 각각
+// 만들어질 수 있었다 — id가 다르니 병합돼도 지워지지 않고 둘 다 남는다.
+// 로그인은 사용자이름으로 첫 번째 일치 항목을 찾으므로, 관리자가 권한 설정
+// 에서 고친 건 최신 계정인데 로그인은 우연히 먼저 걸리는 옛 중복 계정과
+// 비교되어 "분명 바꿨는데 안 된다"가 될 수 있다 — 불러올 때마다 같은
+// 사용자이름은 가장 최근에 수정된 것 하나만 남긴다.
+function dedupeMemberAccountsByUsername(list) {
+  if (!Array.isArray(list)) return list;
+  const byName = new Map();
+  for (const m of list) {
+    if (!m || !m.username) continue;
+    const prev = byName.get(m.username);
+    if (!prev || (m.updatedAt || '') >= (prev.updatedAt || '')) byName.set(m.username, m);
+  }
+  return [...byName.values()];
+}
+
 function loadData() {
   const p = getDataPath();
   if (!fs.existsSync(p)) {
@@ -316,6 +334,7 @@ function loadData() {
     if (!data.blockedDates) data.blockedDates = [];
     if (!data.annualPlanAhus) data.annualPlanAhus = [...DEFAULT_AHUS];
     if (!data.memberAccounts) data.memberAccounts = [];
+    data.memberAccounts = dedupeMemberAccountsByUsername(data.memberAccounts);
     if (!data.scheduleAssignees) data.scheduleAssignees = {};
     if (!data.usagePoints) data.usagePoints = [];
     if (!data.usagePointCategories) data.usagePointCategories = { ...DEFAULT_USAGE_POINT_CATEGORIES };
@@ -1796,10 +1815,21 @@ function registerHandlers() {
     // — 그 PC의 자동 동기화가 아직 안 돌았을 뿐인데도 실패로 보인다. 오프라인 등
     // 실패해도 로그인 자체는 막지 않고 갖고 있는 로컬 데이터로 계속 진행한다.
     const syncCfg = loadSyncConfig();
-    if (syncCfg.gistId) { try { await syncPull(false); } catch { /* 무시하고 로컬로 계속 */ } }
+    let syncFailed = false;
+    if (syncCfg.gistId) {
+      try {
+        const r = await syncPull(false);
+        if (!r?.ok) syncFailed = true;
+      } catch { syncFailed = true; }
+    }
     const data = loadData();
     const m = (data.memberAccounts || []).find(m => m.username === String(username || '').trim());
-    if (!m || hashPassword(password) !== m.passwordHash) return { ok: false, error: '사용자이름 또는 비밀번호가 올바르지 않습니다' };
+    if (!m || hashPassword(password) !== m.passwordHash) {
+      // 비밀번호가 틀렸다고 확정하기 전에, 방금 최신 정보를 못 받아왔다는 것도
+      // 함께 알려준다 — 안 그러면 "다른 PC에서 방금 바꾼 비밀번호가 아직 이
+      // PC에 반영되지 않은 것"과 "정말 비밀번호가 틀린 것"을 구분할 수 없다.
+      return { ok: false, error: '사용자이름 또는 비밀번호가 올바르지 않습니다', syncFailed };
+    }
     return { ok: true, member: { id: m.id, username: m.username, allowedTabs: m.allowedTabs || [], isAdmin: !!m.isAdmin } };
   });
   // 로그인한 본인이 관리자 도움 없이 직접 비밀번호를 바꾼다(현재 비밀번호 확인 필요).

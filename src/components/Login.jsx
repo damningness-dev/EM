@@ -19,6 +19,7 @@ export default function Login({ onClose, onLoggedIn }) {
     try {
       const r = await memberLogin(username.trim(), password);
       if (r?.ok) onLoggedIn(r.member, remember);
+      else if (r?.syncFailed) setError('최신 계정 정보를 확인하지 못했습니다(인터넷 연결 확인). 다른 PC에서 방금 바뀐 비밀번호라면 연결 후 다시 시도하세요. ' + (r?.error || ''));
       else setError(r?.error || '로그인 실패');
     } catch (err) { setError('오류: ' + err.message); }
     finally { setBusy(false); }
