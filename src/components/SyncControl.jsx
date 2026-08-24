@@ -25,7 +25,7 @@ export default function SyncControl({ adminUnlocked }) {
     if (!window.electronAPI?.onSyncStatus) return;
     return window.electronAPI.onSyncStatus((s) => {
       setStatus(s);
-      if (s.type === 'updated' || s.type === 'uploaded' || s.type === 'idle') reload();
+      if (s.type === 'updated' || s.type === 'uploaded' || s.type === 'idle' || s.type === 'pending') reload();
     });
   }, [reload]);
 

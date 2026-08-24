@@ -507,6 +507,10 @@ function markPendingLocal() {
     if (!cfg.pendingLocalSince) {      // 이미 표시돼 있으면 시각을 갱신하지 않는다
       cfg.pendingLocalSince = new Date().toISOString();
       saveSyncConfig(cfg);
+      // 사이드바가 "이 PC에만 저장된 변경" 경고를 곧바로 반영하도록 알린다 —
+      // 이게 없으면 그 표시를 만든 화면(예: 권한 설정 팝업)을 서둘러 닫아버렸을 때
+      // 사이드바도 다음에 뭔가 다른 계기로 새로고침되기 전까진 계속 조용하다.
+      sendSyncStatus({ type: 'pending' });
     }
     schedulePush();
   } catch { /* ignore */ }
