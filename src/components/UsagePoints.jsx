@@ -11,29 +11,38 @@ const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
 
 const MAJOR_CATEGORIES = ['공조', '가스', '용수', '기타'];
 const DEFAULT_CATEGORIES = { '공조': [], '가스': [], '용수': [], '기타': [] };
-const PROGRESS_OPTIONS = ['신청', '조사 중', '조치 중', '완료', '보류'];
-// 예전에 저장된 값(접수·진행중)은 새 단계로 바꿔 읽는다 — 저장된 데이터를 손대지
-// 않고도 화면·필터·색상이 새 구성으로 일관되게 동작하게 하기 위함.
-const LEGACY_PROGRESS = { '접수': '신청', '진행중': '조치 중' };
+const PROGRESS_OPTIONS = ['신청', '접수', '조치 중', '완료', '보류'];
+// 예전에 저장된 값(진행중)은 새 단계로 바꿔 읽는다 — 저장된 데이터를 손대지
+// 않고도 화면·필터·색상이 새 구성으로 일관되게 동작하게 하기 위함. '접수'는
+// 예전엔 첫 단계였지만 지금은 두 번째 단계 이름으로 다시 쓰이므로 그대로 둔다.
+const LEGACY_PROGRESS = { '진행중': '조치 중' };
 function progressOf(item) {
   const v = item?.progress || '';
   return LEGACY_PROGRESS[v] || v || PROGRESS_OPTIONS[0];
 }
 const PROGRESS_COLOR = {
   '신청': 'bg-gray-100 text-gray-600',
-  '조사 중': 'bg-blue-100 text-blue-700',
+  '접수': 'bg-blue-100 text-blue-700',
   '조치 중': 'bg-amber-100 text-amber-700',
   '완료': 'bg-emerald-100 text-emerald-700',
   '보류': 'bg-red-100 text-red-700',
 };
 const USAGEPOINT_COLS = 15; // No.·작업자 열 추가
 
+// 목록 표 열 너비 — 헤더 사이 구분선을 드래그해 조절할 수 있다(교정관리와 같은 방식).
+const UP_COL_KEYS = ['no', 'expand', 'major', 'minor', 'workDate', 'author', 'worker', 'room', 'roomNo', 'point', 'reason', 'photo', 'progress', 'note', 'manage'];
+const UP_COL_DEFAULT_W = {
+  no: 44, expand: 28, major: 76, minor: 90, workDate: 96, author: 76, worker: 76,
+  room: 90, roomNo: 76, point: 100, reason: 160, photo: 76, progress: 110, note: 140, manage: 96,
+};
+const UP_COL_STORE_KEY = 'em-usagepoints-table-cols';
+
 function todayStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-// 조사 중 단계의 기한을 D-day로 표시한다. 지났으면 D+n(빨강), 오늘이면 D-DAY(빨강),
+// 접수 단계의 기한을 D-day로 표시한다. 지났으면 D+n(빨강), 오늘이면 D-DAY(빨강),
 // 임박(3일 이하)이면 주황, 그 외엔 회색.
 function dDayInfo(dueDate) {
   if (!dueDate) return null;
@@ -64,7 +73,7 @@ function emptyForm(currentMember) {
     major_category: '', minor_category: '', created_date: todayStr(), created_at: '',
     author_id: currentMember?.id || '', author_name: currentMember?.username || '',
     worker_name: '',
-    assignee: '', due_date: '', // 조사 중 담당자·기한
+    assignee: '', due_date: '', // 접수 단계 담당자·기한
     room_name: '', room_number: '', point_number: '', reason: '',
     photos: [], // [{ id, thumb, fileName, filePath, gistKey }, ...]
     progress: PROGRESS_OPTIONS[0], progress_note: '', progress_logs: [], action_taken: '', note: '',
@@ -101,7 +110,8 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   const [search, setSearch] = useState('');
   const [majorFilter, setMajorFilter] = useState('all');
   // 기본값은 미완료 — 처리해야 할 건이 먼저 보이도록.
-  const [doneFilter, setDoneFilter] = useState('open'); // 'all' | 'open'(미완료) | 'done'(완료)
+  // 'all'(전체) | 'open'(완료 제외 전체) | PROGRESS_OPTIONS 중 하나(그 단계만)
+  const [doneFilter, setDoneFilter] = useState('open');
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   // null이면 평소처럼 수정 가능한 팝업. 항목이 들어있으면 "상세보기"로 열렸는데
@@ -119,6 +129,19 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   const [sharingPhotos, setSharingPhotos] = useState(false);
   const [printing, setPrinting] = useState(false);
   const printRef = useRef(null);
+  const [colW, setColW] = useState(() => {
+    try { const s = JSON.parse(localStorage.getItem(UP_COL_STORE_KEY)); if (s && typeof s === 'object') return s; } catch { /* ignore */ }
+    return {};
+  });
+  useEffect(() => { try { localStorage.setItem(UP_COL_STORE_KEY, JSON.stringify(colW)); } catch { /* ignore */ } }, [colW]);
+  const colWidth = k => colW[k] ?? UP_COL_DEFAULT_W[k];
+  function startColResize(e, key) {
+    e.preventDefault(); e.stopPropagation();
+    const startX = e.clientX, startW = colWidth(key);
+    const onMove = ev => setColW(prev => ({ ...prev, [key]: Math.max(24, startW + ev.clientX - startX) }));
+    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
+  }
   const [showCatManager, setShowCatManager] = useState(false);
   const [catDraft, setCatDraft] = useState(null);
   const [newMinor, setNewMinor] = useState({});
@@ -224,9 +247,10 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   const filtered = useMemo(() => {
     let list = data;
     if (majorFilter !== 'all') list = list.filter(u => u.major_category === majorFilter);
-    // 완료만 "완료"이고 나머지(신청·조사 중·조치 중·보류)는 모두 미완료로 묶는다.
-    if (doneFilter === 'done') list = list.filter(u => progressOf(u) === '완료');
-    else if (doneFilter === 'open') list = list.filter(u => progressOf(u) !== '완료');
+    // '미완료'는 완료를 제외한 전체(신청·접수·조치 중·보류)를 묶어 보여준다.
+    // 그 외 값은 PROGRESS_OPTIONS 중 하나를 그대로 받아 그 단계만 정확히 걸러낸다.
+    if (doneFilter === 'open') list = list.filter(u => progressOf(u) !== '완료');
+    else if (doneFilter !== 'all') list = list.filter(u => progressOf(u) === doneFilter);
     const q = search.trim().toLowerCase();
     if (q) {
       list = list.filter(u => [u.major_category, u.minor_category, u.author_name, u.worker_name, u.room_name, u.room_number, u.point_number, u.reason, u.note]
@@ -644,15 +668,17 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
 
       <div className="flex items-center gap-1.5 flex-wrap">
         <span className="text-xs text-gray-400 mr-1">상태</span>
-        {[['all', '전체'], ['open', '미완료'], ['done', '완료']].map(([v, label]) => {
+        {[['all', '전체'], ['open', '미완료'], ...PROGRESS_OPTIONS.map(p => [p, p])].map(([v, label]) => {
           const count = v === 'all' ? data.length
-            : v === 'done' ? data.filter(u => progressOf(u) === '완료').length
-            : data.filter(u => progressOf(u) !== '완료').length;
+            : v === 'open' ? data.filter(u => progressOf(u) !== '완료').length
+            : data.filter(u => progressOf(u) === v).length;
+          const activeCls = v === '완료' ? 'bg-emerald-600 text-white border-emerald-600'
+            : v === 'open' ? 'bg-amber-500 text-white border-amber-500'
+            : v === '보류' ? 'bg-red-500 text-white border-red-500'
+            : 'bg-blue-600 text-white border-blue-600';
           return (
             <button key={v} onClick={() => setDoneFilter(v)}
-              className={`px-3 py-1 rounded-full text-xs font-medium border ${doneFilter === v
-                ? (v === 'done' ? 'bg-emerald-600 text-white border-emerald-600' : v === 'open' ? 'bg-amber-500 text-white border-amber-500' : 'bg-blue-600 text-white border-blue-600')
-                : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+              className={`px-3 py-1 rounded-full text-xs font-medium border ${doneFilter === v ? activeCls : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
               {label} {count}
             </button>
           );
@@ -670,23 +696,79 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
-        <table className="text-sm w-full">
+        <table className="text-sm" style={{ tableLayout: 'fixed', width: UP_COL_KEYS.reduce((s, k) => s + colWidth(k), 0) }}>
+          <colgroup>{UP_COL_KEYS.map(k => <col key={k} style={{ width: colWidth(k) }} />)}</colgroup>
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200">
-              <th className="px-2 py-3 text-gray-500 font-medium text-center">No.</th>
-              <th className="px-1 py-3"></th>
-              <th className="px-3 py-3 text-gray-500 font-medium text-center">대분류</th>
-              <th className="px-3 py-3 text-gray-500 font-medium text-center">소분류</th>
-              <th className="px-3 py-3 text-gray-500 font-medium text-center">작업일</th>
-              <th className="px-3 py-3 text-gray-500 font-medium text-center">작성자</th>
-              <th className="px-3 py-3 text-gray-500 font-medium text-center">작업자</th>
-              <th className="px-3 py-3 text-gray-500 font-medium text-center">실명</th>
-              <th className="px-3 py-3 text-gray-500 font-medium text-center">실번호</th>
-              <th className="px-3 py-3 text-gray-500 font-medium text-center">사용점번호</th>
-              <th className="px-3 py-3 text-gray-500 font-medium text-center">사유</th>
-              <th className="px-3 py-3 text-gray-500 font-medium text-center">사진</th>
-              <th className="px-3 py-3 text-gray-500 font-medium text-center">진행상황</th>
-              <th className="px-3 py-3 text-gray-500 font-medium text-center">비고</th>
+              <th className="relative px-2 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+                No.
+                <span onMouseDown={e => startColResize(e, 'no')} draggable={false} onDragStart={e => e.preventDefault()}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+              </th>
+              <th className="relative px-1 py-3 border-r border-gray-200">
+                <span onMouseDown={e => startColResize(e, 'expand')} draggable={false} onDragStart={e => e.preventDefault()}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+              </th>
+              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+                대분류
+                <span onMouseDown={e => startColResize(e, 'major')} draggable={false} onDragStart={e => e.preventDefault()}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+              </th>
+              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+                소분류
+                <span onMouseDown={e => startColResize(e, 'minor')} draggable={false} onDragStart={e => e.preventDefault()}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+              </th>
+              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+                작업일
+                <span onMouseDown={e => startColResize(e, 'workDate')} draggable={false} onDragStart={e => e.preventDefault()}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+              </th>
+              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+                작성자
+                <span onMouseDown={e => startColResize(e, 'author')} draggable={false} onDragStart={e => e.preventDefault()}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+              </th>
+              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+                작업자
+                <span onMouseDown={e => startColResize(e, 'worker')} draggable={false} onDragStart={e => e.preventDefault()}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+              </th>
+              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+                실명
+                <span onMouseDown={e => startColResize(e, 'room')} draggable={false} onDragStart={e => e.preventDefault()}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+              </th>
+              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+                실번호
+                <span onMouseDown={e => startColResize(e, 'roomNo')} draggable={false} onDragStart={e => e.preventDefault()}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+              </th>
+              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+                사용점번호
+                <span onMouseDown={e => startColResize(e, 'point')} draggable={false} onDragStart={e => e.preventDefault()}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+              </th>
+              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+                사유
+                <span onMouseDown={e => startColResize(e, 'reason')} draggable={false} onDragStart={e => e.preventDefault()}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+              </th>
+              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+                사진
+                <span onMouseDown={e => startColResize(e, 'photo')} draggable={false} onDragStart={e => e.preventDefault()}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+              </th>
+              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+                진행상황
+                <span onMouseDown={e => startColResize(e, 'progress')} draggable={false} onDragStart={e => e.preventDefault()}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+              </th>
+              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+                비고
+                <span onMouseDown={e => startColResize(e, 'note')} draggable={false} onDragStart={e => e.preventDefault()}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+              </th>
               <th className="px-3 py-3 text-gray-500 font-medium text-center">관리</th>
             </tr>
           </thead>
@@ -734,13 +816,13 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                         );
                       })()}
                     </td>
-                    <td className="px-3 py-2 text-center">
+                    <td className="px-3 py-2 text-left align-top">
                       {adminUnlocked ? (
                         progressOf(item) === PROGRESS_OPTIONS[0] ? (
-                          <button onClick={() => quickSetProgress(item, '조사 중')}
+                          <button onClick={() => quickSetProgress(item, '접수')}
                             className="text-xs rounded-full px-2.5 py-1 font-medium bg-gray-100 text-gray-600 hover:bg-amber-100 hover:text-amber-700"
-                            title="다음 단계로 넘기기 — 조사 중으로 바꾸면 작성자는 더 이상 수정할 수 없습니다">
-                            신청 ➜ 조사 중
+                            title="다음 단계로 넘기기 — 접수로 바꾸면 작성자는 더 이상 수정할 수 없습니다">
+                            신청 ➜ 접수
                           </button>
                         ) : (
                           <select value={progressOf(item)} onChange={e => quickSetProgress(item, e.target.value)}
@@ -751,8 +833,8 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                       ) : (
                         <span className={`text-xs rounded-full px-2.5 py-1 font-medium inline-block ${PROGRESS_COLOR[progressOf(item)] || PROGRESS_COLOR[PROGRESS_OPTIONS[0]]}`}>{progressOf(item)}</span>
                       )}
-                      {/* 조사 중일 때만 담당자·기한을 함께 보여준다 — 다른 단계에서는 의미가 없으므로. */}
-                      {progressOf(item) === '조사 중' && (item.assignee || item.due_date) && (
+                      {/* 접수 단계일 때만 담당자·기한을 함께 보여준다 — 다른 단계에서는 의미가 없으므로. */}
+                      {progressOf(item) === '접수' && (item.assignee || item.due_date) && (
                         <div className="text-[11px] text-gray-500 mt-1 leading-tight">
                           {item.assignee && <div className="truncate">👤 {item.assignee}</div>}
                           {item.due_date && (() => {
@@ -900,20 +982,20 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
             </div>
             </fieldset>
 
-            {/* 조사 담당자·기한 — 신청 단계에서는 아직 조사를 배정하기 전이라 숨기고,
-                조사 중으로 넘어간 뒤부터(그 이후 단계 포함) 보여준다. */}
+            {/* 접수 담당자·기한 — 신청 단계에서는 아직 담당자를 배정하기 전이라 숨기고,
+                접수로 넘어간 뒤부터(그 이후 단계 포함) 보여준다. */}
             {progressOf(form) !== PROGRESS_OPTIONS[0] && (
               <div className="border-t border-gray-100 pt-3">
-                <p className="text-xs font-semibold text-gray-500 mb-2">🔍 조사 정보</p>
+                <p className="text-xs font-semibold text-gray-500 mb-2">🔍 접수 정보</p>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs text-gray-500">조사 담당자</label>
+                    <label className="text-xs text-gray-500">접수 담당자</label>
                     <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.assignee || ''}
                       disabled={!!viewItem}
-                      onChange={e => setForm(f => ({ ...f, assignee: e.target.value }))} placeholder="조사를 맡은 사람" />
+                      onChange={e => setForm(f => ({ ...f, assignee: e.target.value }))} placeholder="접수를 맡은 사람" />
                   </div>
                   <div>
-                    <label className="text-xs text-gray-500">조사 기한</label>
+                    <label className="text-xs text-gray-500">접수 기한</label>
                     <input type="date" className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.due_date || ''}
                       disabled={!!viewItem}
                       onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} />
@@ -1067,7 +1149,7 @@ function ProgressNotePanel({ item, adminUnlocked, currentMember, onAppend, onSav
   const [actionBusy, setActionBusy] = useState(false);
   const logs = Array.isArray(item.progress_logs) ? item.progress_logs : [];
   // 단계에 따라 어느 칸을 여는지 정한다.
-  //  신청·조사 중 : 진행상황만 기록 (조치사항은 아직 숨김)
+  //  신청·접수   : 진행상황만 기록 (조치사항은 아직 숨김)
   //  조치 중      : 진행상황은 잠기고 조치사항을 작성
   //  완료         : 두 칸 모두 잠기고 남은 내역만 보인다
   const stage = progressOf(item);
