@@ -749,11 +749,14 @@ function explainGistError(err) {
 }
 
 // 모든 PC가 함께 쓰는(누구나 추가·수정하고 서로 공유하는) 항목.
-// 업무별 진행상황(사용점)과 SOP 글·태그가 여기에 해당한다. 나머지(월간모니터링·
-// 구역별현황·간트차트·연간계획·교정관리·주간근무·계정 설정 등)는 "기준 PC"
+// 업무별 진행상황(사용점)과 SOP 글·태그, 계정(memberAccounts)이 여기에 해당한다.
+// 계정은 "기준 PC가 아니어도 관리자로 로그인해 권한 설정에서 바꾼 내용"이 흔한
+// 경우라 — 기준 PC 전용으로 두면 다른 PC에서 바꾼 비밀번호·권한이 다음 동기화
+// 때 원격(기준 PC) 값으로 조용히 되돌아가 버린다(실제로 겪은 문제). 나머지
+// (월간모니터링·구역별현황·간트차트·연간계획·교정관리·주간근무 등)는 "기준 PC"
 // (sync-config의 role='admin')의 내용이 공유 기준이 되고, 일반 PC가 올릴 때는
 // 건드리지 않는다.
-const COLLAB_KEYS = ['usagePoints', 'sops', 'sopTags'];
+const COLLAB_KEYS = ['usagePoints', 'sops', 'sopTags', 'memberAccounts'];
 
 // 일반 PC가 올릴 내용을 만든다 — 원격(기준 PC가 올린 내용)을 그대로 두고,
 // 함께 쓰는 항목만 이 PC 내용을 합쳐 넣는다. 이렇게 해야 일반 PC가 사용점을
@@ -761,6 +764,10 @@ const COLLAB_KEYS = ['usagePoints', 'sops', 'sopTags'];
 function buildMemberUpload(remoteData, localData) {
   const out = { ...remoteData };
   for (const key of COLLAB_KEYS) out[key] = mergeListById(remoteData?.[key], localData?.[key]);
+  // guestAllowedTabs(로그인하지 않았을 때 보이는 메뉴)는 목록이 아니라 값 하나라
+  // id 기준으로 합칠 수 없다. memberAccounts와 같은 권한 설정 화면에서 바뀌는
+  // 값이니 같은 원칙으로, 이 PC에서 방금 고친 값이 항상 반영되게 한다.
+  if (localData && 'guestAllowedTabs' in localData) out.guestAllowedTabs = localData.guestAllowedTabs;
   // 첨부파일 보관용 Gist ID는 한 번 정해지면 계속 써야 하므로 있는 쪽을 남긴다.
   if (!out.attachGistId && localData?.attachGistId) out.attachGistId = localData.attachGistId;
   return out;
@@ -1750,6 +1757,10 @@ function registerHandlers() {
       // 토큰: clearToken이면 삭제, token이 오면(빈 값 아니면) 교체, 안 오면 기존 값 유지.
       if (member.clearToken) delete data.memberAccounts[idx].token;
       else if (member.token) data.memberAccounts[idx].token = obfuscateToken(String(member.token).trim());
+      // 계정은 여러 PC가 함께 고칠 수 있어(COLLAB_KEYS), 어느 쪽이 최신인지
+      // 판단하는 기준으로 쓴다 — 없으면 병합 시 두 쪽 다 "가장 오래됨"으로 취급돼
+      // 어느 편집이 이겨야 할지 정확히 가려지지 않는다.
+      data.memberAccounts[idx].updatedAt = new Date().toISOString();
       saveData(data);
       broadcastAdminUnlocked();
       return { ok: true, id: member.id };
@@ -1762,7 +1773,7 @@ function registerHandlers() {
     }
     if (!member.password) return { ok: false, error: '비밀번호를 입력하세요' };
     const id = newId();
-    const newMember = { id, username, passwordHash: hashPassword(member.password), allowedTabs, isAdmin: !!member.isAdmin };
+    const newMember = { id, username, passwordHash: hashPassword(member.password), allowedTabs, isAdmin: !!member.isAdmin, updatedAt: new Date().toISOString() };
     if (member.token) newMember.token = obfuscateToken(String(member.token).trim());
     data.memberAccounts.push(newMember);
     saveData(data);
@@ -1795,6 +1806,7 @@ function registerHandlers() {
     }
     if (!newPassword) return { ok: false, error: '새 비밀번호를 입력하세요' };
     data.memberAccounts[idx].passwordHash = hashPassword(newPassword);
+    data.memberAccounts[idx].updatedAt = new Date().toISOString();
     saveData(data);
     return { ok: true };
   });
