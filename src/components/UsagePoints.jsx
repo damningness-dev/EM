@@ -11,10 +11,13 @@ const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
 
 const MAJOR_CATEGORIES = ['공조', '가스', '용수', '기타'];
 const DEFAULT_CATEGORIES = { '공조': [], '가스': [], '용수': [], '기타': [] };
-const PROGRESS_OPTIONS = ['신청', '접수', '조치 중', '완료', '보류'];
+// 신청 → 접수 → 조사 중 → 조치 중 → 완료/보류 순서로 진행된다. 신청·접수는
+// 관리자가 직접 다음 단계로 넘기고(버튼 클릭), 조사 중·조치 중은 관련 정보가
+// 채워지면 자동으로 넘어간다(아래 handleSave·appendProgressLog·saveActionTaken
+// 참고) — 완료·보류는 조치가 끝난 뒤 관리자가 직접 고른다.
+const PROGRESS_OPTIONS = ['신청', '접수', '조사 중', '조치 중', '완료', '보류'];
 // 예전에 저장된 값(진행중)은 새 단계로 바꿔 읽는다 — 저장된 데이터를 손대지
-// 않고도 화면·필터·색상이 새 구성으로 일관되게 동작하게 하기 위함. '접수'는
-// 예전엔 첫 단계였지만 지금은 두 번째 단계 이름으로 다시 쓰이므로 그대로 둔다.
+// 않고도 화면·필터·색상이 새 구성으로 일관되게 동작하게 하기 위함.
 const LEGACY_PROGRESS = { '진행중': '조치 중' };
 function progressOf(item) {
   const v = item?.progress || '';
@@ -22,27 +25,30 @@ function progressOf(item) {
 }
 const PROGRESS_COLOR = {
   '신청': 'bg-gray-100 text-gray-600',
-  '접수': 'bg-blue-100 text-blue-700',
+  '접수': 'bg-sky-100 text-sky-700',
+  '조사 중': 'bg-indigo-100 text-indigo-700',
   '조치 중': 'bg-amber-100 text-amber-700',
   '완료': 'bg-emerald-100 text-emerald-700',
   '보류': 'bg-red-100 text-red-700',
 };
-const USAGEPOINT_COLS = 15; // No.·작업자 열 추가
+const USAGEPOINT_COLS = 16; // No.(화살표 합침)+담당자+완료기한
 
 // 목록 표 열 너비 — 헤더 사이 구분선을 드래그해 조절할 수 있다(교정관리와 같은 방식).
-const UP_COL_KEYS = ['no', 'expand', 'major', 'minor', 'workDate', 'author', 'worker', 'room', 'roomNo', 'point', 'reason', 'photo', 'progress', 'note', 'manage'];
+// 화살표(펼치기)는 No.와 한 열로 합쳐져 있고, 진행상황은 No. 바로 다음(대분류 앞)에 온다.
+const UP_COL_KEYS = ['no', 'progress', 'major', 'minor', 'workDate', 'author', 'worker', 'room', 'roomNo', 'point', 'reason', 'photo', 'note', 'assignee', 'dueDate', 'manage'];
 const UP_COL_DEFAULT_W = {
-  no: 44, expand: 28, major: 76, minor: 90, workDate: 96, author: 76, worker: 76,
-  room: 90, roomNo: 76, point: 100, reason: 160, photo: 76, progress: 110, note: 140, manage: 96,
+  no: 64, progress: 100, major: 76, minor: 90, workDate: 96, author: 76, worker: 76,
+  room: 90, roomNo: 76, point: 100, reason: 160, photo: 76, note: 140,
+  assignee: 88, dueDate: 88, manage: 96,
 };
-const UP_COL_STORE_KEY = 'em-usagepoints-table-cols';
+const UP_COL_STORE_KEY = 'em-usagepoints-table-cols-v2'; // 열 구성이 바뀌어 예전 저장값과 섞이지 않도록 키를 바꿈
 
 function todayStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-// 접수 단계의 기한을 D-day로 표시한다. 지났으면 D+n(빨강), 오늘이면 D-DAY(빨강),
+// 완료기한을 D-day로 표시한다(목록의 "완료기한" 열에서 사용). 지났으면 D+n(빨강), 오늘이면 D-DAY(빨강),
 // 임박(3일 이하)이면 주황, 그 외엔 회색.
 function dDayInfo(dueDate) {
   if (!dueDate) return null;
@@ -73,7 +79,7 @@ function emptyForm(currentMember) {
     major_category: '', minor_category: '', created_date: todayStr(), created_at: '',
     author_id: currentMember?.id || '', author_name: currentMember?.username || '',
     worker_name: '',
-    assignee: '', due_date: '', // 접수 단계 담당자·기한
+    assignee: '', due_date: '', // 담당자·완료기한 — 둘 다 채워지면 접수 ➜ 조사 중으로 자동 전환
     room_name: '', room_number: '', point_number: '', reason: '',
     photos: [], // [{ id, thumb, fileName, filePath, gistKey }, ...]
     progress: PROGRESS_OPTIONS[0], progress_note: '', progress_logs: [], action_taken: '', note: '',
@@ -135,10 +141,27 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   });
   useEffect(() => { try { localStorage.setItem(UP_COL_STORE_KEY, JSON.stringify(colW)); } catch { /* ignore */ } }, [colW]);
   const colWidth = k => colW[k] ?? UP_COL_DEFAULT_W[k];
+  // 구분선을 끌면 이 열과 바로 다음 열이 폭을 서로 주고받는다(전체 합은 그대로) —
+  // 표는 항상 컨테이너 폭의 100%로 그려지므로, 합이 바뀌지 않으면 다른 열들의
+  // 비율도 안 바뀌어 가로 스크롤이 생기지 않으면서 이 두 열만 커지고 작아진다.
+  const MIN_COL_W = 28;
   function startColResize(e, key) {
     e.preventDefault(); e.stopPropagation();
-    const startX = e.clientX, startW = colWidth(key);
-    const onMove = ev => setColW(prev => ({ ...prev, [key]: Math.max(24, startW + ev.clientX - startX) }));
+    const idx = UP_COL_KEYS.indexOf(key);
+    const nextKey = UP_COL_KEYS[idx + 1];
+    const startX = e.clientX;
+    const startW = colWidth(key);
+    const startNextW = nextKey ? colWidth(nextKey) : null;
+    const onMove = ev => {
+      if (nextKey) {
+        const delta = Math.max(MIN_COL_W - startW, Math.min(ev.clientX - startX, startNextW - MIN_COL_W));
+        setColW(prev => ({ ...prev, [key]: startW + delta, [nextKey]: startNextW - delta }));
+      } else {
+        // 맨 마지막(관리) 열은 넘겨줄 다음 열이 없어 자기 최소값까지만 줄어든다 —
+        // 실제로는 handle이 없어(항상 nextKey가 있음) 호출되지 않는 경로.
+        setColW(prev => ({ ...prev, [key]: Math.max(MIN_COL_W, startW + ev.clientX - startX) }));
+      }
+    };
     const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
     document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
   }
@@ -395,6 +418,10 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
         worker_name: form.worker_name.trim() || form.author_name,
         ...(editingId ? { id: editingId } : {}),
       };
+      // 접수 단계에서 담당자·완료기한이 모두 채워지면 자동으로 조사 중으로 넘어간다.
+      if (progressOf(item) === '접수' && item.assignee?.trim() && item.due_date) {
+        item.progress = '조사 중';
+      }
       const saved = await upsertUsagePoint(item);
       setData(prev => editingId ? prev.map(d => d.id === editingId ? saved : d) : [...prev, saved]);
       window.electronAPI?.notifyDataChanged?.();
@@ -435,8 +462,15 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   }
 
   // 진행상황은 덮어쓰지 않고 한 줄씩 덧붙인다 — 누가 언제 무엇을 적었는지 남기기 위함.
+  // 조사내역은 담당자 본인이 직접 남길 수 있어야 하므로 관리자로만 제한하지 않는다.
+  function isAssigneeOf(item) {
+    return !!currentMember && !!item.assignee && currentMember.username === item.assignee;
+  }
+
   async function appendProgressLog(item, text) {
-    if (!requireAdmin()) return;
+    if (!adminUnlocked && !isAssigneeOf(item)) { showNotice('담당자 또는 관리자만 작성할 수 있습니다.', true); return; }
+    const stage = progressOf(item);
+    if (!['조사 중', '보류'].includes(stage)) { showNotice('조사 중 단계에서만 진행상황을 기록할 수 있습니다.', true); return; }
     const body = String(text || '').trim();
     if (!body) return;
     const now = new Date();
@@ -449,12 +483,19 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
       at: stamp,
     };
     const logs = [...(Array.isArray(item.progress_logs) ? item.progress_logs : []), entry];
+    // 담당자가 조사내역을 남기고 관리자가 조치사항을 남기면(둘 다 채워지면) 자동으로
+    // 조치 중으로 넘어간다 — 조사 중일 때만(보류에서는 넘기지 않음, 보류는 관리자가
+    // 직접 다시 조사 중 등으로 되돌려야 함).
+    const patch = { ...item, progress_logs: logs };
+    if (stage === '조사 중' && logs.length > 0 && String(item.action_taken || '').trim()) {
+      patch.progress = '조치 중';
+    }
     try {
-      const saved = await upsertUsagePoint({ ...item, progress_logs: logs });
+      const saved = await upsertUsagePoint(patch);
       setData(prev => prev.map(d => d.id === item.id ? saved : d));
       window.electronAPI?.notifyDataChanged?.();
       syncAfterChange();
-      showNotice('진행상황이 기록되었습니다.');
+      showNotice(patch.progress === '조치 중' ? '진행상황이 기록되고 조치 중 단계로 넘어갔습니다.' : '진행상황이 기록되었습니다.');
     } catch (e) {
       showNotice('저장 실패: ' + e.message, true);
     }
@@ -540,12 +581,18 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   // 완료 처리된 건의 조치사항 — 무엇을 해서 마무리했는지 적는 칸.
   async function saveActionTaken(item, action_taken) {
     if (!requireAdmin()) return;
+    const stage = progressOf(item);
+    if (stage !== '조사 중') { showNotice('조사 중 단계에서만 조치사항을 작성할 수 있습니다.', true); return; }
     try {
-      const saved = await upsertUsagePoint({ ...item, action_taken });
+      const logs = Array.isArray(item.progress_logs) ? item.progress_logs : [];
+      // 조사내역(진행상황 기록)이 이미 있고 조치사항도 채워지면 자동으로 조치 중으로 넘어간다.
+      const patch = { ...item, action_taken };
+      if (logs.length > 0 && String(action_taken || '').trim()) patch.progress = '조치 중';
+      const saved = await upsertUsagePoint(patch);
       setData(prev => prev.map(d => d.id === item.id ? saved : d));
       window.electronAPI?.notifyDataChanged?.();
       syncAfterChange();
-      showNotice('조치사항이 저장되었습니다.');
+      showNotice(patch.progress === '조치 중' ? '조치사항이 저장되고 조치 중 단계로 넘어갔습니다.' : '조치사항이 저장되었습니다.');
     } catch (e) {
       showNotice('저장 실패: ' + e.message, true);
     }
@@ -696,17 +743,22 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
-        <table className="text-sm" style={{ tableLayout: 'fixed', width: UP_COL_KEYS.reduce((s, k) => s + colWidth(k), 0) }}>
+        {/* width:100% + table-layout:fixed에서 col의 px 값은 절대폭이 아니라 서로의
+            비율로 쓰인다 — 열 폭 합계와 무관하게 표는 항상 컨테이너 폭에 맞춰지므로
+            칸을 조절해도 가로 스크롤이 생기지 않는다. */}
+        <table className="text-sm" style={{ tableLayout: 'fixed', width: '100%' }}>
           <colgroup>{UP_COL_KEYS.map(k => <col key={k} style={{ width: colWidth(k) }} />)}</colgroup>
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200">
+              {/* 펼치기 화살표(▶)는 별도 열 없이 No.와 한 열에서 번호 앞에 온다. */}
               <th className="relative px-2 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
                 No.
                 <span onMouseDown={e => startColResize(e, 'no')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
-              <th className="relative px-1 py-3 border-r border-gray-200">
-                <span onMouseDown={e => startColResize(e, 'expand')} draggable={false} onDragStart={e => e.preventDefault()}
+              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+                진행상황
+                <span onMouseDown={e => startColResize(e, 'progress')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
@@ -760,13 +812,18 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
-                진행상황
-                <span onMouseDown={e => startColResize(e, 'progress')} draggable={false} onDragStart={e => e.preventDefault()}
+                비고
+                <span onMouseDown={e => startColResize(e, 'note')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
-                비고
-                <span onMouseDown={e => startColResize(e, 'note')} draggable={false} onDragStart={e => e.preventDefault()}
+                담당자
+                <span onMouseDown={e => startColResize(e, 'assignee')} draggable={false} onDragStart={e => e.preventDefault()}
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+              </th>
+              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+                완료기한
+                <span onMouseDown={e => startColResize(e, 'dueDate')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className="px-3 py-3 text-gray-500 font-medium text-center">관리</th>
@@ -779,9 +836,27 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
               return (
                 <FragmentRow key={item.id}>
                   <tr className="hover:bg-gray-50">
-                    <td className="px-2 py-2 text-center text-gray-400 text-xs">{idx + 1}</td>
-                    <td className="px-1 text-center text-gray-300">
-                      <button onClick={() => toggleExpand(item.id)} className={`text-[10px] transition-transform ${isExp ? 'rotate-90 text-blue-500' : ''}`} title="진행상황 메모">▶</button>
+                    <td className="px-2 py-2 text-center text-gray-500 text-xs whitespace-nowrap">
+                      <button onClick={() => toggleExpand(item.id)} className={`inline-block mr-1 text-[10px] transition-transform ${isExp ? 'rotate-90 text-blue-500' : 'text-gray-300'}`} title="진행상황 메모">▶</button>
+                      <span className="text-gray-400">{idx + 1}</span>
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      {adminUnlocked ? (
+                        progressOf(item) === PROGRESS_OPTIONS[0] ? (
+                          <button onClick={() => quickSetProgress(item, '접수')}
+                            className="text-xs rounded-full px-2.5 py-1 font-medium bg-gray-100 text-gray-600 hover:bg-sky-100 hover:text-sky-700"
+                            title="관리자가 확인했다는 뜻으로 접수 처리합니다 — 접수로 바꾸면 작성자는 더 이상 수정할 수 없습니다">
+                            신청 ➜ 접수
+                          </button>
+                        ) : (
+                          <select value={progressOf(item)} onChange={e => quickSetProgress(item, e.target.value)}
+                            className={`text-xs rounded-full px-2 py-1 border-0 font-medium cursor-pointer ${PROGRESS_COLOR[progressOf(item)] || 'bg-gray-100 text-gray-600'}`}>
+                            {PROGRESS_OPTIONS.slice(1).map(p => <option key={p} value={p}>{p}</option>)}
+                          </select>
+                        )
+                      ) : (
+                        <span className={`text-xs rounded-full px-2.5 py-1 font-medium inline-block ${PROGRESS_COLOR[progressOf(item)] || PROGRESS_COLOR[PROGRESS_OPTIONS[0]]}`}>{progressOf(item)}</span>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-center text-gray-600">{item.major_category || '—'}</td>
                     <td className="px-3 py-2 text-center text-gray-600">{item.minor_category || '—'}</td>
@@ -816,35 +891,19 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                         );
                       })()}
                     </td>
-                    <td className="px-3 py-2 text-left align-top">
-                      {adminUnlocked ? (
-                        progressOf(item) === PROGRESS_OPTIONS[0] ? (
-                          <button onClick={() => quickSetProgress(item, '접수')}
-                            className="text-xs rounded-full px-2.5 py-1 font-medium bg-gray-100 text-gray-600 hover:bg-amber-100 hover:text-amber-700"
-                            title="다음 단계로 넘기기 — 접수로 바꾸면 작성자는 더 이상 수정할 수 없습니다">
-                            신청 ➜ 접수
-                          </button>
-                        ) : (
-                          <select value={progressOf(item)} onChange={e => quickSetProgress(item, e.target.value)}
-                            className={`text-xs rounded-full px-2 py-1 border-0 font-medium cursor-pointer ${PROGRESS_COLOR[progressOf(item)] || 'bg-gray-100 text-gray-600'}`}>
-                            {PROGRESS_OPTIONS.slice(1).map(p => <option key={p} value={p}>{p}</option>)}
-                          </select>
-                        )
-                      ) : (
-                        <span className={`text-xs rounded-full px-2.5 py-1 font-medium inline-block ${PROGRESS_COLOR[progressOf(item)] || PROGRESS_COLOR[PROGRESS_OPTIONS[0]]}`}>{progressOf(item)}</span>
-                      )}
-                      {/* 접수 단계일 때만 담당자·기한을 함께 보여준다 — 다른 단계에서는 의미가 없으므로. */}
-                      {progressOf(item) === '접수' && (item.assignee || item.due_date) && (
-                        <div className="text-[11px] text-gray-500 mt-1 leading-tight">
-                          {item.assignee && <div className="truncate">👤 {item.assignee}</div>}
-                          {item.due_date && (() => {
-                            const d = dDayInfo(item.due_date);
-                            return d ? <div className={`font-semibold ${d.color}`}>{d.text}</div> : null;
-                          })()}
-                        </div>
-                      )}
-                    </td>
                     <td className="px-3 py-2 text-center text-gray-500 text-xs max-w-[140px] truncate" title={item.note || ''}>{item.note || '—'}</td>
+                    <td className="px-3 py-2 text-center text-gray-600 text-xs truncate">{item.assignee || '—'}</td>
+                    <td className="px-3 py-2 text-center text-xs">
+                      {item.due_date ? (() => {
+                        const d = dDayInfo(item.due_date);
+                        return (
+                          <div className="leading-tight">
+                            <div className="text-gray-500">{item.due_date}</div>
+                            {d && <div className={`font-semibold ${d.color}`}>{d.text}</div>}
+                          </div>
+                        );
+                      })() : <span className="text-gray-300">—</span>}
+                    </td>
                     <td className="px-3 py-2 text-center whitespace-nowrap">
                       {editable && (
                         <>
@@ -858,6 +917,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                     <tr>
                       <td colSpan={USAGEPOINT_COLS} className="p-0 bg-gray-50/60">
                         <ProgressNotePanel item={item} adminUnlocked={adminUnlocked} currentMember={currentMember}
+                          isAssignee={isAssigneeOf(item)}
                           onAppend={text => appendProgressLog(item, text)}
                           onSaveAction={text => saveActionTaken(item, text)} />
                       </td>
@@ -982,35 +1042,43 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
             </div>
             </fieldset>
 
-            {/* 접수 담당자·기한 — 신청 단계에서는 아직 담당자를 배정하기 전이라 숨기고,
-                접수로 넘어간 뒤부터(그 이후 단계 포함) 보여준다. */}
+            {/* 담당자 배정 — 신청 단계에서는 아직 배정 전이라 숨기고, 접수로 넘어간
+                뒤부터(그 이후 단계 포함) 보여준다. 담당자·완료기한을 모두 채우고
+                저장하면 자동으로 조사 중 단계로 넘어간다. */}
             {progressOf(form) !== PROGRESS_OPTIONS[0] && (
               <div className="border-t border-gray-100 pt-3">
-                <p className="text-xs font-semibold text-gray-500 mb-2">🔍 접수 정보</p>
+                <p className="text-xs font-semibold text-gray-500 mb-2">👤 담당자 배정</p>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs text-gray-500">접수 담당자</label>
+                    <label className="text-xs text-gray-500">담당자</label>
                     <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.assignee || ''}
                       disabled={!!viewItem}
-                      onChange={e => setForm(f => ({ ...f, assignee: e.target.value }))} placeholder="접수를 맡은 사람" />
+                      onChange={e => setForm(f => ({ ...f, assignee: e.target.value }))} placeholder="조사를 맡은 사람" />
                   </div>
                   <div>
-                    <label className="text-xs text-gray-500">접수 기한</label>
+                    <label className="text-xs text-gray-500">완료기한</label>
                     <input type="date" className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={form.due_date || ''}
                       disabled={!!viewItem}
                       onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} />
                   </div>
                 </div>
+                {progressOf(form) === '접수' && (
+                  <p className="text-[11px] text-gray-400 mt-1.5">담당자와 완료기한을 모두 입력하고 저장하면 자동으로 조사 중 단계로 넘어갑니다.</p>
+                )}
               </div>
             )}
 
             {/* 진행상황·조치사항 — 목록의 펼치기 화살표와 같은 내용을 팝업 하단에도
-                보여준다. 목록 칸이 좁아 다 안 보이던 것을 여기서 전부 확인할 수 있다. */}
+                보여준다. 목록 칸이 좁아 다 안 보이던 것을 여기서 전부 확인할 수 있다.
+                위 "담당자 배정" 헤더와 왼쪽선을 맞추기 위해, ProgressNotePanel 자체의
+                가로 여백을 빼고(className="py-3") 이 바깥 div의 pt-3만으로 들여쓰기를
+                맞춘다 — 예전에는 패널 안쪽에 별도 px-8이 있어 오른쪽으로 더 밀려 있었다. */}
             {editingId && (() => {
               const currentItem = data.find(d => d.id === editingId) || form;
               return (
-                <div className="border-t border-gray-100 -mx-6 px-6 pt-3">
+                <div className="border-t border-gray-100 pt-3">
                   <ProgressNotePanel item={currentItem} adminUnlocked={adminUnlocked} currentMember={currentMember}
+                    isAssignee={isAssigneeOf(currentItem)} className="py-3"
                     onAppend={text => appendProgressLog(currentItem, text)}
                     onSaveAction={text => saveActionTaken(currentItem, text)} />
                 </div>
@@ -1142,23 +1210,28 @@ function FragmentRow({ children }) { return <>{children}</>; }
 // 진행상황은 고쳐 쓰는 메모가 아니라 기록(로그)이다. 저장할 때마다 내용·작성자·
 // 시각이 아래에 한 줄씩 쌓이고, 지난 기록은 고치거나 지울 수 없다.
 // 예전 방식(progress_note 한 칸에 덮어쓰기)으로 저장된 내용은 맨 위에 함께 보여준다.
-function ProgressNotePanel({ item, adminUnlocked, currentMember, onAppend, onSaveAction }) {
+function ProgressNotePanel({ item, adminUnlocked, currentMember, isAssignee, onAppend, onSaveAction, className = 'px-8 py-3' }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [action, setAction] = useState(item.action_taken || '');
   const [actionBusy, setActionBusy] = useState(false);
   const logs = Array.isArray(item.progress_logs) ? item.progress_logs : [];
-  // 단계에 따라 어느 칸을 여는지 정한다.
-  //  신청·접수   : 진행상황만 기록 (조치사항은 아직 숨김)
-  //  조치 중      : 진행상황은 잠기고 조치사항을 작성
-  //  완료         : 두 칸 모두 잠기고 남은 내역만 보인다
+  // 단계에 따라 어느 칸을 여는지 정한다 — 신청 ➜ 접수 ➜ 조사 중 ➜ 조치 중 ➜ 완료/보류.
+  //  신청·접수     : 아직 배정 전이라 둘 다 잠김
+  //  조사 중       : 담당자(or 관리자)가 진행상황을 기록하고, 관리자가 조치사항을
+  //                  적는다 — 둘 다 채워지면 자동으로 조치 중으로 넘어간다
+  //  보류          : 조사 중으로 되돌아간 것처럼 진행상황은 계속 기록할 수 있다
+  //  조치 중·완료  : 둘 다 잠기고 남은 내역만 보인다(조치 중은 관리자가 완료/보류로
+  //                  직접 넘겨야 함)
   const stage = progressOf(item);
   const isDone = stage === '완료';
   const isActing = stage === '조치 중';
-  const canWrite = adminUnlocked && !isActing && !isDone;   // 진행상황 기록 입력
-  const canWriteAction = adminUnlocked && isActing;          // 조치사항 입력
-  // 조치사항은 조치 중부터 보이고, 한 번 작성한 내용은 이후 단계에서도 계속 보인다.
-  const showAction = isActing || isDone || !!item.action_taken;
+  const isInvestigating = stage === '조사 중';
+  const isHold = stage === '보류';
+  const canWrite = (isInvestigating || isHold) && (adminUnlocked || isAssignee); // 진행상황 기록 입력
+  const canWriteAction = adminUnlocked && isInvestigating;                        // 조치사항 입력
+  // 조치사항은 조사 중부터 보이고, 한 번 작성한 내용은 이후 단계에서도 계속 보인다.
+  const showAction = isInvestigating || isActing || isDone || isHold || !!item.action_taken;
 
   // 목록이 동기화로 갱신되면 조치사항 입력칸도 최신 값을 따라간다.
   useEffect(() => { setAction(item.action_taken || ''); }, [item.action_taken]);
@@ -1174,7 +1247,7 @@ function ProgressNotePanel({ item, adminUnlocked, currentMember, onAppend, onSav
   }
 
   return (
-    <div className="px-8 py-3">
+    <div className={className}>
       <div className="flex items-center gap-2 mb-2">
         <span className="text-xs font-semibold text-gray-500">📝 진행상황 기록</span>
         <span className="text-[11px] text-gray-400">저장할 때마다 아래에 쌓이며, 지난 기록은 수정할 수 없습니다.</span>
@@ -1185,12 +1258,15 @@ function ProgressNotePanel({ item, adminUnlocked, currentMember, onAppend, onSav
           <textarea value={text} onChange={e => setText(e.target.value)} rows={2}
             onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submit(); }}
             className="flex-1 border border-gray-200 rounded px-2 py-1.5 text-xs"
-            placeholder="진행 상황을 입력하고 저장하세요 (Ctrl+Enter)" />
+            placeholder="조사내역을 입력하고 저장하세요 (Ctrl+Enter)" />
           <button disabled={!text.trim() || busy} onClick={submit}
             className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded font-semibold disabled:opacity-40 shrink-0">
             {busy ? '저장 중…' : '저장'}
           </button>
         </div>
+      )}
+      {(stage === '신청' || stage === '접수') && (
+        <p className="text-[11px] text-gray-400 mb-2">담당자 배정 후 조사 중 단계부터 진행상황을 기록할 수 있습니다.</p>
       )}
       {adminUnlocked && isDone && (
         <p className="text-[11px] text-emerald-600 mb-2">
@@ -1198,10 +1274,13 @@ function ProgressNotePanel({ item, adminUnlocked, currentMember, onAppend, onSav
           다시 작성하려면 위 진행상황을 완료가 아닌 단계로 되돌리세요.
         </p>
       )}
-      {adminUnlocked && isActing && (
+      {isActing && (
         <p className="text-[11px] text-amber-600 mb-2">
-          조치 중 단계입니다 — 진행상황 기록은 닫혔습니다. 아래 조치사항을 작성하세요.
+          조치 중 단계입니다 — 조사내역·조치사항이 모두 채워져 자동으로 넘어왔습니다. 완료되면 관리자가 완료 또는 보류로 바꿔주세요.
         </p>
+      )}
+      {!adminUnlocked && isInvestigating && !isAssignee && (
+        <p className="text-[11px] text-gray-400 mb-2">담당자({item.assignee || '—'}) 또는 관리자만 작성할 수 있습니다.</p>
       )}
 
       {logs.length === 0 && !item.progress_note ? (
@@ -1226,15 +1305,16 @@ function ProgressNotePanel({ item, adminUnlocked, currentMember, onAppend, onSav
         </div>
       )}
 
-      {/* 조치사항 — "조치 중"일 때만 작성할 수 있고, 완료로 넘어가면 확정되어 잠긴다. */}
+      {/* 조치사항 — "조사 중"일 때 관리자가 작성한다. 조사내역과 함께 채워지면
+          자동으로 조치 중으로 넘어가면서 확정되어 잠긴다. */}
       {showAction && (
       <div className="mt-3 pt-3 border-t border-gray-200">
         <div className="flex items-center gap-2 mb-1.5">
           <span className="text-xs font-semibold text-emerald-700">✅ 조치사항</span>
           <span className="text-[11px] text-gray-400">
             {isDone ? '완료되어 확정된 내용입니다'
-              : isActing ? '완료로 표시하면 더 이상 수정할 수 없습니다'
-              : '조치 중 단계에서만 작성할 수 있습니다'}
+              : isInvestigating ? '조사내역과 함께 채워지면 자동으로 조치 중으로 넘어갑니다'
+              : '조사 중 단계에서만 작성할 수 있습니다'}
           </span>
         </div>
         {canWriteAction ? (
