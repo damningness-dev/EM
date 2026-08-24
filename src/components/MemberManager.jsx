@@ -3,13 +3,27 @@ import { fetchMembers, upsertMember, deleteMember, fetchGuestAccess, saveGuestAc
 
 // 권한 설정이 바뀌면(계정 추가·수정·삭제, 게스트 메뉴 제한) em-data.json에 저장된
 // 뒤, 공유 설정(Gist ID + 토큰)이 있으면 자동으로 Gist에 업로드해 다른 PC에도
-// 곧바로 반영되게 한다. 없으면 조용히 건너뛰고 다음 자동 동기화 때 반영된다.
+// 곧바로 반영되게 한다. 공유를 아예 안 쓰는 PC면 처리할 것이 없으므로 성공으로
+// 본다. 반환값으로 실제 공유 여부를 알려줘, 호출한 쪽에서 "저장은 됐지만 이 PC
+// 에서는 다른 PC와 아직 공유되지 않았다"를 화면에 보여줄 수 있게 한다 — 이걸
+// 조용히 삼키면(예전 동작) 관리자는 성공한 줄 알고 넘어가는데 실제로는 이 PC
+// 에만 남아 있어, 다른 PC에서 "바꿨다는 비밀번호가 안 먹힌다"로 나타난다.
 async function syncAfterChange() {
   try {
     const cfg = await syncGetConfig();
-    if (!cfg?.gistId || !cfg?.hasToken) return;
-    await syncUpload();
-  } catch { /* 조용히 건너뜀 — 로컬 저장은 이미 성공했으므로 */ }
+    if (!cfg?.gistId) return { shared: true };
+    if (!cfg?.hasToken) return { shared: false, reason: 'no-token' };
+    const r = await syncUpload();
+    return r?.ok ? { shared: true } : { shared: false, reason: 'upload-failed', detail: r?.error };
+  } catch (e) { return { shared: false, reason: 'upload-failed', detail: e?.message }; }
+}
+const SYNC_WARNING_TEXT = {
+  'no-token': '저장은 됐지만, 이 PC에 등록된 GitHub 토큰이 없어 다른 PC와 아직 공유되지 않았습니다. 동기화 설정에서 토큰을 등록하거나, 토큰이 등록된 PC에서 다시 저장해 주세요.',
+  'upload-failed': (detail) => `저장은 됐지만, 공유 업로드에 실패해 다른 PC와 아직 공유되지 않았습니다${detail ? ` (${detail})` : ''}. 잠시 후 자동으로 다시 시도됩니다.`,
+};
+function syncWarningText(s) {
+  const t = SYNC_WARNING_TEXT[s.reason];
+  return typeof t === 'function' ? t(s.detail) : t;
 }
 
 // 관리자 전용 권한 설정 화면 — (1) 로그인하지 않았을 때 보이는 메뉴를 제한하고,
@@ -24,6 +38,7 @@ export default function MemberManager({ menu, onClose }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null); // { type: 'remove'|'clearToken', id }
+  const [syncWarning, setSyncWarning] = useState('');
 
   function reload() {
     setLoading(true);
@@ -62,7 +77,8 @@ export default function MemberManager({ menu, onClose }) {
       if (!r?.ok) { setError(r?.error || '저장 실패'); return; }
       setEditingId(null);
       reload();
-      syncAfterChange();
+      const s = await syncAfterChange();
+      setSyncWarning(s.shared ? '' : syncWarningText(s));
     } catch (e) { setError('오류: ' + e.message); }
     finally { setBusy(false); }
   }
@@ -87,7 +103,8 @@ export default function MemberManager({ menu, onClose }) {
         await upsertMember({ id, clearToken: true });
       }
       reload();
-      syncAfterChange();
+      const s = await syncAfterChange();
+      setSyncWarning(s.shared ? '' : syncWarningText(s));
     } finally {
       setBusy(false);
     }
@@ -102,6 +119,9 @@ export default function MemberManager({ menu, onClose }) {
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-4">
+          {syncWarning && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">⚠ {syncWarning}</p>
+          )}
           <GuestAccessSection menu={menu} />
 
           <p className="text-sm font-semibold text-gray-700 mb-1">👥 계정별 권한</p>
@@ -215,8 +235,8 @@ function GuestAccessSection({ menu }) {
     setMsg(null);
     try {
       await saveGuestAccess(restrict ? tabs : null);
-      setMsg({ ok: true, text: '저장되었습니다.' });
-      syncAfterChange();
+      const s = await syncAfterChange();
+      setMsg(s.shared ? { ok: true, text: '저장되었습니다.' } : { ok: false, text: syncWarningText(s) });
     } catch (e) {
       setMsg({ ok: false, text: '저장 실패: ' + e.message });
     } finally {
