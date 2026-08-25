@@ -1023,18 +1023,30 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
         </table>
       </div>
 
-      {showForm && (
+      {showForm && (() => {
+        // 접수(신청 다음 단계)로 넘어간 뒤에는, 관리자라도 원래 작성 내용(제목·분류·
+        // 작업일·작업자·실명·실번호·사용점번호·내용·비고·사진)을 더는 고칠 수 없다 —
+        // 접수 이후의 흐름은 담당자 배정·조사내용·조치사항 패널로 넘어가므로, 처음
+        // 신고된 내용 자체는 접수 시점에 확정되는 게 맞다. 그래서 이때는 "사용점 수정"
+        // 이 아니라 "사용점 상세보기"로 보여준다(viewItem=읽기 전용과는 별개 개념 —
+        // viewItem은 "이 사람이 이 항목을 관리할 권한이 아예 없음", contentLocked는
+        // "권한은 있어도 접수 이후라 원본 내용만은 못 고침").
+        const contentLocked = !!editingId && progressOf(form) !== PROGRESS_OPTIONS[0];
+        return (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <h2 className="font-bold text-gray-800">
-              {viewItem ? '사용점 상세보기' : editingId ? '사용점 수정' : '사용점 추가'}
+              {viewItem || contentLocked ? '사용점 상세보기' : editingId ? '사용점 수정' : '사용점 추가'}
             </h2>
             {viewItem && (
               <p className="text-xs text-amber-600 -mt-2">🔒 수정 권한이 없어 읽기 전용으로 보고 있습니다.</p>
             )}
-            {/* fieldset(display:contents)으로 grid 레이아웃은 그대로 두고, 읽기 전용일
-                때만 안의 입력칸을 한 번에 잠근다. */}
-            <fieldset disabled={!!viewItem} className="contents">
+            {!viewItem && contentLocked && (
+              <p className="text-xs text-amber-600 -mt-2">🔒 접수된 이후에는 원래 작성한 내용을 수정할 수 없습니다.</p>
+            )}
+            {/* fieldset(display:contents)으로 grid 레이아웃은 그대로 두고, 읽기 전용이거나
+                접수 이후일 때만 안의 입력칸을 한 번에 잠근다. */}
+            <fieldset disabled={!!viewItem || contentLocked} className="contents">
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
                 <label className="text-xs text-gray-500">제목</label>
@@ -1111,7 +1123,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                     {form.photos.map(p => (
                       <div key={p.id} className="relative">
                         <img src={p.thumb} alt="미리보기" className="w-16 h-16 object-cover rounded-lg border border-gray-200" />
-                        {!viewItem && (
+                        {!viewItem && !contentLocked && (
                           <>
                             <button type="button" onClick={() => removePhoto(p.id)}
                               className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] leading-4 text-center hover:bg-red-600"
@@ -1207,7 +1219,8 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {showCatManager && catDraft && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
