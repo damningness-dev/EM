@@ -15,21 +15,6 @@ export default function UpdateNotifier() {
 
   return (
     <div className={`mx-3 mb-3 rounded-lg text-xs overflow-hidden ${getBg(status.type)}`}>
-      {status.type === 'available' && (
-        <div className="p-3">
-          <div className="font-semibold text-white mb-1">
-            🆕 v{status.version} 업데이트
-          </div>
-          <div className="text-white/80 mb-2">새 버전이 있습니다.</div>
-          <button
-            onClick={() => window.electronAPI.invoke('update:download')}
-            className="w-full py-1.5 bg-white text-blue-700 rounded font-semibold hover:bg-blue-50 transition-colors"
-          >
-            다운로드
-          </button>
-        </div>
-      )}
-
       {status.type === 'downloading' && (
         <div className="p-3">
           <div className="font-semibold text-white mb-2">
@@ -80,7 +65,6 @@ export default function UpdateNotifier() {
 }
 
 function getBg(type) {
-  if (type === 'available') return 'bg-blue-600';
   if (type === 'downloading') return 'bg-blue-700';
   if (type === 'downloaded') return 'bg-green-600';
   if (type === 'error') return 'bg-red-700';

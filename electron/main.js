@@ -167,12 +167,16 @@ async function checkForUpdate() {
     if (meta.version === app.getVersion()) {
       sendStatus({ type: 'latest' });
     } else if (downloadedVersion === meta.version) {
-      // 이미 받아둔 버전 — '지금 재시작' 안내 유지
+      // 이미 받아서 체크섬까지 확인해 둔 버전 — '지금 재시작' 안내 유지
       sendStatus({ type: 'downloaded', version: meta.version });
     } else {
-      // 새 버전 안내는 앱 내부 UpdateNotifier 카드로만 표시한다(윈도우 트레이
-      // 풍선 팝업은 거슬린다는 피드백에 따라 제거).
-      sendStatus({ type: 'available', version: meta.version });
+      // 새 버전이 있다고 먼저 알리고 사용자가 "다운로드"를 누르길 기다리는
+      // 대신, 곧바로 받아서 체크섬까지 확인한 뒤에만 사용자에게 보여준다
+      // ("지금 재시작"). 배포 직후 CDN 전파 지연 등으로 방금 올라간 파일의
+      // 체크섬이 일시적으로 안 맞을 수 있는데, 그런 상태에서 "새 버전 있음"
+      // 부터 보여주면 사용자가 눌렀을 때 다운로드가 실패하는 걸 그대로 겪는다.
+      // downloadUpdate() 안에서 재시도·체크섬 확인·상태 전송을 모두 처리한다.
+      await downloadUpdate();
     }
   } catch (err) {
     // 404 = 아직 게시된 릴리즈에 app-meta.json이 없음 (정상, 조용히 무시)
