@@ -1120,9 +1120,10 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                 <label className="text-xs text-gray-500">사진첨부 {form.photos.length > 0 && `(${form.photos.length}장)`}</label>
                 {form.photos.length > 0 && (
                   <div className="flex flex-wrap gap-2 mt-1">
-                    {form.photos.map(p => (
+                    {form.photos.map((p, i) => (
                       <div key={p.id} className="relative">
-                        <img src={p.thumb} alt="미리보기" className="w-16 h-16 object-cover rounded-lg border border-gray-200" />
+                        <img src={p.thumb} alt="미리보기" onClick={() => setLightbox({ itemId: editingId, photos: form.photos, index: i })}
+                          className="w-16 h-16 object-cover rounded-lg border border-gray-200 cursor-pointer hover:opacity-80" />
                         {!viewItem && !contentLocked && (
                           <>
                             <button type="button" onClick={() => removePhoto(p.id)}
