@@ -142,6 +142,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   const [hqUrl, setHqUrl] = useState(null);
   const [hqLoading, setHqLoading] = useState(false);
   const [expanded, setExpanded] = useState(() => new Set());
+  const [assigneeDropdownId, setAssigneeDropdownId] = useState(null); // 목록에서 담당자 드롭다운을 연 항목 id
   const [sharingPhotos, setSharingPhotos] = useState(false);
   const [printing, setPrinting] = useState(false);
   const printRef = useRef(null);
@@ -249,6 +250,14 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [lightbox]);
+
+  // 목록의 담당자 드롭다운 바깥을 누르면 닫는다.
+  useEffect(() => {
+    if (!assigneeDropdownId) return;
+    const onDocClick = e => { if (!e.target.closest('.assignee-dropdown')) setAssigneeDropdownId(null); };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [assigneeDropdownId]);
 
   function showNotice(text, isError) {
     setNotice({ text, isError });
@@ -467,6 +476,22 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
     if (!requireAdmin()) return;
     try {
       const saved = await upsertUsagePoint({ ...item, progress });
+      setData(prev => prev.map(d => d.id === item.id ? saved : d));
+      window.electronAPI?.notifyDataChanged?.();
+      syncAfterChange();
+    } catch (e) {
+      showNotice('변경 실패: ' + e.message, true);
+    }
+  }
+
+  // 목록에서 담당자·완료기한을 바로 고칠 때도(수정 팝업을 거치지 않고) 접수 ➜
+  // 조사 중 자동 전환 조건(담당자 1명 이상 + 완료기한)을 똑같이 적용한다.
+  async function quickPatch(item, patch) {
+    if (!canManage(item)) { showNotice('수정 권한이 없습니다.', true); return; }
+    try {
+      const next = { ...item, ...patch };
+      if (progressOf(next) === '접수' && next.assignees?.length > 0 && next.due_date) next.progress = '조사 중';
+      const saved = await upsertUsagePoint(next);
       setData(prev => prev.map(d => d.id === item.id ? saved : d));
       window.electronAPI?.notifyDataChanged?.();
       syncAfterChange();
@@ -923,11 +948,42 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                       })()}
                     </td>
                     <td className="px-3 py-2 text-center text-gray-500 text-xs max-w-[140px] truncate" title={item.note || ''}>{item.note || '—'}</td>
-                    <td className="px-3 py-2 text-center text-gray-600 text-xs truncate" title={assigneesOf(item).join(', ')}>
-                      {assigneesOf(item).join(', ') || '—'}
+                    <td className="px-3 py-2 text-center text-gray-600 text-xs">
+                      {editable ? (
+                        <div className="relative inline-block assignee-dropdown">
+                          <button type="button" onClick={() => setAssigneeDropdownId(id => id === item.id ? null : item.id)}
+                            className="truncate max-w-[100px] block mx-auto hover:underline hover:text-blue-600">
+                            {assigneesOf(item).join(', ') || '담당자 선택'}
+                          </button>
+                          {assigneeDropdownId === item.id && (
+                            <div className="absolute z-30 top-full left-1/2 -translate-x-1/2 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-2 w-36 max-h-48 overflow-y-auto text-left">
+                              {memberNames.length === 0 ? (
+                                <span className="text-[11px] text-gray-300">등록된 계정 없음</span>
+                              ) : memberNames.map(name => {
+                                const list = assigneesOf(item);
+                                return (
+                                  <label key={name} className="flex items-center gap-1.5 text-xs text-gray-600 py-0.5 cursor-pointer select-none">
+                                    <input type="checkbox" checked={list.includes(name)}
+                                      onChange={() => quickPatch(item, { assignees: list.includes(name) ? list.filter(n => n !== name) : [...list, name] })} />
+                                    {name}
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="truncate max-w-[100px] block mx-auto" title={assigneesOf(item).join(', ')}>{assigneesOf(item).join(', ') || '—'}</span>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-center text-xs">
-                      {item.due_date ? (() => {
+                      {editable ? (
+                        <div className="flex flex-col items-center gap-0.5">
+                          <input type="date" value={item.due_date || ''} onChange={e => quickPatch(item, { due_date: e.target.value })}
+                            className="text-xs border border-gray-200 rounded px-1 py-0.5 w-[112px]" />
+                          {item.due_date && (() => { const d = dDayInfo(item.due_date); return d ? <div className={`font-semibold ${d.color}`}>{d.text}</div> : null; })()}
+                        </div>
+                      ) : item.due_date ? (() => {
                         const d = dDayInfo(item.due_date);
                         return (
                           <div className="leading-tight">
