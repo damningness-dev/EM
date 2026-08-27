@@ -133,6 +133,36 @@ function fmtNoteTime(ts) {
 const NOTE_DEFAULT_W = 220;
 const NOTE_DEFAULT_H = 240;
 
+// 메모는 이 PC의 localStorage에만 저장되므로(공유 안 됨), 붙여넣은 이미지는
+// 원본 그대로가 아니라 작게 압축한 dataURL로 저장해 용량을 억제한다.
+function resizeImageFile(file, maxDim, quality) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('이미지를 읽을 수 없습니다')); };
+    img.src = url;
+  });
+}
+
+// 클립보드에 이미지가 포함돼 있으면(스크린샷 복사 등) 붙여넣기 시 함께 담는다.
+// 텍스트만 있으면 원래대로 textarea가 알아서 처리하도록 손대지 않는다.
+async function extractPastedImages(clipboardData) {
+  const items = Array.from(clipboardData?.items || []).filter(it => it.type.startsWith('image/'));
+  if (!items.length) return [];
+  const files = items.map(it => it.getAsFile()).filter(Boolean);
+  const dataUrls = await Promise.all(files.map(f => resizeImageFile(f, 1000, 0.85).catch(() => null)));
+  return dataUrls.filter(Boolean).map((dataUrl, i) => ({ id: `img${Date.now()}_${i}_${Math.random().toString(36).slice(2, 7)}`, dataUrl }));
+}
+
 const NOTE_SNAP_TOLERANCE = 6; // px — 이 이내로 가까우면 "크기가 같다"고 보고 보조선을 보여준다
 
 function StickyNotesBoard() {
@@ -233,7 +263,25 @@ function NoteCard({ note, dragId, setDragId, reorderNotes, canDrag, openPaletteI
   const resizeTimer = useRef(null);
   const liveEndTimer = useRef(null);
   const [newTag, setNewTag] = useState('');
+  const [zoomSrc, setZoomSrc] = useState(null);
+  const [pasting, setPasting] = useState(false);
   const tags = note.tags || [];
+  const images = note.images || [];
+
+  function handlePaste(e) {
+    // 이미지가 있는지는 동기적으로 먼저 확인해야 preventDefault가 늦지 않는다
+    // (비동기로 넘어가면 그 사이 브라우저 기본 붙여넣기가 먼저 일어날 수 있다).
+    const hasImage = Array.from(e.clipboardData?.items || []).some(it => it.type.startsWith('image/'));
+    if (!hasImage) return; // 텍스트만 붙여넣은 경우 — textarea 기본 동작 그대로 둔다
+    e.preventDefault();
+    setPasting(true);
+    extractPastedImages(e.clipboardData)
+      .then(found => { if (found.length) updateNote(note.id, { images: [...images, ...found] }); })
+      .finally(() => setPasting(false));
+  }
+  function removeImage(id) {
+    updateNote(note.id, { images: images.filter(img => img.id !== id) });
+  }
 
   function addTag() {
     const t = newTag.trim();
@@ -335,15 +383,34 @@ function NoteCard({ note, dragId, setDragId, reorderNotes, canDrag, openPaletteI
           className="w-14 bg-transparent text-[10px] text-gray-600 outline-none placeholder:text-gray-500/50" />
       </div>
       <hr className="border-t border-black/10 my-1.5 shrink-0" />
+      {images.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-1.5 shrink-0">
+          {images.map(img => (
+            <div key={img.id} className="relative">
+              <img src={img.dataUrl} onClick={() => setZoomSrc(img.dataUrl)} alt="붙여넣은 이미지"
+                className="w-12 h-12 object-cover rounded border border-black/10 cursor-pointer hover:opacity-80" />
+              <button onClick={() => removeImage(img.id)}
+                className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] leading-4 text-center hover:bg-red-600"
+                title="이미지 삭제">✕</button>
+            </div>
+          ))}
+        </div>
+      )}
       <textarea
         value={note.text}
         onChange={e => updateNote(note.id, { text: e.target.value })}
-        placeholder="메모를 입력하세요..."
+        onPaste={handlePaste}
+        placeholder={pasting ? '이미지 붙여넣는 중…' : '메모를 입력하세요... (이미지도 붙여넣기 가능)'}
         className="w-full flex-1 bg-transparent text-sm text-gray-800 resize-none outline-none placeholder:text-gray-500/60"
       />
       <p className="text-[10px] text-black/35 mt-1 text-right shrink-0">
         {note.updatedAt && note.updatedAt !== note.createdAt ? `수정 ${fmtNoteTime(note.updatedAt)}` : `작성 ${fmtNoteTime(note.createdAt)}`}
       </p>
+      {zoomSrc && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[300] p-6" onClick={() => setZoomSrc(null)}>
+          <img src={zoomSrc} alt="확대" className="max-w-full max-h-full rounded-lg shadow-2xl" onClick={e => e.stopPropagation()} />
+        </div>
+      )}
     </div>
   );
 }
