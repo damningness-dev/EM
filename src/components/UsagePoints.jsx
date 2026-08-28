@@ -148,6 +148,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   const [sharingPhotos, setSharingPhotos] = useState(false);
   const [printing, setPrinting] = useState(false);
   const printRef = useRef(null);
+  const photoPrintRef = useRef(null);
   const [colW, setColW] = useState(() => {
     try { const s = JSON.parse(localStorage.getItem(UP_COL_STORE_KEY)); if (s && typeof s === 'object') return s; } catch { /* ignore */ }
     return {};
@@ -219,6 +220,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   // 받는 동안에는 압축된 작은 미리보기를 대신 보여준다. 여러 장이면 지금 보고
   // 있는 장(index)이 바뀔 때마다 그 장의 원본을 다시 받는다.
   const lightboxPhoto = lightbox ? lightbox.photos[lightbox.index] : null;
+  const lightboxItem = lightbox ? data.find(d => d.id === lightbox.itemId) : null;
   useEffect(() => {
     setHqUrl(null);
     if (!lightboxPhoto || !isElectron) return;
@@ -607,6 +609,48 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
     }
   }
 
+  // 확대창(라이트박스)에 띄운 사진 한 장을 세로 A4로 인쇄 — 목록 PDF와 같은 방식
+  // (숨겨둔 인쇄 전용 템플릿을 .print-portal로 복제해 그 부분만 출력)이지만
+  // 가로가 아니라 세로로 찍는다.
+  async function handlePrintPhoto() {
+    if (printing || !lightbox) return;
+    const src = photoPrintRef.current;
+    if (!src) return;
+    setPrinting(true);
+
+    const portal = document.createElement('div');
+    portal.className = 'print-portal';
+    portal.appendChild(src.cloneNode(true));
+    document.body.appendChild(portal);
+    document.body.classList.add('is-printing');
+
+    const styleEl = document.createElement('style');
+    styleEl.textContent = '@page { size: A4 portrait; margin: 10mm; }';
+    document.head.appendChild(styleEl);
+
+    const cleanup = () => {
+      document.body.classList.remove('is-printing');
+      portal.remove();
+      styleEl.remove();
+    };
+
+    try {
+      if (isElectron) {
+        await new Promise(r => requestAnimationFrame(() => r()));
+        const r = await printDoc({ landscape: false, pageSize: 'A4', fileName: '사용점_사진' });
+        if (r?.ok) showNotice('PDF로 열었습니다. 뷰어에서 인쇄(Ctrl+P)하세요.');
+        else showNotice('PDF 생성 실패: ' + (r?.error || ''), true);
+      } else {
+        window.print();
+      }
+    } catch (e) {
+      showNotice('PDF 생성 실패: ' + e.message, true);
+    } finally {
+      cleanup();
+      setPrinting(false);
+    }
+  }
+
   // 토큰이 없거나 만료된 상태에서 등록한 사진은 공유 Gist에 못 올라가, 다른 PC에서
   // 작게 압축된 미리보기만 보인다. 뒤늦게라도 원본을 올려 모든 PC가 고화질로
   // 볼 수 있게 한다(이미 올라간 사진은 건너뛴다).
@@ -780,6 +824,11 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                       <div>담당자 : {assigneesOf(u).join(', ')}{u.due_date ? ` (완료기한 ${u.due_date})` : ''}</div>
                       <div>조치사항 : {u.action_taken || ''}</div>
                       {u.conclusion && <div>결론 : {u.conclusion}</div>}
+                      {photosOf(u).length > 0 && (
+                        <div className="up-print-photos">
+                          {photosOf(u).map(p => <img key={p.id} src={p.thumb} alt="" />)}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 </FragmentRow>
@@ -1294,6 +1343,21 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
       {lightbox && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[300] p-6" onClick={() => setLightbox(null)}>
           <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full p-4 space-y-3" onClick={e => e.stopPropagation()}>
+            {/* 인쇄 전용 캡션 — 화면에는 안 보이고, 인쇄 시에만 .print-portal로
+                복제되어 사진과 함께 출력된다. */}
+            <div style={{ display: 'none' }} aria-hidden="true">
+              <div ref={photoPrintRef} className="up-photo-print">
+                <h1>{lightboxItem?.title || '(제목 없음)'}</h1>
+                <p className="up-photo-print-meta">
+                  {[lightboxItem?.major_category, lightboxItem?.minor_category].filter(Boolean).join(' · ')}
+                  {lightboxItem?.point_number && ` · 사용점번호 ${lightboxItem.point_number}`}
+                  {lightboxItem?.created_date && ` · 작업일 ${lightboxItem.created_date}`}
+                  {lightboxItem?.worker_name && ` · 작업자 ${lightboxItem.worker_name}`}
+                  {lightbox.photos.length > 1 && ` · 사진 ${lightbox.index + 1}/${lightbox.photos.length}`}
+                </p>
+                <img src={hqUrl || lightboxPhoto?.thumb} alt="" />
+              </div>
+            </div>
             <div className="relative">
               <img src={hqUrl || lightboxPhoto?.thumb} alt="사진"
                 onContextMenu={e => { e.preventDefault(); if (lightbox.photos.length > 1) gotoPhoto(1); }}
@@ -1331,6 +1395,10 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                   <button onClick={() => revealCalibFile(lightboxPhoto.filePath, lightboxPhoto.gistKey, lightboxPhoto.fileName, 'usagepoints')}
                     className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs">📁 폴더 열기</button>
                 )}
+                <button onClick={handlePrintPhoto} disabled={printing}
+                  className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-xs disabled:opacity-50">
+                  {printing ? '인쇄 준비 중…' : '🖨 인쇄'}
+                </button>
                 <button onClick={() => setLightbox(null)} className="px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50">닫기</button>
               </div>
             </div>

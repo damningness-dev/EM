@@ -168,6 +168,43 @@ body {
 .print-portal .up-print tr.up-detail div + div {
   margin-top: 2px;
 }
+/* 항목 아래 조사·조치 요약에 함께 붙는 첨부 사진 — 여러 장이면 나란히, 페이지
+   경계에서 잘리지 않도록 항목 전체(위 데이터 행 + 이 상세 행)를 한 묶음으로 둔다. */
+.print-portal .up-print .up-print-photos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.print-portal .up-print .up-print-photos img {
+  width: 70px;
+  height: 70px;
+  object-fit: cover;
+  border: 1px solid #d1d5db;
+}
+
+/* 사진 확대창(라이트박스) 인쇄 — 사진 한 장을 세로 A4에 최대한 크게, 제목·항목
+   정보를 캡션으로 붙여 출력한다. */
+.print-portal .up-photo-print {
+  font-family: inherit;
+  color: #111;
+  text-align: center;
+}
+.print-portal .up-photo-print h1 {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+.print-portal .up-photo-print .up-photo-print-meta {
+  font-size: 11px;
+  color: #555;
+  margin: 0 0 12px;
+}
+.print-portal .up-photo-print img {
+  max-width: 100%;
+  max-height: 240mm;
+  object-fit: contain;
+}
 
 @media print {
   @page {
