@@ -61,16 +61,9 @@ function rangeDates(view, anchor) {
   return [t]; // day
 }
 
-// todo가 특정 날짜에 발생하는지 (일정 반복 반영) — main.js와 동일 로직.
-// 반복 없음 + 마감기한이면 마감까지 매일 표시.
-function todoOccursOn(todo, dateStr) {
-  if (!todo.date || dateStr < todo.date) return false;
+// 반복 주기상의 '원래' 날짜인지만 판정(공휴일 이동 반영 전) — main.js와 동일 로직.
+function todoNaturalMatch(todo, dateStr) {
   const repeat = todo.repeat || 'none';
-  if (repeat === 'none') {
-    if (todo.due) return dateStr <= todo.due;
-    return dateStr === todo.date;
-  }
-  if (todo.due && dateStr > todo.due) return false;
   const base = new Date(todo.date + 'T00:00:00');
   const d = new Date(dateStr + 'T00:00:00');
   const interval = Math.max(1, todo.interval || 1);
@@ -92,13 +85,55 @@ function todoOccursOn(todo, dateStr) {
   return false;
 }
 
+function addDaysStr(dateStr, n) {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() + n);
+  return fmtDate(d);
+}
+
+// 원래 날짜가 공휴일이면 이전날/다음날로 옮긴다 (연휴가 이어지면 근무일이 나올 때까지 계속 이동).
+function shiftForHoliday(dateStr, direction, holidayMap) {
+  let cur = dateStr, guard = 0;
+  while (holidayMap[cur] && guard < 30) {
+    cur = addDaysStr(cur, direction);
+    guard++;
+  }
+  return cur;
+}
+
+// 공휴일 이동을 반영해 실제로 이 날짜가 원래 어느 주기의 자리인지 역산할 때 훑는 범위(일).
+const HOLIDAY_SHIFT_SEARCH_DAYS = 14;
+
+// todo가 특정 날짜에 발생하는지 (일정 반복 + 공휴일 이동 반영).
+// 반복 없음 + 마감기한이면 마감까지 매일 표시.
+function todoOccursOn(todo, dateStr, holidayMap = {}) {
+  if (!todo.date || dateStr < todo.date) return false;
+  const repeat = todo.repeat || 'none';
+  if (repeat === 'none') {
+    if (todo.due) return dateStr <= todo.due;
+    return dateStr === todo.date;
+  }
+  if (todo.due && dateStr > todo.due) return false;
+  const shift = todo.holidayShift;
+  if (!shift || shift === 'none') return todoNaturalMatch(todo, dateStr);
+  const direction = shift === 'before' ? -1 : 1;
+  for (let off = -HOLIDAY_SHIFT_SEARCH_DAYS; off <= HOLIDAY_SHIFT_SEARCH_DAYS; off++) {
+    const candidate = addDaysStr(dateStr, off);
+    if (candidate < todo.date || (todo.due && candidate > todo.due)) continue;
+    if (!todoNaturalMatch(todo, candidate)) continue;
+    if (shiftForHoliday(candidate, direction, holidayMap) === dateStr) return true;
+  }
+  return false;
+}
+
 function repeatText(todo) {
   const r = todo.repeat || 'none';
   if (r === 'none') return todo.due ? '마감까지 매일' : '';
   const iv = todo.interval > 1 ? todo.interval : '';
-  if (r === 'monthly' && todo.monthlyMode === 'nthWeekday') return `${iv}매월 ${NTH_LABEL[todo.nth || 1]} ${DOW[todo.dow || 0]}요일`;
-  if (r === 'monthly' && todo.monthlyMode === 'day') return `${iv}매월 ${todo.monthlyDay || ''}일`;
-  return iv + REPEAT_LABEL[r];
+  const shiftSuffix = todo.holidayShift === 'before' ? ' (휴일→전날)' : todo.holidayShift === 'after' ? ' (휴일→다음날)' : '';
+  if (r === 'monthly' && todo.monthlyMode === 'nthWeekday') return `${iv}매월 ${NTH_LABEL[todo.nth || 1]} ${DOW[todo.dow || 0]}요일${shiftSuffix}`;
+  if (r === 'monthly' && todo.monthlyMode === 'day') return `${iv}매월 ${todo.monthlyDay || ''}일${shiftSuffix}`;
+  return iv + REPEAT_LABEL[r] + shiftSuffix;
 }
 function alarmText(todo) {
   const a = todo.alarm || (todo.alarmEnabled && todo.time ? { enabled: true, mode: 'atTime', time: todo.time, base: 'each' } : null);
@@ -453,6 +488,7 @@ export default function TodoToday({ currentMember }) {
     title: '', date: todayStr(), due: '', note: '',
     // 일정 반복
     repeat: 'none', interval: 1, monthlyMode: 'day', monthlyDay: new Date().getDate(), nth: 1, dow: new Date().getDay(),
+    holidayShift: 'none',
     // 알람
     alarmEnabled: false, alarmMode: 'atTime', alarmTime: '09:00', alarmMinBefore: 30, alarmDayBefore: 1, alarmBase: 'each',
   };
@@ -560,6 +596,7 @@ export default function TodoToday({ currentMember }) {
       monthlyMode: f.monthlyMode || 'day',
       monthlyDay: Math.max(1, Math.min(31, parseInt(f.monthlyDay) || 1)),
       nth: f.nth || 1, dow: f.dow ?? 0,
+      holidayShift: f.repeat && f.repeat !== 'none' ? (f.holidayShift || 'none') : 'none',
       alarm,
       alarmEnabled: alarm.enabled, time: alarm.enabled ? alarm.time : '', // 구형 호환
       note: f.note || '',
@@ -595,6 +632,7 @@ export default function TodoToday({ currentMember }) {
       repeat: t.repeat || 'none', interval: t.interval || 1,
       monthlyMode: t.monthlyMode || 'day', monthlyDay: t.monthlyDay || new Date(t.date + 'T00:00:00').getDate() || 1,
       nth: t.nth || 1, dow: t.dow ?? (t.date ? new Date(t.date + 'T00:00:00').getDay() : 0),
+      holidayShift: t.holidayShift || 'none',
       alarmEnabled: !!(a && a.enabled), alarmMode: a?.mode || 'atTime', alarmTime: a?.time || '09:00',
       alarmMinBefore: a?.minBefore ?? 30, alarmDayBefore: a?.dayBefore ?? 1, alarmBase: a?.base || 'each',
     });
@@ -770,6 +808,16 @@ export default function TodoToday({ currentMember }) {
                 )}
               </>
             )}
+            {todoForm.repeat !== 'none' && (
+              <label className="flex items-center gap-1 text-xs text-gray-600">🎌 공휴일
+                <select value={todoForm.holidayShift} onChange={e => setTodoForm(f => ({ ...f, holidayShift: e.target.value }))}
+                  className="border border-gray-300 rounded px-2 py-1 text-sm bg-white">
+                  <option value="none">그대로 표시</option>
+                  <option value="before">이전 날로 이동</option>
+                  <option value="after">다음 날로 이동</option>
+                </select>
+              </label>
+            )}
           </div>
 
           {/* 알람 (일정 반복과 별도) */}
@@ -838,7 +886,7 @@ export default function TodoToday({ currentMember }) {
         // 날짜별 발생 할일 그룹
         const groups = todoDates.map(d => {
           const ds = fmtDate(d);
-          const items = visibleTodos.filter(t => todoOccursOn(t, ds))
+          const items = visibleTodos.filter(t => todoOccursOn(t, ds, holidays))
             .sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
           return { ds, d, items };
         }).filter(g => g.items.length > 0);

@@ -4,6 +4,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const https = require('https');
 const http = require('http');
+const { buildHolidayMap } = require('./holidayMap');
 
 const isDev = !app.isPackaged;
 
@@ -925,15 +926,9 @@ function nthWeekdayOfMonth(year, month0, nth, dow) {
   return day;
 }
 
-// todo가 특정 날짜에 발생하는지 (일정 반복 반영). 반복 없음 + 마감기한이면 마감까지 매일.
-function todoOccursOn(todo, dateStr) {
-  if (!todo.date || dateStr < todo.date) return false;
+// 반복 주기상의 '원래' 날짜인지만 판정(공휴일 이동 반영 전) — src/components/TodoToday.jsx와 동일 로직.
+function todoNaturalMatch(todo, dateStr) {
   const repeat = todo.repeat || 'none';
-  if (repeat === 'none') {
-    if (todo.due) return dateStr <= todo.due; // 마감까지 매일 표시
-    return dateStr === todo.date;
-  }
-  if (todo.due && dateStr > todo.due) return false; // 마감 이후 중단
   const base = new Date(todo.date + 'T00:00:00');
   const d = new Date(dateStr + 'T00:00:00');
   const interval = Math.max(1, todo.interval || 1);
@@ -956,6 +951,47 @@ function todoOccursOn(todo, dateStr) {
   return false;
 }
 
+// 원래 날짜가 공휴일이면 이전날/다음날로 옮긴다 (연휴가 이어지면 근무일이 나올 때까지 계속 이동).
+function shiftForHoliday(dateStr, direction, holidayMap) {
+  let cur = dateStr, guard = 0;
+  while (holidayMap[cur] && guard < 30) {
+    cur = addDaysStr(cur, direction);
+    guard++;
+  }
+  return cur;
+}
+
+const HOLIDAY_SHIFT_SEARCH_DAYS = 14;
+
+// todo가 특정 날짜에 발생하는지 (일정 반복 + 공휴일 이동 반영). 반복 없음 + 마감기한이면 마감까지 매일.
+function todoOccursOn(todo, dateStr, holidayMap = {}) {
+  if (!todo.date || dateStr < todo.date) return false;
+  const repeat = todo.repeat || 'none';
+  if (repeat === 'none') {
+    if (todo.due) return dateStr <= todo.due; // 마감까지 매일 표시
+    return dateStr === todo.date;
+  }
+  if (todo.due && dateStr > todo.due) return false; // 마감 이후 중단
+  const shift = todo.holidayShift;
+  if (!shift || shift === 'none') return todoNaturalMatch(todo, dateStr);
+  const direction = shift === 'before' ? -1 : 1;
+  for (let off = -HOLIDAY_SHIFT_SEARCH_DAYS; off <= HOLIDAY_SHIFT_SEARCH_DAYS; off++) {
+    const candidate = addDaysStr(dateStr, off);
+    if (candidate < todo.date || (todo.due && candidate > todo.due)) continue;
+    if (!todoNaturalMatch(todo, candidate)) continue;
+    if (shiftForHoliday(candidate, direction, holidayMap) === dateStr) return true;
+  }
+  return false;
+}
+
+// 알람 체크 시점 기준 ±1년 범위 공휴일맵을 매 분 다시 만든다(공휴일 정의가 많지 않아 비용 무시 가능).
+function currentHolidayMap() {
+  try {
+    const year = new Date().getFullYear();
+    return buildHolidayMap(loadData().holidays || [], year - 1, year + 1);
+  } catch { return {}; }
+}
+
 // 알람 설정 정규화 (구형 alarmEnabled/time → 신형 alarm 객체)
 function todoAlarm(todo) {
   if (todo.alarm && typeof todo.alarm === 'object') return todo.alarm;
@@ -972,7 +1008,7 @@ function currentLoggedInUsername() {
 }
 
 // 지금(now) 이 todo의 알람을 울려야 하면 { key, occDay } 반환, 아니면 null.
-function todoAlarmDueNow(todo, now, currentUsername) {
+function todoAlarmDueNow(todo, now, currentUsername, holidayMap) {
   const a = todoAlarm(todo);
   if (!a || !a.enabled || !a.time) return null;
   // 주간근무에서 자동 등록된 할일은 배정된 본인이 로그인해 있을 때만 울린다.
@@ -987,8 +1023,8 @@ function todoAlarmDueNow(todo, now, currentUsername) {
   if (base === 'start') occDays = todo.date ? [todo.date] : [];
   else if (base === 'end') occDays = todo.due ? [todo.due] : [];
   else { // each: 오늘 기준으로 알람 대상 occurrence를 역산
-    if (mode === 'dayBefore') { const occ = addDaysStr(todayStr, a.dayBefore || 0); if (todoOccursOn(todo, occ)) occDays = [occ]; }
-    else if (todoOccursOn(todo, todayStr)) occDays = [todayStr];
+    if (mode === 'dayBefore') { const occ = addDaysStr(todayStr, a.dayBefore || 0); if (todoOccursOn(todo, occ, holidayMap)) occDays = [occ]; }
+    else if (todoOccursOn(todo, todayStr, holidayMap)) occDays = [todayStr];
   }
   for (const occDay of occDays) {
     // 알람이 실제로 울리는 날짜/시각
@@ -1177,9 +1213,10 @@ function checkAlarms() {
   if (!todos.length) return;
   const now = new Date();
   const currentUsername = currentLoggedInUsername();
+  const holidayMap = currentHolidayMap();
   const due = [];
   todos.forEach(t => {
-    const fire = todoAlarmDueNow(t, now, currentUsername);
+    const fire = todoAlarmDueNow(t, now, currentUsername, holidayMap);
     if (fire) due.push({ todo: t, fire });
   });
   if (!due.length) return;
