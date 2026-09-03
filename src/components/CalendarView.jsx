@@ -70,6 +70,7 @@ const DEFAULT_CHIP_COLORS = {
   'grade_P2':       { text: '#15803d' },
   'grade_P3':       { text: '#1d4ed8' },
   'grade_유지관리': { text: '#312e81' },
+  'calib':          { bg: '#fef3c7', border: '#fde68a', text: '#92400e' },
 };
 
 function buildGrid(year, month, weekStart = 'mon') {
@@ -941,15 +942,6 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   const selectedScheduleEvents = selectedDay ? (scheduleByDate[selectedDay] || []) : [];
   const selectedTempEvents = selectedDay ? (tempByDate[selectedDay] || []) : [];
 
-  function dDayColor(dateStr) {
-    try {
-      const d = differenceInDays(parseISO(dateStr), today);
-      if (d < 0) return 'bg-red-100 text-red-700 border border-red-200';
-      if (d <= 7) return 'bg-orange-100 text-orange-700 border border-orange-200';
-      return 'bg-yellow-50 text-yellow-700 border border-yellow-200';
-    } catch { return 'bg-gray-100 text-gray-500'; }
-  }
-
   function dDayText(dateStr) {
     try {
       const d = differenceInDays(parseISO(dateStr), today);
@@ -989,6 +981,12 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     const cat = chipColors[`cat_${major}`] ?? DEFAULT_CHIP_COLORS[`cat_${major}`] ?? { bg: '#f3f4f6', border: '#e5e7eb' };
     const grd = chipColors[`grade_${grade}`] ?? DEFAULT_CHIP_COLORS[`grade_${grade}`] ?? { text: '#4b5563' };
     return { backgroundColor: cat.bg, borderColor: cat.border, borderWidth: '1px', borderStyle: 'solid', color: grd.text };
+  }
+
+  // 교정 배지 색상 — 만료/7일 이내/이번달 구분 없이 하나의 커스터마이즈 가능한 색으로 통일.
+  function getCalibChipStyle() {
+    const c = chipColors.calib ?? DEFAULT_CHIP_COLORS.calib;
+    return { backgroundColor: c.bg, borderColor: c.border, borderWidth: '1px', borderStyle: 'solid', color: c.text };
   }
 
   function updateChipColor(key, field, value) {
@@ -2024,6 +2022,8 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
               className="text-xs px-2 py-0.5 rounded font-medium"
               style={colorPicker.type === 'cat'
                 ? { backgroundColor: chipColors[colorPicker.key]?.bg, borderColor: chipColors[colorPicker.key]?.border, borderWidth: 1, borderStyle: 'solid', color: '#374151' }
+                : colorPicker.type === 'calib'
+                ? { backgroundColor: chipColors.calib?.bg, borderColor: chipColors.calib?.border, borderWidth: 1, borderStyle: 'solid', color: chipColors.calib?.text }
                 : { color: chipColors[colorPicker.key]?.text, fontWeight: 700, fontSize: '0.8rem' }
               }
             >
@@ -2032,7 +2032,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
           </div>
 
           <div className="space-y-2.5">
-            {colorPicker.type === 'cat' && (
+            {(colorPicker.type === 'cat' || colorPicker.type === 'calib') && (
               <>
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-gray-600">배경색</span>
@@ -2052,7 +2052,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                 </div>
               </>
             )}
-            {colorPicker.type === 'grade' && (
+            {(colorPicker.type === 'grade' || colorPicker.type === 'calib') && (
               <div className="flex items-center justify-between">
                 <span className="text-xs text-gray-600">글씨색</span>
                 <input type="color"
@@ -2435,7 +2435,8 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                       {calibEvts.map((c, i) => (
                         <div
                           key={`c${i}`}
-                          className={`text-xs px-1 py-0.5 rounded truncate ${dDayColor(c.next_calib_date)}`}
+                          className="text-xs px-1 py-0.5 rounded truncate"
+                          style={getCalibChipStyle()}
                           title={`${c.name} (${dDayText(c.next_calib_date)})`}
                         >{c.name}</div>
                       ))}
@@ -2499,15 +2500,20 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
 
           {/* Legend */}
           <div className="cal-legend flex flex-wrap gap-x-4 gap-y-1.5 px-4 py-2.5 border-t border-gray-100 bg-gray-50">
-            <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span className="w-3 h-3 rounded bg-red-100 border border-red-200 inline-block" />만료됨
-            </div>
-            <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span className="w-3 h-3 rounded bg-orange-100 border border-orange-200 inline-block" />7일 이내
-            </div>
-            <div className="flex items-center gap-1.5 text-xs text-gray-500">
-              <span className="w-3 h-3 rounded bg-yellow-50 border border-yellow-200 inline-block" />이번달 교정
-            </div>
+            <button
+              onClick={e => {
+                const x = Math.max(10, Math.min(e.clientX - 104, window.innerWidth - 224));
+                const y = Math.max(10, e.clientY - 280);
+                setColorPicker({ key: 'calib', label: '교정', type: 'calib', x, y });
+              }}
+              className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-800 transition-colors group"
+              title="클릭하여 색상 변경"
+            >
+              <span className="w-3 h-3 rounded inline-block border transition-transform group-hover:scale-125"
+                style={{ backgroundColor: (chipColors.calib ?? DEFAULT_CHIP_COLORS.calib).bg, borderColor: (chipColors.calib ?? DEFAULT_CHIP_COLORS.calib).border }} />
+              교정
+              <span className="text-[9px] text-gray-300 group-hover:text-blue-400 leading-none">✎</span>
+            </button>
             {/* 범례는 대분류만 — 소분류는 대분류 색상을 따름 */}
             {MAJOR_CATS.map(cat => {
               const c = chipColors[`cat_${cat}`] ?? DEFAULT_CHIP_COLORS[`cat_${cat}`] ?? { bg: '#f3f4f6', border: '#e5e7eb' };
