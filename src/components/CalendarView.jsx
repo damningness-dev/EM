@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, useImperativeHandle, forwardRef, Fragment } from 'react';
 import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchScheduleAssignees, setScheduleAssignee, fetchMembers, fetchTempSchedules, addTempSchedule, deleteTempSchedule, updateTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload, exportScheduleExcelTable, printDoc } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
@@ -104,7 +104,7 @@ function manualScaleFontPx(percent) {
   return Math.max(3, Math.min(16, 8 * (percent || 100) / 100));
 }
 
-export default function CalendarView({ year: initYear, onYearChange, adminUnlocked, currentMember, jumpTarget, onJumpTargetConsumed }) {
+const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearChange, adminUnlocked, currentMember, jumpTarget, onJumpTargetConsumed }, ref) {
   const today = new Date();
   const [year, setYear] = useState(initYear || today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
@@ -1403,6 +1403,14 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
       setSavingSchedule(false);
     }
   }
+
+  // 사이드바에서 다른 메뉴로 이동하기 전에(App.jsx) 저장하지 않은 일정 초안이
+  // 있는지 확인하고, 있으면 그대로 저장/취소하게 해주는 외부용 창구.
+  useImperativeHandle(ref, () => ({
+    hasUnsavedChanges: () => changeLog.length > 0,
+    saveChanges: handleSaveSchedule,
+    discardChanges: handleRevertDraft,
+  }), [changeLog, handleSaveSchedule, handleRevertDraft]);
 
   const selDow = selectedDay ? new Date(selectedDay + 'T00:00:00').getDay() : 0;
   const isSelHol = selectedDay ? !!holidays[selectedDay] : false;
@@ -2873,7 +2881,9 @@ export default function CalendarView({ year: initYear, onYearChange, adminUnlock
       )}
     </div>
   );
-}
+});
+
+export default CalendarView;
 
 // 표로보기: 이번 달 측정 일정 목록 (더블클릭으로 완료 처리)
 const PT_TYPES = [

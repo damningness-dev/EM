@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Dashboard from './components/Dashboard';
 import Sop from './components/Sop';
 import Calibration from './components/Calibration';
@@ -44,6 +44,36 @@ export default function App() {
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [showMemberChangePassword, setShowMemberChangePassword] = useState(false);
   const [scheduleJumpTarget, setScheduleJumpTarget] = useState(null); // {date, zoneId, num} — 구역별 현황 등에서 특정 일정으로 이동
+
+  // 월별 모니터링 일정(CalendarView)은 "일정 저장하기"를 눌러야 실제로 저장되는
+  // 초안 상태를 갖는다. 저장하지 않은 초안이 있는 채로 다른 메뉴로 이동하면
+  // 그 초안이 그대로 사라지므로, 이동 전에 저장할지 물어본다.
+  const calendarRef = useRef(null);
+  const [pendingNav, setPendingNav] = useState(null); // 확인 대기 중인 이동 대상 메뉴 id
+  const [leaveSaving, setLeaveSaving] = useState(false);
+
+  function requestPageChange(id) {
+    if (page === 'calendar' && id !== 'calendar' && calendarRef.current?.hasUnsavedChanges?.()) {
+      setPendingNav(id);
+      return;
+    }
+    setPage(id);
+  }
+
+  async function confirmLeaveSave() {
+    setLeaveSaving(true);
+    try { await calendarRef.current?.saveChanges?.(); } finally { setLeaveSaving(false); }
+    setPage(pendingNav);
+    setPendingNav(null);
+  }
+  function confirmLeaveDiscard() {
+    calendarRef.current?.discardChanges?.();
+    setPage(pendingNav);
+    setPendingNav(null);
+  }
+  function cancelLeave() {
+    setPendingNav(null);
+  }
 
   // 로그인(선택 사항) — 로그인하지 않으면 "권한 설정"에서 정한 게스트 메뉴(또는
   // 전체 메뉴)가 보인다. 로그인하면 그 계정에 허용한 탭만 보이도록 사이드바 메뉴가
@@ -180,7 +210,7 @@ export default function App() {
           {visibleMenu.map(item => (
             <button
               key={item.id}
-              onClick={() => { setPage(item.id); setSidebarOpen(false); }}
+              onClick={() => { requestPageChange(item.id); setSidebarOpen(false); }}
               className={`w-full text-left px-5 py-3 flex items-center gap-3 text-sm transition-colors ${
                 page === item.id ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white'
               }`}
@@ -246,6 +276,36 @@ export default function App() {
         />
       )}
 
+      {pendingNav && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40" onClick={cancelLeave}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[380px] max-w-[92vw]" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-gray-100 flex items-center gap-2">
+              <span className="text-lg">⚠️</span>
+              <h3 className="text-base font-bold text-gray-900">저장하지 않은 일정 변경사항</h3>
+            </div>
+            <div className="px-5 py-4">
+              <p className="text-sm text-gray-600 leading-relaxed">
+                "일정 저장하기"를 누르지 않은 변경사항이 있습니다. 저장하지 않고 다른 메뉴로 이동하면 변경사항이 사라집니다.
+              </p>
+            </div>
+            <div className="px-5 py-3 border-t border-gray-100 flex flex-col gap-2">
+              <button onClick={confirmLeaveSave} disabled={leaveSaving}
+                className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-60">
+                {leaveSaving ? '저장 중…' : '💾 저장하고 이동'}
+              </button>
+              <button onClick={confirmLeaveDiscard} disabled={leaveSaving}
+                className="w-full py-2 bg-red-50 text-red-600 rounded-lg text-sm font-medium hover:bg-red-100 disabled:opacity-60">
+                저장하지 않고 이동
+              </button>
+              <button onClick={cancelLeave} disabled={leaveSaving}
+                className="w-full py-2 border border-gray-300 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-60">
+                취소
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 lg:hidden">
           <button onClick={() => setSidebarOpen(true)} className="p-1.5 rounded-lg hover:bg-gray-100">
@@ -260,7 +320,7 @@ export default function App() {
           {page === 'dashboard' && <Dashboard year={year} />}
           {page === 'todo' && <TodoToday currentMember={currentMember} />}
           {page === 'calendar' && (
-            <CalendarView year={year} onYearChange={setYear} adminUnlocked={adminUnlocked}
+            <CalendarView ref={calendarRef} year={year} onYearChange={setYear} adminUnlocked={adminUnlocked}
               currentMember={currentMember}
               jumpTarget={scheduleJumpTarget} onJumpTargetConsumed={() => setScheduleJumpTarget(null)} />
           )}
