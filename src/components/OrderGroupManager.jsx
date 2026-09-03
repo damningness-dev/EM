@@ -452,6 +452,16 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     });
   }
 
+  // 시작일 변경 — 측정주기(달력 드래그 등으로 옮긴 회차별 수동 이동)는 예전 시작일 기준이라
+  // 그대로 두면 새 시작일과 어긋난다. 월별모니터링 화면의 시작일 변경과 같은 규칙으로
+  // 여기서도 override를 함께 초기화해 관리 창의 일정이 새 시작일에 맞춰 다시 계산되게 한다.
+  function editZoneStart(zoneId, dateStr) {
+    setLocalEdits(prev => ({
+      ...prev,
+      [zoneId]: { ...(prev[zoneId] || {}), schedule_start: dateStr || null, schedule_overrides: {} }
+    }));
+  }
+
   // 시작 회차 변경 — 저장 시 이 회차부터 다시 배치되도록 기존 수동 이동(override)은 초기화한다.
   function editStartNum(zoneId, num) {
     setLocalEdits(prev => ({
@@ -1226,7 +1236,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                                 );
                                 if (key === 'start') return (
                                   <div key={key} className={cell} style={wStyle}>
-                                    <input type="date" value={startVal} onChange={e => editZoneField(zone.id, 'schedule_start', e.target.value)} onBlur={() => handleDateBlur(zone)} onClick={e => e.stopPropagation()}
+                                    <input type="date" value={startVal} onChange={e => editZoneStart(zone.id, e.target.value)} onBlur={() => handleDateBlur(zone)} onClick={e => e.stopPropagation()}
                                       className="text-[10px] border border-gray-200 rounded px-0.5 py-0.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500 w-full" />
                                   </div>
                                 );
