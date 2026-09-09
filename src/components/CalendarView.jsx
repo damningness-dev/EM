@@ -1119,8 +1119,26 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     // (override가 없으면 자동 배치 로직이 평일로 다시 보정해버려 주말 지정이 무시됨)
     if (dragData.isFirst) {
       const updated = { ...zone, schedule_start: dateStr, schedule_overrides: { [String(dragData.num)]: dateStr } };
-      setZones(prev => prev.map(z => z.id === zone.id ? updated : z));
       logMoveChange(`start:${zone.id}`, `시작일 변경: ${zone.name}[${zone.grade}]`, zone.schedule_start || '?', dateStr, ' (이후 일정 재배치)');
+
+      // 같은 구역(이름+분류)의 뒤 단계(P2/P3/유지관리)도 새 시작일 기준으로 연쇄 재계산해
+      // 간트차트에서 앞뒤 단계 막대가 겹치지 않도록 한다. (측정주기 관리 창의 시작일 변경과 동일 규칙)
+      let nextZones = zones.map(z => z.id === zone.id ? updated : z);
+      if (['P1', 'P2', 'P3'].includes(updated.grade)) {
+        const cascadeItems = computeCascadeSchedules(updated, nextZones, holidays);
+        cascadeItems.forEach(({ zoneData }) => {
+          if (zoneData.id) {
+            const prevZone = nextZones.find(z => z.id === zoneData.id);
+            nextZones = nextZones.map(z => z.id === zoneData.id ? zoneData : z);
+            logMoveChange(`start:${zoneData.id}`, `시작일 변경: ${zoneData.name}[${zoneData.grade}]`, prevZone?.schedule_start || '?', zoneData.schedule_start, ' (이후 일정 자동 재배치)');
+          } else {
+            const withId = { ...zoneData, id: crypto.randomUUID() };
+            nextZones = [...nextZones, withId];
+            logChange(`${withId.name}[${withId.grade}] 일정 자동 생성: ${withId.schedule_start}`);
+          }
+        });
+      }
+      setZones(nextZones);
       showSuccess('시작일을 옮기고 이후 일정을 재배치했습니다. "일정 저장하기"를 눌러야 반영됩니다.');
       return;
     }
