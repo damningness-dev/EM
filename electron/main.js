@@ -1061,19 +1061,33 @@ function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').repla
 // 울리면 팝업이 겹겹이 쌓여 "확인"을 여러 번 눌러야 했다. 이미 떠 있거나 대기 중인
 // 알람과 같은 것이면 넣지 않아, 한 번만 확인하면 되도록 한다.
 // 서로 다른 알람은 key가 다르므로 그대로 각각 대기열에 쌓여 따로 확인하게 된다.
-function enqueueAlarm(todo, key) {
+function enqueueAlarm(todo, key, occDay) {
   const id = key || `${todo.id}_`;
   if (currentAlarmKey === id) return;
   if (alarmQueue.some(a => a.key === id)) return;
-  alarmQueue.push({ todo, key: id });
+  alarmQueue.push({ todo, key: id, occDay });
   showNextAlarm();
+}
+
+// 알람 팝업의 "완료" 버튼 — 해당 회차(occDay)를 완료 처리해 목록/알람에서 바로
+// 완료로 반영한다. 알람은 미완료일 때만 울리므로(todoAlarmDueNow 참고) 토글이
+// 아니라 추가만 하면 된다.
+function markTodoOccurrenceDone(id, occDay) {
+  if (!id || !occDay) return;
+  const todos = loadTodos();
+  const t = todos.find(x => x.id === id);
+  if (!t) return;
+  if (!t.completedDates) t.completedDates = [];
+  if (!t.completedDates.includes(occDay)) t.completedDates.push(occDay);
+  saveTodos(todos);
+  broadcastDataChanged();
 }
 
 function showNextAlarm() {
   if (currentAlarmWin && !currentAlarmWin.isDestroyed()) return; // 앞 알람 확인 대기
   const next = alarmQueue.shift();
   if (!next) { currentAlarmKey = null; return; }
-  const { todo, key: alarmKey } = next;
+  const { todo, key: alarmKey, occDay } = next;
   currentAlarmKey = alarmKey;
   try {
     const wa = screen.getPrimaryDisplay().workAreaSize;
@@ -1090,6 +1104,15 @@ function showNextAlarm() {
     currentAlarmWin = win;
     win.setAlwaysOnTop(true, 'screen-saver');
     try { win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch { /* ignore */ }
+    // "완료" 버튼 — preload 없는 창이라 IPC 대신 전용 스킴으로의 페이지 이동을
+    // 가로채는 방식으로 완료 처리를 main 프로세스에 알린다.
+    win.webContents.on('will-navigate', (e, url) => {
+      if (url === 'app-alarm://complete') {
+        e.preventDefault();
+        markTodoOccurrenceDone(todo.id, occDay);
+        if (!win.isDestroyed()) win.close();
+      }
+    });
     const remain = alarmQueue.length;
     const html = `<!doctype html><html><head><meta charset="utf-8"><style>
       html,body{margin:0}
@@ -1098,13 +1121,20 @@ function showNextAlarm() {
       .q{margin-left:auto;font-size:11px;color:#9ca3af;font-weight:600}
       .t{font-size:15px;font-weight:700;color:#111827;white-space:pre-wrap;word-break:break-word;line-height:1.35}
       .n{font-size:12px;color:#6b7280;margin-top:4px;white-space:pre-wrap;word-break:break-word;line-height:1.35}
-      button{margin-top:12px;padding:8px;background:#f97316;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;flex-shrink:0}
-      button:hover{background:#ea580c}
+      .btns{display:flex;gap:8px;margin-top:12px;flex-shrink:0}
+      .btns button{flex:1;padding:8px;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer}
+      .btn-ok{background:#f97316;color:#fff}
+      .btn-ok:hover{background:#ea580c}
+      .btn-done{background:#16a34a;color:#fff}
+      .btn-done:hover{background:#15803d}
     </style></head><body>
       <div class="h">⏰ 할일 알람 ${todo.time ? '· ' + esc(todo.time) : ''}${remain > 0 ? `<span class="q">대기 ${remain}건</span>` : ''}</div>
       <div class="t">${esc(todo.title)}</div>
       ${todo.note ? `<div class="n">${esc(todo.note)}</div>` : ''}
-      <button onclick="window.close()">확인</button>
+      <div class="btns">
+        <button class="btn-ok" onclick="window.close()">확인</button>
+        <button class="btn-done" onclick="location.href='app-alarm://complete'">완료</button>
+      </div>
     </body></html>`;
     win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
     // data URL은 ready-to-show가 안 뜨는 경우가 있어, did-finish-load + 폴백 타이머로 확실히 표시
@@ -1224,7 +1254,7 @@ function checkAlarms() {
   // 1) 데스크톱 팝업 창 (항상 위) — 한 번에 하나씩, 확인 전까지 유지 + 대기열.
   // 서로 다른 할일 알람은 각각 따로 확인할 수 있도록 모두 대기열에 넣는다.
   // (같은 알람이 리마인드로 다시 울린 경우는 enqueueAlarm에서 걸러진다)
-  due.forEach(({ todo, fire }) => enqueueAlarm(todo, fire.key));
+  due.forEach(({ todo, fire }) => enqueueAlarm(todo, fire.key, fire.occDay));
   const t = due[due.length - 1].todo; // 아래 깜빡임·토스트에 쓸 대표 항목
   // 2) 작업표시줄 깜빡임
   try { if (mainWin && !mainWin.isDestroyed()) mainWin.flashFrame(true); } catch { /* ignore */ }
