@@ -12,6 +12,7 @@ import CalendarView from './components/CalendarView';
 import UpdateNotifier from './components/UpdateNotifier';
 import SyncChangeNotifier from './components/SyncChangeNotifier';
 import SyncControl from './components/SyncControl';
+import BackupControl from './components/BackupControl';
 import Login from './components/Login';
 import MemberManager from './components/MemberManager';
 import ChangePasswordModal from './components/ChangePasswordModal';
@@ -260,6 +261,7 @@ export default function App() {
         )}
 
         <SyncControl adminUnlocked={adminUnlocked} />
+        <BackupControl adminUnlocked={adminUnlocked} />
       </aside>
 
       {showLogin && <Login onClose={() => setShowLogin(false)} onLoggedIn={handleLoggedIn} />}

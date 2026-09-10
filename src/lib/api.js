@@ -366,6 +366,20 @@ export async function exportScheduleExcelTable({ defaultName, sheetName, tableSt
   return api.invoke('export:scheduleExcelTable', { defaultName, sheetName, tableStyle, columns, rows });
 }
 
+// ─── 데이터 백업/복원 (구역·그룹·모니터링·완료·계정·할일 등을 JSON 파일로) ──────────
+
+export async function backupExport() {
+  return api.invoke('backup:export');
+}
+
+export async function backupImport() {
+  return api.invoke('backup:import');
+}
+
+export async function restartApp() {
+  return api.invoke('app:restart');
+}
+
 // ─── 인쇄 (Electron 가로 방향·배경색 강제) ──────────────────────────────────────
 
 export async function printDoc(options = {}) {

@@ -1384,6 +1384,7 @@ function registerHandlers() {
   ipcMain.handle('update:check', checkForUpdate);
   ipcMain.handle('update:download', downloadUpdate);
   ipcMain.handle('update:install', applyUpdateAndRestart);
+  ipcMain.handle('app:restart', () => { app.relaunch(); app.exit(0); });
 
   // ── 공유 동기화 (Gist) ──
   ipcMain.handle('sync:getConfig', () => {
@@ -1475,6 +1476,53 @@ function registerHandlers() {
       if (canceled || !filePath) return { ok: false, canceled: true };
       fs.writeFileSync(filePath, buffer);
       return { ok: true, filePath };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  // ── 데이터 백업/복원 ──
+  // em-data.json(구역·그룹·공휴일·모니터링·완료·계정 등 핵심 데이터)과
+  // todos-local.json(할일)을 하나의 JSON 파일로 내보내거나, 그 파일로 되돌린다.
+  // 공유동기화 설정(Gist ID·GitHub 토큰)은 자격정보라 백업에 포함하지 않는다.
+  ipcMain.handle('backup:export', async () => {
+    try {
+      const win = BrowserWindow.getFocusedWindow() || mainWin;
+      const bundle = {
+        app: 'em-backup',
+        formatVersion: 1,
+        exportedAt: new Date().toISOString(),
+        appVersion: app.getVersion(),
+        data: loadData(),
+        todos: loadTodos(),
+      };
+      const defaultName = `em-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      const { canceled, filePath } = await dialog.showSaveDialog(win, {
+        defaultPath: defaultName,
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+      if (canceled || !filePath) return { ok: false, canceled: true };
+      fs.writeFileSync(filePath, JSON.stringify(bundle, null, 2), 'utf-8');
+      return { ok: true, filePath };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('backup:import', async () => {
+    try {
+      const win = BrowserWindow.getFocusedWindow() || mainWin;
+      const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+        properties: ['openFile'],
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+      if (canceled || !filePaths?.length) return { ok: false, canceled: true };
+      let bundle;
+      try { bundle = JSON.parse(fs.readFileSync(filePaths[0], 'utf-8')); }
+      catch { return { ok: false, error: '파일을 읽을 수 없습니다 (JSON 형식 오류).' }; }
+      if (!bundle || bundle.app !== 'em-backup' || !bundle.data || typeof bundle.data !== 'object') {
+        return { ok: false, error: '이 프로그램의 백업 파일이 아닙니다.' };
+      }
+      saveData(bundle.data, { local: false });
+      if (Array.isArray(bundle.todos)) saveTodos(bundle.todos);
+      broadcastDataChanged();
+      return { ok: true, exportedAt: bundle.exportedAt, appVersion: bundle.appVersion };
     } catch (e) { return { ok: false, error: e.message }; }
   });
 
