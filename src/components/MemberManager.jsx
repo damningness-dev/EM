@@ -1,30 +1,5 @@
 import { useState, useEffect } from 'react';
-import { fetchMembers, upsertMember, deleteMember, fetchGuestAccess, saveGuestAccess, syncGetConfig, syncUpload } from '../lib/api';
-
-// 권한 설정이 바뀌면(계정 추가·수정·삭제, 게스트 메뉴 제한) em-data.json에 저장된
-// 뒤, 공유 설정(Gist ID + 토큰)이 있으면 자동으로 Gist에 업로드해 다른 PC에도
-// 곧바로 반영되게 한다. 공유를 아예 안 쓰는 PC면 처리할 것이 없으므로 성공으로
-// 본다. 반환값으로 실제 공유 여부를 알려줘, 호출한 쪽에서 "저장은 됐지만 이 PC
-// 에서는 다른 PC와 아직 공유되지 않았다"를 화면에 보여줄 수 있게 한다 — 이걸
-// 조용히 삼키면(예전 동작) 관리자는 성공한 줄 알고 넘어가는데 실제로는 이 PC
-// 에만 남아 있어, 다른 PC에서 "바꿨다는 비밀번호가 안 먹힌다"로 나타난다.
-async function syncAfterChange() {
-  try {
-    const cfg = await syncGetConfig();
-    if (!cfg?.gistId) return { shared: true };
-    if (!cfg?.hasToken) return { shared: false, reason: 'no-token' };
-    const r = await syncUpload();
-    return r?.ok ? { shared: true } : { shared: false, reason: 'upload-failed', detail: r?.error };
-  } catch (e) { return { shared: false, reason: 'upload-failed', detail: e?.message }; }
-}
-const SYNC_WARNING_TEXT = {
-  'no-token': '저장은 됐지만, 이 PC에 등록된 GitHub 토큰이 없어 다른 PC와 아직 공유되지 않았습니다. 동기화 설정에서 토큰을 등록하거나, 토큰이 등록된 PC에서 다시 저장해 주세요.',
-  'upload-failed': (detail) => `저장은 됐지만, 공유 업로드에 실패해 다른 PC와 아직 공유되지 않았습니다${detail ? ` (${detail})` : ''}. 잠시 후 자동으로 다시 시도됩니다.`,
-};
-function syncWarningText(s) {
-  const t = SYNC_WARNING_TEXT[s.reason];
-  return typeof t === 'function' ? t(s.detail) : t;
-}
+import { fetchMembers, upsertMember, deleteMember, fetchGuestAccess, saveGuestAccess, syncAfterChange, syncWarningText } from '../lib/api';
 
 // 관리자 전용 권한 설정 화면 — (1) 로그인하지 않았을 때 보이는 메뉴를 제한하고,
 // (2) 로그인 계정(멤버)을 만들어 계정마다 사이드바에 보일 탭 메뉴와 관리자 권한

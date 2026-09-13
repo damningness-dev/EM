@@ -8,6 +8,9 @@ export default function ChangePasswordModal({ title, onSubmit, onClose }) {
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // 바꾸긴 했지만 다른 PC와 공유되지 않은 경우 — 그냥 닫아버리면 사용자는 성공한
+  // 줄 알고 넘어가는데 실제로는 이 PC에만 남아, 다른 PC에서 로그인이 안 된다.
+  const [shareWarning, setShareWarning] = useState('');
 
   async function submit() {
     setError('');
@@ -17,13 +20,32 @@ export default function ChangePasswordModal({ title, onSubmit, onClose }) {
     setBusy(true);
     try {
       const r = await onSubmit(oldPassword, newPassword);
-      if (r?.ok) onClose(true);
-      else setError(r?.error || '변경 실패');
+      if (!r?.ok) { setError(r?.error || '변경 실패'); return; }
+      if (r.shareWarning) setShareWarning(r.shareWarning);
+      else onClose(true);
     } catch (e) {
       setError('오류: ' + e.message);
     } finally {
       setBusy(false);
     }
+  }
+
+  if (shareWarning) {
+    return (
+      <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/50">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+          <div className="text-center mb-4">
+            <div className="text-3xl mb-2">⚠️</div>
+            <h2 className="text-base font-bold text-gray-900">이 PC에만 저장되었습니다</h2>
+          </div>
+          <p className="text-xs text-gray-600 leading-relaxed mb-5">{shareWarning}</p>
+          <button onClick={() => onClose(true)}
+            className="w-full py-2.5 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700">
+            확인
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (

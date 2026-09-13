@@ -754,12 +754,34 @@ function mergeListById(remoteList, localList) {
   return [...map.values()];
 }
 
+// 계정은 레코드 전체를 updatedAt 하나로 비교하면 비밀번호가 조용히 되돌아간다 —
+// "A에서 비밀번호를 바꿨는데, 그 뒤 B에서 그 계정의 탭 권한만 손대면" B가 저장한
+// 레코드(비밀번호는 예전 값)가 더 최신으로 판정돼 A의 새 비밀번호를 덮어쓴다.
+// 그래서 비밀번호는 언제 바뀌었는지(passwordUpdatedAt)를 따로 남겨, 레코드 병합과
+// 별개로 "가장 최근에 바뀐 비밀번호"를 필드 단위로 골라 얹는다.
+// passwordUpdatedAt이 없는 예전 기록은 기준이 없으므로 건드리지 않는다.
+function mergeMemberAccounts(remoteList, localList) {
+  const merged = mergeListById(remoteList, localList);
+  const newestPw = new Map(); // id → 가장 최근에 비밀번호가 바뀐 기록
+  for (const m of [...(Array.isArray(remoteList) ? remoteList : []), ...(Array.isArray(localList) ? localList : [])]) {
+    if (!m || m.id == null || !m.passwordHash || !m.passwordUpdatedAt) continue;
+    const prev = newestPw.get(m.id);
+    if (!prev || m.passwordUpdatedAt > prev.passwordUpdatedAt) newestPw.set(m.id, m);
+  }
+  return merged.map(m => {
+    const p = m && m.id != null ? newestPw.get(m.id) : null;
+    if (!p || p.passwordUpdatedAt <= (m.passwordUpdatedAt || '')) return m;
+    return { ...m, passwordHash: p.passwordHash, passwordUpdatedAt: p.passwordUpdatedAt };
+  });
+}
+
 function mergeSharedData(remote, local) {
   const out = { ...(remote || {}), ...(local || {}) }; // 설정성 단일 값은 이 PC 기준
   const keys = new Set([...Object.keys(remote || {}), ...Object.keys(local || {})]);
   for (const key of keys) {
     const rv = remote?.[key], lv = local?.[key];
-    if (Array.isArray(rv) || Array.isArray(lv)) out[key] = mergeListById(rv, lv);
+    if (key === 'memberAccounts') out[key] = mergeMemberAccounts(rv, lv);
+    else if (Array.isArray(rv) || Array.isArray(lv)) out[key] = mergeListById(rv, lv);
     else if (MERGE_MAP_KEYS.includes(key)) out[key] = { ...(rv || {}), ...(lv || {}) };
   }
   return out;
@@ -791,7 +813,11 @@ const COLLAB_KEYS = ['usagePoints', 'sops', 'sopTags', 'memberAccounts'];
 // 추가해도 기준 PC가 관리하는 다른 자료를 덮어쓰지 않는다.
 function buildMemberUpload(remoteData, localData) {
   const out = { ...remoteData };
-  for (const key of COLLAB_KEYS) out[key] = mergeListById(remoteData?.[key], localData?.[key]);
+  for (const key of COLLAB_KEYS) {
+    out[key] = key === 'memberAccounts'
+      ? mergeMemberAccounts(remoteData?.[key], localData?.[key])
+      : mergeListById(remoteData?.[key], localData?.[key]);
+  }
   // guestAllowedTabs(로그인하지 않았을 때 보이는 메뉴)는 목록이 아니라 값 하나라
   // id 기준으로 합칠 수 없다. memberAccounts와 같은 권한 설정 화면에서 바뀌는
   // 값이니 같은 원칙으로, 이 PC에서 방금 고친 값이 항상 반영되게 한다.
@@ -1902,7 +1928,12 @@ function registerHandlers() {
       data.memberAccounts[idx].username = username;
       data.memberAccounts[idx].allowedTabs = allowedTabs;
       data.memberAccounts[idx].isAdmin = willBeAdmin;
-      if (member.password) data.memberAccounts[idx].passwordHash = hashPassword(member.password);
+      if (member.password) {
+        data.memberAccounts[idx].passwordHash = hashPassword(member.password);
+        // 비밀번호만 따로 "언제 바뀌었는지"를 남긴다(mergeMemberAccounts 참고) —
+        // 다른 PC에서 같은 계정의 권한만 고쳐도 이 비밀번호가 되돌아가지 않게.
+        data.memberAccounts[idx].passwordUpdatedAt = new Date().toISOString();
+      }
       // 토큰: clearToken이면 삭제, token이 오면(빈 값 아니면) 교체, 안 오면 기존 값 유지.
       if (member.clearToken) delete data.memberAccounts[idx].token;
       else if (member.token) data.memberAccounts[idx].token = obfuscateToken(String(member.token).trim());
@@ -1922,7 +1953,8 @@ function registerHandlers() {
     }
     if (!member.password) return { ok: false, error: '비밀번호를 입력하세요' };
     const id = newId();
-    const newMember = { id, username, passwordHash: hashPassword(member.password), allowedTabs, isAdmin: !!member.isAdmin, updatedAt: new Date().toISOString() };
+    const now = new Date().toISOString();
+    const newMember = { id, username, passwordHash: hashPassword(member.password), allowedTabs, isAdmin: !!member.isAdmin, updatedAt: now, passwordUpdatedAt: now };
     if (member.token) newMember.token = obfuscateToken(String(member.token).trim());
     data.memberAccounts.push(newMember);
     saveData(data);
@@ -1972,8 +2004,10 @@ function registerHandlers() {
       return { ok: false, error: '현재 비밀번호가 올바르지 않습니다' };
     }
     if (!newPassword) return { ok: false, error: '새 비밀번호를 입력하세요' };
+    const now = new Date().toISOString();
     data.memberAccounts[idx].passwordHash = hashPassword(newPassword);
-    data.memberAccounts[idx].updatedAt = new Date().toISOString();
+    data.memberAccounts[idx].updatedAt = now;
+    data.memberAccounts[idx].passwordUpdatedAt = now;
     saveData(data);
     return { ok: true };
   });

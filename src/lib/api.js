@@ -342,6 +342,31 @@ export async function syncDiscardLocalAndPull() {
   return api.invoke('sync:discardLocalAndPull');
 }
 
+// 계정(비밀번호·권한)처럼 다른 PC의 로그인에 곧바로 영향을 주는 변경은 저장 직후
+// 바로 공유에 올리고, 올리지 못했으면 그 사실을 호출한 쪽에 알려준다. 평소 저장처럼
+// 백그라운드 자동 업로드에만 맡기면 토큰이 없거나 업로드가 실패해도 사용자는
+// "변경됨"만 보고 넘어가는데, 실제로는 이 PC에만 남아 있어 "A에서 바꾼 비밀번호로
+// B에서 로그인이 안 된다"가 된다. 공유를 아예 안 쓰는 PC면 올릴 곳이 없으니 성공으로 본다.
+export async function syncAfterChange() {
+  try {
+    const cfg = await syncGetConfig();
+    if (!cfg?.gistId) return { shared: true };
+    if (!cfg?.hasToken) return { shared: false, reason: 'no-token' };
+    const r = await syncUpload();
+    return r?.ok ? { shared: true } : { shared: false, reason: 'upload-failed', detail: r?.error };
+  } catch (e) { return { shared: false, reason: 'upload-failed', detail: e?.message }; }
+}
+
+const SYNC_WARNING_TEXT = {
+  'no-token': '저장은 됐지만, 이 PC에 등록된 GitHub 토큰이 없어 다른 PC와 아직 공유되지 않았습니다. 동기화 설정에서 토큰을 등록하거나, 토큰이 등록된 PC에서 다시 저장해 주세요.',
+  'upload-failed': (detail) => `저장은 됐지만, 공유 업로드에 실패해 다른 PC와 아직 공유되지 않았습니다${detail ? ` (${detail})` : ''}. 잠시 후 자동으로 다시 시도됩니다.`,
+};
+
+export function syncWarningText(s) {
+  const t = SYNC_WARNING_TEXT[s?.reason];
+  return typeof t === 'function' ? t(s.detail) : t;
+}
+
 // ─── 임시 일정 ────────────────────────────────────────────────────────────────
 
 export async function fetchTempSchedules() {

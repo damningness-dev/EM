@@ -16,7 +16,7 @@ import BackupControl from './components/BackupControl';
 import Login from './components/Login';
 import MemberManager from './components/MemberManager';
 import ChangePasswordModal from './components/ChangePasswordModal';
-import { seedInitialData, fetchScheduleConfig, getAutoStart, setAutoStart, adminIsUnlocked, setCurrentMemberOnMain, fetchGuestAccess, memberChangePassword, fetchMembers } from './lib/api';
+import { seedInitialData, fetchScheduleConfig, getAutoStart, setAutoStart, adminIsUnlocked, setCurrentMemberOnMain, fetchGuestAccess, memberChangePassword, fetchMembers, syncAfterChange, syncWarningText } from './lib/api';
 import { setScheduleConfig } from './lib/schedule';
 import { INITIAL_CALIBRATION, MONITORING_ZONES } from './data/initialData';
 
@@ -273,7 +273,13 @@ export default function App() {
       {showMemberChangePassword && currentMember && (
         <ChangePasswordModal
           title={`${currentMember.username} 비밀번호 변경`}
-          onSubmit={(oldPassword, newPassword) => memberChangePassword(currentMember.id, oldPassword, newPassword)}
+          onSubmit={async (oldPassword, newPassword) => {
+            const r = await memberChangePassword(currentMember.id, oldPassword, newPassword);
+            if (!r?.ok) return r;
+            // 바꾼 비밀번호는 다른 PC의 로그인에 바로 영향을 주므로 그 자리에서 공유에 올린다.
+            const s = await syncAfterChange();
+            return { ...r, shareWarning: s.shared ? '' : syncWarningText(s) };
+          }}
           onClose={ok => { setShowMemberChangePassword(false); if (ok) alert('비밀번호가 변경되었습니다.'); }}
         />
       )}
