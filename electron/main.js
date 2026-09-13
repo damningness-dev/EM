@@ -328,7 +328,7 @@ function dedupeMemberAccountsByUsername(list) {
 function loadData() {
   const p = getDataPath();
   if (!fs.existsSync(p)) {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES }, guestAllowedTabs: null, weeklyDuty: JSON.parse(JSON.stringify(DEFAULT_WEEKLY_DUTY)), sops: [], sopTags: [...DEFAULT_SOP_TAGS] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES }, guestAllowedTabs: [], weeklyDuty: JSON.parse(JSON.stringify(DEFAULT_WEEKLY_DUTY)), sops: [], sopTags: [...DEFAULT_SOP_TAGS] };
   }
   try {
     const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
@@ -345,9 +345,12 @@ function loadData() {
     if (!data.usagePointCategories) data.usagePointCategories = { ...DEFAULT_USAGE_POINT_CATEGORIES };
     if (!data.sops) data.sops = [];
     if (!data.sopTags) data.sopTags = [...DEFAULT_SOP_TAGS];
-    // 로그인하지 않았을 때 보이는 메뉴 — null(기본값)이면 지금까지처럼 전체 메뉴가 보이고,
-    // 배열이면 그 탭들만 보인다(계정별 allowedTabs와 같은 방식, 로그인 전 상태에 적용).
-    if (!('guestAllowedTabs' in data)) data.guestAllowedTabs = null;
+    // 로그인하지 않았을 때 보이는 메뉴 — 배열이면 그 탭들만 보이고(계정별 allowedTabs와
+    // 같은 방식, 로그인 전 상태에 적용), null이면 제한 없이 전체 메뉴가 보인다.
+    // 한 번도 설정한 적이 없으면 빈 배열(=아무것도 안 보임)이 기본이다. 갓 설치한 PC가
+    // 로그인 전부터 모든 자료를 보여주지 않도록, 로그인해야 비로소 메뉴가 열리게 한다.
+    // (관리자가 "보이는 메뉴 제한하기"를 꺼서 null로 저장해 둔 PC는 그 설정을 그대로 따른다)
+    if (!('guestAllowedTabs' in data)) data.guestAllowedTabs = [];
     if (!data.weeklyDuty) data.weeklyDuty = JSON.parse(JSON.stringify(DEFAULT_WEEKLY_DUTY));
     // 이전 버전에서 이미 weeklyDuty가 있었지만 직원 목록·기준일 같은 새 필드가
     // 없을 수 있다 — 없는 필드만 기본값으로 채운다(기존 업무·배정은 그대로 둠).
@@ -357,7 +360,7 @@ function loadData() {
     if (typeof data.weeklyDuty.autoAlarm !== 'boolean') data.weeklyDuty.autoAlarm = true;
     return data;
   } catch {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES }, guestAllowedTabs: null, weeklyDuty: JSON.parse(JSON.stringify(DEFAULT_WEEKLY_DUTY)), sops: [], sopTags: [...DEFAULT_SOP_TAGS] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES }, guestAllowedTabs: [], weeklyDuty: JSON.parse(JSON.stringify(DEFAULT_WEEKLY_DUTY)), sops: [], sopTags: [...DEFAULT_SOP_TAGS] };
   }
 }
 

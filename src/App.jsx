@@ -192,7 +192,11 @@ export default function App() {
     );
   }
 
-  const currentMenu = MENU.find(m => m.id === page);
+  // 지금 페이지를 실제로 볼 수 있는지 — 로그인 전에는 게스트 허용 메뉴가 비어 있는
+  // 것이 기본이라, 이때 화면 내용도 함께 막아야 한다. 막으면 해당 화면 컴포넌트가
+  // 아예 그려지지 않아 자료도 불러오지 않는다(로그인해야 비로소 받아온다).
+  const pageAllowed = visibleMenu.some(m => m.id === page);
+  const currentMenu = visibleMenu.find(m => m.id === page);
 
   return (
     <div className="flex h-screen bg-gray-100 overflow-hidden">
@@ -321,10 +325,32 @@ export default function App() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <span className="font-semibold text-gray-800">{currentMenu?.icon} {currentMenu?.label}</span>
+          <span className="font-semibold text-gray-800">
+            {currentMenu ? `${currentMenu.icon} ${currentMenu.label}` : '🧪 환경 모니터링'}
+          </span>
         </header>
 
         <main className="flex-1 overflow-y-auto">
+          {!pageAllowed ? (
+            <div className="h-full flex flex-col items-center justify-center text-center px-6">
+              <div className="text-4xl mb-3">🔒</div>
+              <h2 className="text-lg font-bold text-gray-800 mb-1.5">
+                {currentMember ? '볼 수 있는 메뉴가 없습니다' : '로그인이 필요합니다'}
+              </h2>
+              <p className="text-sm text-gray-500 mb-5 max-w-xs leading-relaxed">
+                {currentMember
+                  ? '이 계정에 허용된 메뉴가 없습니다. 관리자에게 메뉴 권한을 요청하세요.'
+                  : '로그인하면 계정에 허용된 메뉴와 자료가 표시됩니다.'}
+              </p>
+              {!currentMember && (
+                <button onClick={() => setShowLogin(true)}
+                  className="px-5 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700">
+                  로그인
+                </button>
+              )}
+            </div>
+          ) : (
+            <>
           {page === 'dashboard' && <Dashboard year={year} />}
           {page === 'todo' && <TodoToday currentMember={currentMember} />}
           {page === 'calendar' && (
@@ -339,6 +365,8 @@ export default function App() {
           {page === 'usagepoints' && <UsagePoints adminUnlocked={adminUnlocked} currentMember={currentMember} />}
           {page === 'weeklyduty' && <WeeklyDuty adminUnlocked={adminUnlocked} />}
           {page === 'sop' && <Sop adminUnlocked={adminUnlocked} currentMember={currentMember} />}
+            </>
+          )}
         </main>
       </div>
     </div>
