@@ -757,6 +757,50 @@ function mergeListById(remoteList, localList) {
   return [...map.values()];
 }
 
+// ─── 삭제 기록(묘비) ─────────────────────────────────────────────────────────
+// 공유 데이터 병합은 id 기준 합집합이라, 한 PC에서 지운 항목이 다른 PC에 남아 있던
+// 사본에서 그대로 되살아난다("분명 지웠는데 자꾸 다시 생긴다"). 무엇을 언제 지웠는지
+// 남겨두고 병합한 목록에서 그 항목을 걸러낸다. 묘비도 함께 공유돼야 모든 PC에서
+// 같이 사라지므로 공유 데이터(em-data.json)에 담아 올린다.
+//   data.deletions = { usagePoints: { '<id>': '<지운 시각 ISO>' }, ... }
+const DELETION_KEEP_DAYS = 180; // 이 기간이 지난 묘비는 정리한다(무한정 쌓이지 않게)
+
+function recordDeletion(data, key, id) {
+  if (id == null) return;
+  if (!data.deletions || typeof data.deletions !== 'object') data.deletions = {};
+  if (!data.deletions[key] || typeof data.deletions[key] !== 'object') data.deletions[key] = {};
+  data.deletions[key][String(id)] = new Date().toISOString();
+}
+
+// 양쪽 묘비를 모두 살리고(합집합), 같은 항목이면 더 최근에 지운 시각을 남긴다.
+function mergeDeletions(remote, local) {
+  const cutoff = new Date(Date.now() - DELETION_KEEP_DAYS * 86400000).toISOString();
+  const out = {};
+  for (const src of [remote, local]) {
+    if (!src || typeof src !== 'object') continue;
+    for (const [key, ids] of Object.entries(src)) {
+      if (!ids || typeof ids !== 'object') continue;
+      for (const [id, at] of Object.entries(ids)) {
+        if (typeof at !== 'string' || at < cutoff) continue;
+        const dst = out[key] || (out[key] = {});
+        if (!dst[id] || at > dst[id]) dst[id] = at;
+      }
+    }
+  }
+  return out;
+}
+
+// 병합 결과에서 지워진 항목을 걸러낸다. 지운 뒤에 다시 수정된 항목(updatedAt이 삭제
+// 시각보다 최신)은 누군가 되살린 것이므로 남긴다.
+function applyDeletions(list, tombstones) {
+  if (!Array.isArray(list) || !tombstones) return list;
+  return list.filter(v => {
+    if (!v || typeof v !== 'object' || v.id == null) return true;
+    const at = tombstones[String(v.id)];
+    return !at || (v.updatedAt || '') > at;
+  });
+}
+
 // 계정은 레코드 전체를 updatedAt 하나로 비교하면 비밀번호가 조용히 되돌아간다 —
 // "A에서 비밀번호를 바꿨는데, 그 뒤 B에서 그 계정의 탭 권한만 손대면" B가 저장한
 // 레코드(비밀번호는 예전 값)가 더 최신으로 판정돼 A의 새 비밀번호를 덮어쓴다.
@@ -780,13 +824,16 @@ function mergeMemberAccounts(remoteList, localList) {
 
 function mergeSharedData(remote, local) {
   const out = { ...(remote || {}), ...(local || {}) }; // 설정성 단일 값은 이 PC 기준
+  const deletions = mergeDeletions(remote?.deletions, local?.deletions);
   const keys = new Set([...Object.keys(remote || {}), ...Object.keys(local || {})]);
   for (const key of keys) {
+    if (key === 'deletions') continue;
     const rv = remote?.[key], lv = local?.[key];
-    if (key === 'memberAccounts') out[key] = mergeMemberAccounts(rv, lv);
-    else if (Array.isArray(rv) || Array.isArray(lv)) out[key] = mergeListById(rv, lv);
+    if (key === 'memberAccounts') out[key] = applyDeletions(mergeMemberAccounts(rv, lv), deletions[key]);
+    else if (Array.isArray(rv) || Array.isArray(lv)) out[key] = applyDeletions(mergeListById(rv, lv), deletions[key]);
     else if (MERGE_MAP_KEYS.includes(key)) out[key] = { ...(rv || {}), ...(lv || {}) };
   }
+  out.deletions = deletions;
   return out;
 }
 
@@ -816,11 +863,21 @@ const COLLAB_KEYS = ['usagePoints', 'sops', 'sopTags', 'memberAccounts'];
 // 추가해도 기준 PC가 관리하는 다른 자료를 덮어쓰지 않는다.
 function buildMemberUpload(remoteData, localData) {
   const out = { ...remoteData };
+  // 일반 PC의 삭제 기록은 함께 쓰는 항목(COLLAB_KEYS)에 대해서만 반영한다 — 나머지는
+  // 기준 PC의 내용이 공유 기준이라는 기존 원칙을 그대로 따른다.
+  const localDeletions = {};
   for (const key of COLLAB_KEYS) {
-    out[key] = key === 'memberAccounts'
+    const d = localData?.deletions?.[key];
+    if (d) localDeletions[key] = d;
+  }
+  const deletions = mergeDeletions(remoteData?.deletions, localDeletions);
+  for (const key of COLLAB_KEYS) {
+    const merged = key === 'memberAccounts'
       ? mergeMemberAccounts(remoteData?.[key], localData?.[key])
       : mergeListById(remoteData?.[key], localData?.[key]);
+    out[key] = applyDeletions(merged, deletions[key]);
   }
+  out.deletions = deletions;
   // guestAllowedTabs(로그인하지 않았을 때 보이는 메뉴)는 목록이 아니라 값 하나라
   // id 기준으로 합칠 수 없다. memberAccounts와 같은 권한 설정 화면에서 바뀌는
   // 값이니 같은 원칙으로, 이 PC에서 방금 고친 값이 항상 반영되게 한다.
@@ -1970,6 +2027,7 @@ function registerHandlers() {
       return { ok: false, error: '마지막 관리자 계정은 삭제할 수 없습니다.' };
     }
     data.memberAccounts = (data.memberAccounts || []).filter(m => m.id !== id);
+    recordDeletion(data, 'memberAccounts', id);
     saveData(data);
     return { ok: true };
   });
@@ -2171,6 +2229,7 @@ function registerHandlers() {
   ipcMain.handle('calibration:delete', (_e, id) => {
     const data = loadData();
     data.calibration = data.calibration.filter(c => c.id !== id);
+    recordDeletion(data, 'calibration', id);
     saveData(data);
   });
 
@@ -2198,6 +2257,7 @@ function registerHandlers() {
   ipcMain.handle('usagePoints:delete', (_e, id) => {
     const data = loadData();
     data.usagePoints = data.usagePoints.filter(u => u.id !== id);
+    recordDeletion(data, 'usagePoints', id);
     saveData(data);
   });
 
@@ -2237,6 +2297,7 @@ function registerHandlers() {
   ipcMain.handle('sops:delete', (_e, id) => {
     const data = loadData();
     data.sops = (data.sops || []).filter(s => s.id !== id);
+    recordDeletion(data, 'sops', id);
     saveData(data);
   });
 
@@ -2290,6 +2351,7 @@ function registerHandlers() {
       ...g,
       zoneIds: g.zoneIds.filter(zid => zid !== id),
     }));
+    recordDeletion(data, 'zones', id);
     saveData(data);
   });
 
@@ -2315,6 +2377,7 @@ function registerHandlers() {
   ipcMain.handle('groups:delete', (_e, id) => {
     const data = loadData();
     data.groups = data.groups.filter(g => g.id !== id);
+    recordDeletion(data, 'groups', id);
     saveData(data);
   });
 
@@ -2501,6 +2564,7 @@ function registerHandlers() {
   ipcMain.handle('tempSchedules:delete', (_e, id) => {
     const data = loadData();
     data.tempSchedules = data.tempSchedules.filter(t => t.id !== id);
+    recordDeletion(data, 'tempSchedules', id);
     saveData(data);
   });
   ipcMain.handle('tempSchedules:update', (_e, entry) => {
