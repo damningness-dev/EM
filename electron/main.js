@@ -1745,13 +1745,12 @@ function registerHandlers() {
   ipcMain.handle('calibFile:save', (_e, { name, dataBase64, category } = {}) => {
     try {
       const safe = String(name || 'file').replace(/[^\w.\-가-힣 ()]/g, '_');
-      // 입력한 이름 그대로 저장(랜덤 접두사 없음). 이름이 겹치면 (2),(3)… 을 붙여 덮어쓰기 방지.
+      // 입력한 이름 그대로 저장(랜덤 접두사 없음). 파일명은 이미 항목마다 고유하게
+      // 만들어지므로(교정: "관리번호 교정일(S/N)", 사용점·SOP: 항목 id 포함) 이름이
+      // 겹치는 건 같은 항목의 첨부를 다시 올린 경우다 — (2),(3)…을 붙여 사본을 쌓지 말고
+      // 그대로 덮어쓴다.
       const dir = calibFilesDir(category);
-      const dot = safe.lastIndexOf('.');
-      const stem = dot > 0 ? safe.slice(0, dot) : safe;
-      const ext = dot > 0 ? safe.slice(dot) : '';
-      let full = path.join(dir, safe), n = 2;
-      while (fs.existsSync(full)) { full = path.join(dir, `${stem} (${n})${ext}`); n++; }
+      const full = path.join(dir, safe);
       fs.writeFileSync(full, Buffer.from(dataBase64, 'base64'));
       return { ok: true, path: full, name: path.basename(full) };
     } catch (e) { return { ok: false, error: e.message }; }

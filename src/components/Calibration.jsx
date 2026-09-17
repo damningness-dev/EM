@@ -541,6 +541,7 @@ function HistoryPanel({ item, onSave, onNotice, adminUnlocked }) {
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [openingIdx, setOpeningIdx] = useState(null); // 로컬에 없어 첨부파일 Gist에서 내려받는 중인 행 인덱스
+  const [confirmRemove, setConfirmRemove] = useState(null); // 삭제 확인 중인 내역 { idx, label }
 
   function requireAdmin() {
     if (!adminUnlocked) { onNotice('관리자 잠금 해제가 필요합니다.', true); return false; }
@@ -548,7 +549,15 @@ function HistoryPanel({ item, onSave, onNotice, adminUnlocked }) {
   }
   function edit(idx, patch) { if (!requireAdmin()) return; setRows(rs => rs.map((r, i) => i === idx ? { ...r, ...patch } : r)); setDirty(true); }
   function add() { if (!requireAdmin()) return; setRows(rs => [...rs, { id: newHistoryId(), year: new Date().getFullYear(), cert_no: '', calib_date: '', note: '', fileName: '', filePath: '', gistKey: '' }]); setDirty(true); }
-  function remove(idx) { if (!requireAdmin()) return; setRows(rs => rs.filter((_, i) => i !== idx)); setDirty(true); }
+  // 내역 삭제는 실수로 누르면 입력해 둔 성적서번호·교정일·첨부가 한 번에 사라지므로
+  // 확인을 거친다. (저장을 눌러야 실제로 반영되는 건 기존과 같다)
+  function askRemove(idx) {
+    if (!requireAdmin()) return;
+    const r = rows[idx];
+    const label = [r?.year, r?.cert_no, r?.calib_date].filter(Boolean).join(' · ');
+    setConfirmRemove({ idx, label });
+  }
+  function remove(idx) { setRows(rs => rs.filter((_, i) => i !== idx)); setDirty(true); setConfirmRemove(null); }
 
   async function upload(idx, file) {
     if (!file) return;
@@ -654,13 +663,28 @@ function HistoryPanel({ item, onSave, onNotice, adminUnlocked }) {
                 <span className="text-xs px-2 py-1 bg-gray-50 text-gray-300 rounded">📎 파일첨부</span>
               )}
               {adminUnlocked && (
-                <button onClick={() => remove(idx)} className="text-xs text-gray-300 hover:text-red-500 px-1" title="내역 삭제">🗑</button>
+                <button onClick={() => askRemove(idx)} className="text-xs text-gray-300 hover:text-red-500 px-1" title="내역 삭제">🗑</button>
               )}
             </div>
           ))}
         </div>
       )}
       {h_fileName_hint(rows)}
+
+      {confirmRemove && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setConfirmRemove(null)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-xs p-5 space-y-4" onClick={e => e.stopPropagation()}>
+            <div>
+              <p className="text-sm text-gray-700">이 교정내역을 삭제하시겠습니까?</p>
+              {confirmRemove.label && <p className="text-xs text-gray-400 mt-1 break-all">{confirmRemove.label}</p>}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => remove(confirmRemove.idx)} className="flex-1 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700">삭제</button>
+              <button onClick={() => setConfirmRemove(null)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">취소</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
