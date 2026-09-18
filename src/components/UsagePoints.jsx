@@ -120,6 +120,61 @@ function resizeImage(file, maxDim, quality) {
   });
 }
 
+// 동영상 첨부 최대 크기. 사진과 달리 동영상은 앱에서 다시 압축할 수 없어(트랜스코딩
+// 불가) 고른 파일이 그대로 저장·공유된다. 공유 업로드는 파일을 base64(용량 +33%)로
+// 바꿔 한 번에 올리므로, 너무 크면 업로드가 느려지고 실패하기 쉽다. 20MB면 휴대폰
+// 1080p 기준 20~40초 정도로, 상황을 남기는 용도로는 충분하다.
+const MAX_VIDEO_MB = 20;
+
+function isVideoFile(file) {
+  return !!file && (String(file.type || '').startsWith('video/') || /\.(mp4|webm|mov|m4v)$/i.test(file.name || ''));
+}
+
+// 동영상의 첫 장면을 캡처해 사진과 같은 규격의 썸네일로 만든다 — 목록·미리보기가
+// 사진과 똑같이 동작하게 하기 위함이다. 코덱을 브라우저가 못 읽으면 실패할 수 있는데,
+// 그때는 썸네일 없이(🎬 자리표시) 첨부만 진행한다.
+function videoPoster(file, maxDim, quality) {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    const url = URL.createObjectURL(file);
+    let done = false;
+    const fail = (e) => { if (done) return; done = true; URL.revokeObjectURL(url); reject(e); };
+    const draw = () => {
+      if (done) return;
+      done = true;
+      try {
+        let width = video.videoWidth, height = video.videoHeight;
+        if (!width || !height) throw new Error('no frame');
+        if (width > maxDim || height > maxDim) {
+          if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
+          else { width = Math.round(width * maxDim / height); height = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(video, 0, 0, width, height);
+        URL.revokeObjectURL(url);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      } catch (e) { URL.revokeObjectURL(url); reject(e); }
+    };
+    video.onloadeddata = () => { try { video.currentTime = Math.min(0.1, (video.duration || 1) / 2); } catch { draw(); } };
+    video.onseeked = draw;
+    video.onerror = fail;
+    setTimeout(() => fail(new Error('timeout')), 10000);
+    video.muted = true;
+    video.preload = 'auto';
+    video.src = url;
+  });
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1]);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
 export default function UsagePoints({ adminUnlocked, currentMember }) {
   const [data, setData] = useState([]);
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
@@ -346,7 +401,44 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   // 예전 코드는 실패해도 썸네일만 먼저 바꿔놔서, 목록 미리보기와 실제 열리는
   // 사진(원본 파일 경로)이 서로 다른 사진을 가리키는 사고가 있었다. 항상 전부
   // 성공했을 때만 한 번에 반영해서 이 둘이 어긋나지 않게 한다.
+  // 동영상 첨부 — 사진과 달리 다시 압축할 수 없으므로 크기만 확인하고 원본 그대로
+  // 저장·공유한다. 목록 미리보기는 첫 장면을 캡처한 썸네일을 쓴다.
+  async function buildVideoEntry(file) {
+    const mb = file.size / (1024 * 1024);
+    if (mb > MAX_VIDEO_MB) {
+      showNotice(`"${file.name}"은(는) ${mb.toFixed(1)}MB로 너무 큽니다. 동영상은 ${MAX_VIDEO_MB}MB까지 첨부할 수 있습니다 — 더 짧게 잘라서 올려주세요.`, true);
+      return null;
+    }
+    let thumb = '';
+    try { thumb = await videoPoster(file, 260, 0.6); } catch { /* 썸네일 없이 진행 */ }
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    let entry = { id, kind: 'video', thumb, fileName: file.name, filePath: '', gistKey: '' };
+    if (isElectron) {
+      const b64 = await fileToBase64(file);
+      const dot = file.name.lastIndexOf('.');
+      const baseName = (dot > 0 ? file.name.slice(0, dot) : file.name).replace(/[^\w.\-가-힣 ()]/g, '_');
+      const ext = (dot > 0 ? file.name.slice(dot) : '.mp4').toLowerCase();
+      const r = await saveCalibFile(`usagepoint_${id}_${baseName}${ext}`, b64, 'usagepoints');
+      if (!r?.ok) {
+        showNotice(`"${file.name}" 저장 실패: ` + (r?.error || ''), true);
+        return null;
+      }
+      let gistKey = '';
+      try {
+        const cfg = await syncGetConfig();
+        if (cfg?.hasToken) {
+          gistKey = `attach_up_${id}${ext}.b64`;
+          const ur = await uploadCalibAttachment(gistKey, b64);
+          if (!ur?.ok) { gistKey = ''; showNotice('동영상은 저장됐지만 공유 업로드 실패: ' + (ur?.error || ''), true); }
+        }
+      } catch { /* 공유 설정 없으면 로컬 저장만 유지 */ }
+      entry = { ...entry, fileName: r.name, filePath: r.path, gistKey };
+    }
+    return entry;
+  }
+
   async function buildPhotoEntry(file) {
+    if (isVideoFile(file)) return buildVideoEntry(file);
     // 원본을 손대지 않고 그대로 올리면 휴대폰 사진(수 MB)이 공유 첨부파일 Gist
     // 업로드에서 실패하기 쉬워 다른 PC에서 "사진이 안 보이는" 문제로 이어진다.
     // 확대해서 봐도 충분한 선(최대 3000px, JPEG 품질 0.92)까지만 제한해 저장하고,
@@ -824,9 +916,11 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                       <div>담당자 : {assigneesOf(u).join(', ')}{u.due_date ? ` (완료기한 ${u.due_date})` : ''}</div>
                       <div>조치사항 : {u.action_taken || ''}</div>
                       {u.conclusion && <div>결론 : {u.conclusion}</div>}
-                      {photosOf(u).length > 0 && (
+                      {/* 인쇄에는 썸네일만 나간다 — 동영상은 첫 장면이 대신 인쇄되고,
+                          썸네일을 만들지 못한 동영상은 인쇄할 그림이 없으므로 건너뛴다. */}
+                      {photosOf(u).some(p => p.thumb) && (
                         <div className="up-print-photos">
-                          {photosOf(u).map(p => <img key={p.id} src={p.thumb} alt="" />)}
+                          {photosOf(u).filter(p => p.thumb).map(p => <img key={p.id} src={p.thumb} alt="" />)}
                         </div>
                       )}
                     </td>
@@ -1014,8 +1108,8 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                         if (!photos.length) return <span className="text-gray-300 text-xs">—</span>;
                         return (
                           <div className="relative inline-block">
-                            <img src={photos[0].thumb} onClick={() => setLightbox({ itemId: item.id, photos, index: 0 })} alt="사진"
-                              className="w-12 h-12 object-cover rounded-lg cursor-pointer mx-auto border border-gray-200 hover:opacity-80" />
+                            <AttachThumb p={photos[0]} onClick={() => setLightbox({ itemId: item.id, photos, index: 0 })}
+                              className="w-12 h-12" />
                             {photos.length > 1 && (
                               <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold leading-[18px] text-center shadow">
                                 {photos.length}
@@ -1200,8 +1294,8 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                   <div className="flex flex-wrap gap-2 mt-1">
                     {form.photos.map((p, i) => (
                       <div key={p.id} className="relative">
-                        <img src={p.thumb} alt="미리보기" onClick={() => setLightbox({ itemId: editingId, photos: form.photos, index: i })}
-                          className="w-16 h-16 object-cover rounded-lg border border-gray-200 cursor-pointer hover:opacity-80" />
+                        <AttachThumb p={p} onClick={() => setLightbox({ itemId: editingId, photos: form.photos, index: i })}
+                          className="w-16 h-16" />
                         {!viewItem && !contentLocked && (
                           <>
                             <button type="button" onClick={() => removePhoto(p.id)}
@@ -1212,7 +1306,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                             <label className="absolute -bottom-1.5 -right-1.5 w-4 h-4 rounded-full bg-blue-600 text-white text-[9px] leading-4 text-center hover:bg-blue-700 cursor-pointer"
                               title="이 사진 바꾸기">
                               🔄
-                              <input type="file" accept="image/*" className="hidden" disabled={uploadingPhoto}
+                              <input type="file" accept="image/*,video/*" className="hidden" disabled={uploadingPhoto}
                                 onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) replacePhoto(p.id, f); }} />
                             </label>
                           </>
@@ -1222,7 +1316,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                   </div>
                 )}
                 <div className="flex items-center gap-3 mt-1.5">
-                  <input type="file" accept="image/*" multiple onChange={handlePhotoChange} disabled={uploadingPhoto}
+                  <input type="file" accept="image/*,video/*" multiple onChange={handlePhotoChange} disabled={uploadingPhoto}
                     className="text-xs text-gray-500 file:mr-2 file:px-2 file:py-1 file:rounded file:border-0 file:bg-gray-100 file:text-gray-600 file:text-xs" />
                   {uploadingPhoto && <span className="text-xs text-gray-400">처리 중…</span>}
                 </div>
@@ -1355,14 +1449,25 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                   {lightboxItem?.worker_name && ` · 작업자 ${lightboxItem.worker_name}`}
                   {lightbox.photos.length > 1 && ` · 사진 ${lightbox.index + 1}/${lightbox.photos.length}`}
                 </p>
-                <img src={hqUrl || lightboxPhoto?.thumb} alt="" />
+                {/* 동영상은 고화질 원본이 영상이라 인쇄할 수 없다 — 첫 장면 썸네일로 대신한다. */}
+                <img src={(lightboxPhoto?.kind === 'video' ? lightboxPhoto?.thumb : (hqUrl || lightboxPhoto?.thumb)) || ''} alt="" />
               </div>
             </div>
             <div className="relative">
-              <img src={hqUrl || lightboxPhoto?.thumb} alt="사진"
-                onContextMenu={e => { e.preventDefault(); if (lightbox.photos.length > 1) gotoPhoto(1); }}
-                className="w-full max-h-[70vh] object-contain rounded-lg" />
-              {hqLoading && !hqUrl && (
+              {lightboxPhoto?.kind === 'video' ? (
+                hqUrl ? (
+                  <video src={hqUrl} controls autoPlay className="w-full max-h-[70vh] rounded-lg bg-black" />
+                ) : (
+                  <div className="w-full h-[50vh] flex items-center justify-center bg-black rounded-lg">
+                    <span className="text-white text-xs">{hqLoading ? '⏳ 동영상 받는 중…' : '동영상을 불러올 수 없습니다.'}</span>
+                  </div>
+                )
+              ) : (
+                <img src={hqUrl || lightboxPhoto?.thumb} alt="사진"
+                  onContextMenu={e => { e.preventDefault(); if (lightbox.photos.length > 1) gotoPhoto(1); }}
+                  className="w-full max-h-[70vh] object-contain rounded-lg" />
+              )}
+              {hqLoading && !hqUrl && lightboxPhoto?.kind !== 'video' && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/30 rounded-lg">
                   <span className="text-white text-xs bg-black/50 px-3 py-1.5 rounded-full">⏳ 고화질 사진 받는 중…</span>
                 </div>
@@ -1381,7 +1486,13 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
               )}
             </div>
             <p className="text-[11px] text-gray-400">
-              {hqUrl ? '고화질 사진(최대 3000px)입니다.'
+              {lightboxPhoto?.kind === 'video'
+                ? (hqUrl ? '원본 동영상입니다.'
+                  : hqLoading ? ''
+                  : !lightboxPhoto?.gistKey
+                    ? '동영상 원본이 아직 공유되지 않았습니다 — 이 동영상을 올린 PC에서 "📤 사진 공유"를 눌러주세요.'
+                    : '동영상을 불러오지 못했습니다.')
+                : hqUrl ? '고화질 사진(최대 3000px)입니다.'
                 : hqLoading ? ''
                 : !lightboxPhoto?.gistKey
                   // 원본이 공유 Gist에 없으면 올린 PC에만 있어 다른 PC는 받을 수 없다.
@@ -1431,6 +1542,30 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
 }
 
 function FragmentRow({ children }) { return <>{children}</>; }
+
+// 첨부 미리보기 — 사진은 썸네일 그대로, 동영상은 첫 장면 썸네일 위에 ▶ 표시를 얹는다.
+// 동영상 썸네일을 만들지 못한 경우(코덱 문제 등)에는 🎬 자리표시를 보여준다.
+function AttachThumb({ p, onClick, className = '' }) {
+  const isVideo = p?.kind === 'video';
+  return (
+    <span className={`relative inline-block ${className}`}>
+      {p?.thumb ? (
+        <img src={p.thumb} alt={isVideo ? '동영상' : '사진'} onClick={onClick}
+          className="w-full h-full object-cover rounded-lg border border-gray-200 cursor-pointer hover:opacity-80" />
+      ) : (
+        <span onClick={onClick}
+          className="w-full h-full flex items-center justify-center rounded-lg border border-gray-200 bg-gray-100 text-gray-400 cursor-pointer hover:opacity-80">
+          🎬
+        </span>
+      )}
+      {isVideo && p?.thumb && (
+        <span className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <span className="w-5 h-5 rounded-full bg-black/55 text-white text-[9px] leading-5 text-center">▶</span>
+        </span>
+      )}
+    </span>
+  );
+}
 
 // 진행상황은 고쳐 쓰는 메모가 아니라 기록(로그)이다. 저장할 때마다 내용·작성자·
 // 시각이 아래에 한 줄씩 쌓이고, 지난 기록은 고치거나 지울 수 없다.

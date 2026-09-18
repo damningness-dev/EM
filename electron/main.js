@@ -1693,11 +1693,16 @@ function registerHandlers() {
     fs.writeFileSync(cachePath, Buffer.from(content, 'base64'));
     return { ok: true, path: cachePath };
   }
-  function guessImageMime(name) {
+  // 앱 안에서 바로 보여줄 data URL의 형식 — 사용점 첨부에는 동영상도 있어서
+  // 동영상 확장자는 video/*로 돌려줘야 <video>에서 재생된다.
+  function guessAttachmentMime(name) {
     const ext = String(name || '').split('.').pop().toLowerCase();
     if (ext === 'png') return 'image/png';
     if (ext === 'gif') return 'image/gif';
     if (ext === 'webp') return 'image/webp';
+    if (ext === 'mp4' || ext === 'm4v') return 'video/mp4';
+    if (ext === 'webm') return 'video/webm';
+    if (ext === 'mov') return 'video/quicktime';
     return 'image/jpeg';
   }
 
@@ -1791,7 +1796,7 @@ function registerHandlers() {
       const resolved = await resolveAttachmentLocalPath({ filePath, gistKey, fileName, category });
       if (!resolved.ok) return resolved;
       const b64 = fs.readFileSync(resolved.path).toString('base64');
-      return { ok: true, dataUrl: `data:${guessImageMime(fileName || resolved.path)};base64,${b64}`, path: resolved.path };
+      return { ok: true, dataUrl: `data:${guessAttachmentMime(fileName || resolved.path)};base64,${b64}`, path: resolved.path };
     } catch (e) { return { ok: false, error: e.message }; }
   });
 
@@ -1865,7 +1870,11 @@ function registerHandlers() {
             return;
           }
           const key = p.photoIdx >= 0 ? `up_${u.id}_${p.photoIdx}` : `up_${u.id}`;
-          const gistKey = p.gistKey || `attach_${key}.jpg.b64`;
+          // 사용점 첨부에는 동영상도 있어 확장자를 .jpg로 고정하면 키가 실제 파일과
+          // 어긋난다 — 이 PC에 있는 원본 파일의 확장자를 그대로 쓴다.
+          const dot = p.filePath.lastIndexOf('.');
+          const ext = dot > 0 ? p.filePath.slice(dot).toLowerCase() : '.jpg';
+          const gistKey = p.gistKey || `attach_${key}${ext}.b64`;
           if (!existingKeys.has(gistKey)) {
             pending.push({ kind: 'usagepoint', itemIdx, photoIdx: p.photoIdx, filePath: p.filePath, gistKey });
           }
