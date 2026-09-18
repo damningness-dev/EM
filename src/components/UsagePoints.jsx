@@ -122,9 +122,12 @@ function resizeImage(file, maxDim, quality) {
 
 // 동영상 첨부 최대 크기. 사진과 달리 동영상은 앱에서 다시 압축할 수 없어(트랜스코딩
 // 불가) 고른 파일이 그대로 저장·공유된다. 공유 업로드는 파일을 base64(용량 +33%)로
-// 바꿔 한 번에 올리므로, 너무 크면 업로드가 느려지고 실패하기 쉽다. 20MB면 휴대폰
-// 1080p 기준 20~40초 정도로, 상황을 남기는 용도로는 충분하다.
-const MAX_VIDEO_MB = 20;
+// 바꿔 한 번에 올리므로 클수록 느려지고 실패하기 쉬운데, 이 방식으로 감당할 수 있는
+// 현실적인 상한이 50MB 정도다(base64로 약 67MB). 그 이상을 다루려면 Gist가 아니라
+// 사내 공유 폴더에 두고 경로만 관리하는 식으로 저장 방식을 바꿔야 한다.
+const MAX_VIDEO_MB = 50;
+// 이보다 큰 동영상은 올라가긴 해도 공유 업로드·다른 PC에서 받기가 눈에 띄게 느리다.
+const SLOW_VIDEO_MB = 20;
 
 function isVideoFile(file) {
   return !!file && (String(file.type || '').startsWith('video/') || /\.(mp4|webm|mov|m4v)$/i.test(file.name || ''));
@@ -408,6 +411,9 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
     if (mb > MAX_VIDEO_MB) {
       showNotice(`"${file.name}"은(는) ${mb.toFixed(1)}MB로 너무 큽니다. 동영상은 ${MAX_VIDEO_MB}MB까지 첨부할 수 있습니다 — 더 짧게 잘라서 올려주세요.`, true);
       return null;
+    }
+    if (mb > SLOW_VIDEO_MB) {
+      showNotice(`"${file.name}"은(는) ${mb.toFixed(1)}MB로 커서 공유 업로드와 다른 PC에서 받는 데 시간이 걸립니다. 잠시 기다려 주세요.`);
     }
     let thumb = '';
     try { thumb = await videoPoster(file, 260, 0.6); } catch { /* 썸네일 없이 진행 */ }
