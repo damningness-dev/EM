@@ -362,7 +362,7 @@ export default function Calibration({ adminUnlocked }) {
       </div>
 
       <p className="text-xs text-gray-400">
-        {canDrag ? '행을 드래그해 순서를 바꾸거나, ' : ''}헤더를 드래그해 컬럼 순서를 바꾸거나 클릭해 정렬 · 헤더 사이 경계를 드래그해 너비 조절 · ▶ 를 눌러 연도별 교정내역·첨부파일을 관리하세요.
+        {canDrag ? '행을 드래그해 순서를 바꾸거나, ' : ''}헤더를 드래그해 컬럼 순서를 바꾸거나 클릭해 정렬 · 헤더 사이 경계를 드래그해 너비 조절 · 행을 클릭해 연도별 교정내역·첨부파일을 관리하세요.
         {sortKey && <button onClick={() => setSortKey(null)} className="ml-2 text-blue-500 hover:underline">수동 순서로</button>}
       </p>
 
@@ -414,7 +414,14 @@ export default function Calibration({ adminUnlocked }) {
                 return (
                   <FragmentRow key={item.id}>
                     <tr
-                      className={`hover:bg-gray-50 ${item.dday !== null && item.dday < 0 ? 'bg-red-50' : ''} ${isDrop ? 'border-t-2 border-blue-500' : ''}`}
+                      className={`hover:bg-gray-50 ${editingId === item.id ? '' : 'cursor-pointer'} ${item.dday !== null && item.dday < 0 ? 'bg-red-50' : ''} ${isDrop ? 'border-t-2 border-blue-500' : ''}`}
+                      title={editingId === item.id ? undefined : '클릭하여 연도별 교정내역 펼치기/접기'}
+                      // 행 아무 데나 눌러도 교정내역이 펼쳐지게 한다. 단 수정 중이거나
+                      // 버튼·입력칸을 누른 경우(열기·수정·삭제·▶)는 그 동작만 하고 넘긴다.
+                      onClick={editingId === item.id ? undefined : e => {
+                        if (e.target.closest('button, input, select, textarea, label, a')) return;
+                        toggleExpand(item.id);
+                      }}
                       draggable={canDrag && editingId !== item.id}
                       onDragStart={canDrag ? () => setDragIdx(idx) : undefined}
                       onDragOver={canDrag ? e => { e.preventDefault(); setDropIdx(idx); } : undefined}
