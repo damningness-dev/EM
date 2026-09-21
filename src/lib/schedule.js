@@ -254,16 +254,21 @@ export function calcMeasurements(zone, holidayMap = {}, usedDates = null) {
       } else {
         const bounds = getDragBounds({ type: ptype, baseDate: effectiveBaseDate, spanMonths }, holidayMap);
         scheduledDate = adjustToWorkingDay(effectiveBaseDate, bounds, holidayMap, allowWeekend, allowHoliday);
-        // 순서 유지: 앞 회차보다 늦어야 한다 (앞 회차가 뒤로 밀리면 함께 밀림)
-        if (prevScheduled && scheduledDate <= prevScheduled) {
-          scheduledDate = addDays(prevScheduled, 1);
-          while (!isWorkingDay(scheduledDate, holidayMap, allowWeekend, allowHoliday)) scheduledDate = addDays(scheduledDate, 1);
-        }
-        // 같은 구역의 앞선 일정이 이미 이 날을 차지했다면 다음 배치 가능일로 밀어낸다.
-        while (used.has(format(scheduledDate, 'yyyy-MM-dd'))) {
-          scheduledDate = addDays(scheduledDate, 1);
-          while (!isWorkingDay(scheduledDate, holidayMap, allowWeekend, allowHoliday)) scheduledDate = addDays(scheduledDate, 1);
-        }
+      }
+      // 순서·중복 보정은 수동으로 옮겨둔 회차(override)에도 똑같이 적용한다.
+      // 예전에는 override면 그 날짜를 그대로 썼는데, 앞 회차를 뒤로 미뤘을 때
+      // 뒤 회차에 남아 있던 예전 수동 이동이 그대로 살아나 같은 날에 두 회차가
+      // 겹쳐 보였다(P1 일정 겹침). 아래 보정은 저장된 override 값을 바꾸지 않고
+      // 표시되는 날짜만 미루므로, 앞 회차를 되돌리면 원래 자리로 돌아온다.
+      // 순서 유지: 앞 회차보다 늦어야 한다 (앞 회차가 뒤로 밀리면 함께 밀림)
+      if (prevScheduled && scheduledDate <= prevScheduled) {
+        scheduledDate = addDays(prevScheduled, 1);
+        while (!isWorkingDay(scheduledDate, holidayMap, allowWeekend, allowHoliday)) scheduledDate = addDays(scheduledDate, 1);
+      }
+      // 같은 구역의 앞선 일정이 이미 이 날을 차지했다면 다음 배치 가능일로 밀어낸다.
+      while (used.has(format(scheduledDate, 'yyyy-MM-dd'))) {
+        scheduledDate = addDays(scheduledDate, 1);
+        while (!isWorkingDay(scheduledDate, holidayMap, allowWeekend, allowHoliday)) scheduledDate = addDays(scheduledDate, 1);
       }
       used.add(format(scheduledDate, 'yyyy-MM-dd'));
       prevScheduled = scheduledDate;
