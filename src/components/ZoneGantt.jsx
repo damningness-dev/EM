@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { format, differenceInDays } from 'date-fns';
-import { fetchZones } from '../lib/api';
-import { calcMeasurements } from '../lib/schedule';
+import { fetchZones, fetchScheduleConfig, fetchHolidays, fetchBlockedDates } from '../lib/api';
+import { calcMeasurements, buildHolidayMap, setScheduleConfig, GRADE_PRIORITY } from '../lib/schedule';
 
 import useDataVersion from '../hooks/useDataVersion';
 const MONTHS = [1,2,3,4,5,6,7,8,9,10,11,12];
@@ -22,15 +22,60 @@ const LABEL_PAD = 10;      // 라벨 좌우 여백 버퍼
 export default function ZoneGantt({ year, onYearChange }) {
   const dataVersion = useDataVersion(); // 공유 동기화 시 화면 자동 최신화
   const [zones,   setZones]   = useState([]);
+  const [holidayDefs, setHolidayDefs] = useState([]);
+  const [blockedDates, setBlockedDates] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search,  setSearch]  = useState('');
   const [showGrades, setShowGrades] = useState(new Set(GRADE_ORDER));
   const trackRef = useRef(null);
   const [trackW, setTrackW] = useState(0);
 
+  // 달력(월별 모니터링)과 똑같은 기준으로 계산해야 손으로 옮긴 일정이 간트차트에도
+  // 그대로 반영된다 — 측정주기 설정·공휴일·일정비우기가 빠지면 이동 가능 범위 판정이
+  // 달라져 수동 이동이 무시되고 원래 자리로 그려졌다.
   useEffect(() => {
-    fetchZones().then(z => { setZones(z); setLoading(false); });
+    Promise.all([fetchZones(), fetchScheduleConfig(), fetchHolidays(), fetchBlockedDates()])
+      .then(([zns, cfg, hols, blocked]) => {
+        if (cfg) setScheduleConfig(cfg);
+        setZones(zns || []);
+        setHolidayDefs(hols || []);
+        setBlockedDates(blocked || []);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
   }, [dataVersion]);
+
+  const scheduleAvoid = useMemo(() => {
+    let m = {};
+    try { m = buildHolidayMap(holidayDefs, year - 1, year + 5); } catch { m = {}; }
+    (blockedDates || []).forEach(d => { if (!m[d]) m[d] = '일정비우기'; });
+    return m;
+  }, [holidayDefs, blockedDates, year]);
+
+  // 같은 구역명(분류+이름)끼리는 같은 날에 겹치지 않도록 함께 계산된다. 달력과 같은
+  // 순서·같은 사용일자 집합으로 한 번에 계산해, 실제로 배치된 날짜를 구역별로 모은다.
+  const rangeByZoneId = useMemo(() => {
+    const byName = {};
+    zones.forEach(z => {
+      if (!z.schedule_start) return;
+      const key = `${z.category}|||${z.name}`;
+      (byName[key] || (byName[key] = [])).push(z);
+    });
+    const out = {};
+    Object.values(byName).forEach(groupZones => {
+      groupZones.sort((a, b) =>
+        (a.schedule_start || '').localeCompare(b.schedule_start || '')
+        || (GRADE_PRIORITY[b.grade] || 0) - (GRADE_PRIORITY[a.grade] || 0)
+      );
+      const used = new Set();
+      groupZones.forEach(z => {
+        let ms = [];
+        try { ms = calcMeasurements(z, scheduleAvoid, used); } catch { /* ignore */ }
+        if (ms.length) out[z.id] = { start: ms[0].date, end: ms[ms.length - 1].date };
+      });
+    });
+    return out;
+  }, [zones, scheduleAvoid]);
 
   // 트랙(막대 영역) 실제 픽셀 폭 측정 → 라벨이 막대 안에 들어가는지 판단
   useLayoutEffect(() => {
@@ -53,10 +98,12 @@ export default function ZoneGantt({ year, onYearChange }) {
     : null;
 
   function getBarInfo(zone) {
-    const ms = calcMeasurements(zone);
-    if (!ms.length || !zone.schedule_start) return null;
-    const startDate = new Date(zone.schedule_start + 'T00:00:00');
-    const endDate   = ms[ms.length - 1].baseDate;
+    const range = rangeByZoneId[zone.id];
+    if (!range) return null;
+    // 실제로 배치된 첫 측정일~마지막 측정일. 예전에는 시작일(설정값)과 마지막 회차의
+    // "계산상 기준일"을 썼는데, 그러면 손으로 옮긴 일정이 막대에 반영되지 않았다.
+    const startDate = range.start;
+    const endDate   = range.end;
     const clippedStart = Math.max(0, differenceInDays(startDate, yearStart));
     const clippedEnd   = Math.min(yearDays - 1, differenceInDays(endDate, yearStart));
     if (clippedStart > yearDays - 1 || clippedEnd < 0) return null;
