@@ -877,7 +877,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     const total = totalCount(z) || (ms.length + startNum - 1);
     const done = (startNum - 1) + ms.filter(m => m.date <= todayMid).length;
     let endDate = null;
-    try { endDate = calcEndDate(z); } catch { /* ignore */ }
+    try { endDate = calcEndDate(z, statHolidayMap); } catch { /* ignore */ }
     const startDate = new Date(z.schedule_start + 'T00:00:00');
     let status;
     if (todayMid < startDate) status = '예정';

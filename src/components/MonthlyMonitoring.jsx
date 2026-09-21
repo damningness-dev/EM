@@ -123,13 +123,20 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
     return map;
   }, [zones]);
 
+  // 일정 계산은 달력(월별 모니터링 일정)과 같은 공휴일 기준을 써야 한다 — 공휴일을
+  // 넘기지 않으면 손으로 옮겨둔 회차의 허용 범위 판정이 달라져 그 이동이 무시된다.
+  const statHolidayMap = useMemo(() => {
+    const y = new Date().getFullYear();
+    try { return buildHolidayMap(holidayDefs, y - 2, y + 5); } catch { return {}; }
+  }, [holidayDefs]);
+
   // Schedule-based stats per zone for this month (linked to CalendarView completions)
   const scheduleThisMonth = useMemo(() => {
     const monthStr = `${year}-${String(month).padStart(2, '0')}`;
     const result = {};
     zones.forEach(zone => {
       if (!zone.schedule_start) return;
-      const ms = calcMeasurements(zone);
+      const ms = calcMeasurements(zone, statHolidayMap);
       const thisMonthMs = ms.filter(m => format(m.date, 'yyyy-MM') === monthStr);
       if (thisMonthMs.length) {
         result[zone.id] = {
@@ -139,7 +146,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
       }
     });
     return result;
-  }, [zones, year, month, completions]);
+  }, [zones, year, month, completions, statHolidayMap]);
 
   // Which zones are currently within their schedule window
   const activeZoneIds = useMemo(() => {
@@ -148,12 +155,12 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
     zones.forEach(zone => {
       if (!zone.schedule_start) return;
       const start = new Date(zone.schedule_start + 'T00:00:00');
-      const end = calcEndDate(zone);
+      const end = calcEndDate(zone, statHolidayMap);
       if (!end) return;
       if (today >= start && today <= end) active.add(zone.id);
     });
     return active;
-  }, [zones]);
+  }, [zones, statHolidayMap]);
 
   // 구역 그룹 정렬 키 = 그룹 내 zone들의 최소 sort_order
   function groupOrderKey(g) {
@@ -616,7 +623,7 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
       // 달력(completions)과 동기화 — schedule_start가 있는 구역에만 적용
       if (editEntry.schedule_start) {
         const monthStr = `${year}-${String(month).padStart(2, '0')}`;
-        const ms = calcMeasurements(editEntry).filter(m => format(m.date, 'yyyy-MM') === monthStr);
+        const ms = calcMeasurements(editEntry, statHolidayMap).filter(m => format(m.date, 'yyyy-MM') === monthStr);
         const target = Math.min(countVal, ms.length);
         const next = new Set(completions);
         for (let i = 0; i < ms.length; i++) {
@@ -881,8 +888,8 @@ export default function MonthlyMonitoring({ year, onYearChange }) {
                               {PROGRESSION.map(grade => {
                                 const zone = gradeMap[grade];
                                 if (zone) {
-                                  const ms = calcMeasurements(zone);
-                                  const endDate = calcEndDate(zone);
+                                  const ms = calcMeasurements(zone, statHolidayMap);
+                                  const endDate = calcEndDate(zone, statHolidayMap);
                                   const isActive = activeZoneIds.has(zone.id);
                                   const zoneSched = scheduleThisMonth[zone.id];
                                   const totalMs = ms.length;

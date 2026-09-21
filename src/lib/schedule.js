@@ -299,9 +299,12 @@ export function calcMeasurements(zone, holidayMap = {}, usedDates = null) {
   return measurements;
 }
 
-export function calcEndDate(zone) {
-  const ms = calcMeasurements(zone);
-  if (ms.length) return ms[ms.length - 1].baseDate;
+// 종료예정일 = 마지막 회차가 실제로 배치된 날. 예전에는 계산상 기준일(baseDate)을
+// 썼는데, 그러면 회차를 손으로 뒤로 옮겨도 종료예정일이 그대로여서 실제 일정보다
+// 앞당겨 보였다. 공휴일 맵을 넘기면 달력과 완전히 같은 날짜가 나온다.
+export function calcEndDate(zone, holidayMap = {}) {
+  const ms = calcMeasurements(zone, holidayMap);
+  if (ms.length) return ms[ms.length - 1].date;
   if (zone.grade === '유지관리' && zone.schedule_start) {
     return addYears(new Date(zone.schedule_start + 'T00:00:00'), 3);
   }
@@ -819,10 +822,15 @@ export function computeCascadeSchedules(startZone, allZones, holidayMap = {}) {
 
   for (let i = startIdx + 1; i < PROGRESSION.length; i++) {
     const nextGrade = PROGRESSION[i];
-    const ms = calcMeasurements(currentZone);
+    // 공휴일 맵을 함께 넘겨 달력과 같은 날짜로 계산한다 — 넘기지 않으면 수동으로
+    // 옮겨둔 회차의 허용 범위 판정이 달라져 그 이동이 무시된 채 계산됐다.
+    const ms = calcMeasurements(currentZone, holidayMap);
     if (!ms.length) break;
 
-    const endDate = ms[ms.length - 1].baseDate;
+    // 다음 단계는 앞 단계의 "실제 마지막 측정일" 다음에 시작해야 한다. 계산상
+    // 기준일(baseDate)을 쓰면 마지막 회차를 뒤로 옮겨도 다음 단계가 그만큼 밀리지
+    // 않아 간트차트에서 앞뒤 단계가 겹쳤다.
+    const endDate = ms[ms.length - 1].date;
     let nextDate = nextGrade === 'P2' ? addDays(endDate, 21) : addMonths(endDate, 1);
 
     let iter = 0;

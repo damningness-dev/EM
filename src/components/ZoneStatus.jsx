@@ -100,7 +100,7 @@ export default function ZoneStatus({ year, onYearChange, onJumpToSchedule }) {
     let ms = [];
     try { ms = calcMeasurements(zone, holidayMap); } catch { /* ignore */ }
     let endDate = null;
-    try { endDate = calcEndDate(zone); } catch { /* ignore */ }
+    try { endDate = calcEndDate(zone, holidayMap); } catch { /* ignore */ }
     const done = ms.filter(m => completions.has(`${zone.id}_${m.num}`) || m.date <= todayMid).length;
     return { measurements: ms, total: ms.length, done, endDate };
   }
