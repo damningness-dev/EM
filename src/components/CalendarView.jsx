@@ -2269,9 +2269,11 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
           >
             🗂 일정 관리
           </button>
+          {/* 주 시작 요일·공휴일 관리는 일정 자체를 편집하는 게 아니라 달력 표시 기준을
+              맞추는 설정이라, 로그인(관리자 잠금) 없이도 누구나 열고 바꿀 수 있게 둔다. */}
           <button
-            onClick={() => { if (requireAdmin()) setCalSettingsPopup(true); }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-xl border transition-colors ${adminUnlocked ? 'text-gray-600 bg-white border-gray-200 hover:bg-gray-50' : 'text-gray-400 bg-gray-50 border-gray-200 cursor-not-allowed'}`}
+            onClick={() => setCalSettingsPopup(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-xl border transition-colors text-gray-600 bg-white border-gray-200 hover:bg-gray-50"
           >
             🗓 달력 설정
           </button>

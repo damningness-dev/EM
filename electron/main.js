@@ -328,7 +328,7 @@ function dedupeMemberAccountsByUsername(list) {
 function loadData() {
   const p = getDataPath();
   if (!fs.existsSync(p)) {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES }, guestAllowedTabs: [], weeklyDuty: JSON.parse(JSON.stringify(DEFAULT_WEEKLY_DUTY)), sops: [], sopTags: [...DEFAULT_SOP_TAGS] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES }, guestAllowedTabs: [], guestAccessConfigured: false, weeklyDuty: JSON.parse(JSON.stringify(DEFAULT_WEEKLY_DUTY)), sops: [], sopTags: [...DEFAULT_SOP_TAGS] };
   }
   try {
     const data = JSON.parse(fs.readFileSync(p, 'utf-8'));
@@ -351,6 +351,12 @@ function loadData() {
     // 로그인 전부터 모든 자료를 보여주지 않도록, 로그인해야 비로소 메뉴가 열리게 한다.
     // (관리자가 "보이는 메뉴 제한하기"를 꺼서 null로 저장해 둔 PC는 그 설정을 그대로 따른다)
     if (!('guestAllowedTabs' in data)) data.guestAllowedTabs = [];
+    // 관리자가 "권한 설정"에서 한 번이라도 명시적으로 저장한 적이 있어야만(켜든 끄든)
+    // guestAllowedTabs 값을 신뢰한다. 이 플래그가 없던 예전 공유 데이터는 실수로/의도치
+    // 않게 null(전체 공개)로 남아있을 수 있어, 그런 경우까지 전체 공개로 보면 갓 설치한
+    // PC가 로그인 전부터 모든 메뉴를 보여주게 된다 — 명시적으로 설정하기 전까지는
+    // 항상 제한(빈 배열)으로 취급한다.
+    if (typeof data.guestAccessConfigured !== 'boolean') data.guestAccessConfigured = false;
     if (!data.weeklyDuty) data.weeklyDuty = JSON.parse(JSON.stringify(DEFAULT_WEEKLY_DUTY));
     // 이전 버전에서 이미 weeklyDuty가 있었지만 직원 목록·기준일 같은 새 필드가
     // 없을 수 있다 — 없는 필드만 기본값으로 채운다(기존 업무·배정은 그대로 둠).
@@ -360,7 +366,7 @@ function loadData() {
     if (typeof data.weeklyDuty.autoAlarm !== 'boolean') data.weeklyDuty.autoAlarm = true;
     return data;
   } catch {
-    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES }, guestAllowedTabs: [], weeklyDuty: JSON.parse(JSON.stringify(DEFAULT_WEEKLY_DUTY)), sops: [], sopTags: [...DEFAULT_SOP_TAGS] };
+    return { calibration: [], zones: [], monitoringData: {}, annualPlan: {}, groups: [], holidays: [], completions: [], tempSchedules: [], blockedDates: [], annualPlanAhus: [...DEFAULT_AHUS], usagePoints: [], usagePointCategories: { ...DEFAULT_USAGE_POINT_CATEGORIES }, guestAllowedTabs: [], guestAccessConfigured: false, weeklyDuty: JSON.parse(JSON.stringify(DEFAULT_WEEKLY_DUTY)), sops: [], sopTags: [...DEFAULT_SOP_TAGS] };
   }
 }
 
@@ -890,6 +896,7 @@ function buildMemberUpload(remoteData, localData) {
   // id 기준으로 합칠 수 없다. memberAccounts와 같은 권한 설정 화면에서 바뀌는
   // 값이니 같은 원칙으로, 이 PC에서 방금 고친 값이 항상 반영되게 한다.
   if (localData && 'guestAllowedTabs' in localData) out.guestAllowedTabs = localData.guestAllowedTabs;
+  if (localData && 'guestAccessConfigured' in localData) out.guestAccessConfigured = localData.guestAccessConfigured;
   // 첨부파일 보관용 Gist ID는 한 번 정해지면 계속 써야 하므로 있는 쪽을 남긴다.
   if (!out.attachGistId && localData?.attachGistId) out.attachGistId = localData.attachGistId;
   return out;
@@ -2109,11 +2116,15 @@ function registerHandlers() {
   // 로그인하지 않았을 때 보이는 메뉴 — null이면 제한 없음(전체 메뉴), 배열이면 그 탭들만.
   ipcMain.handle('guestAccess:get', () => {
     const data = loadData();
-    return { allowedTabs: data.guestAllowedTabs || null };
+    // 한 번도 명시적으로 설정한 적이 없으면(guestAccessConfigured=false) 항상 제한
+    // 없음(null)이 아니라 아무 메뉴도 안 보이는 상태로 취급한다.
+    if (!data.guestAccessConfigured) return { allowedTabs: [], configured: false };
+    return { allowedTabs: data.guestAllowedTabs || null, configured: true };
   });
   ipcMain.handle('guestAccess:set', (_e, allowedTabs) => {
     const data = loadData();
     data.guestAllowedTabs = Array.isArray(allowedTabs) ? allowedTabs : null;
+    data.guestAccessConfigured = true; // 관리자가 명시적으로 저장했다는 표시
     saveData(data);
     return { ok: true };
   });
