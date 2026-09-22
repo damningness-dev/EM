@@ -393,7 +393,15 @@ function migrateLegacyTodosOnce() {
 // 로그인이 곧 관리자 권한을 겸하는 구조라, 관리자 계정이 하나도 없으면 아무도
 // 관리자로 로그인할 수 없어 앱이 잠긴 채로 막힌다. 그런 계정이 전혀 없을 때만
 // 기본 관리자 계정을 한 번 만들어 둔다(이미 있으면 손대지 않음).
+const DEFAULT_ADMIN_PASSWORD = '123456';
+
 function seedDefaultAdminOnce() {
+  // 공유를 쓰는 PC(Gist ID가 설정됨)에는 팀의 실제 계정이 이미 공유에 들어 있다.
+  // 그걸 아직 못 받아온 순간(오프라인 등)에 기본 관리자를 만들어버리면,
+  // "처음엔 123456으로 로그인되다가 데이터를 받아온 뒤로는 안 되는" 혼란이 생기고,
+  // 그 상태로 업로드되면 같은 이름인데 id·비밀번호가 다른 계정이 둘 남는다.
+  // 공유를 쓰는 PC는 받아온 계정만 쓰게 하고, 기본 관리자는 심지 않는다.
+  if (loadSyncConfig().gistId) return;
   const data = loadData();
   if (!data.memberAccounts) data.memberAccounts = [];
   if (data.memberAccounts.some(m => m.isAdmin)) return;
@@ -403,7 +411,7 @@ function seedDefaultAdminOnce() {
     if (!existing.allowedTabs || !existing.allowedTabs.length) existing.allowedTabs = [...DEFAULT_ADMIN_TABS];
   } else {
     data.memberAccounts.push({
-      id: newId(), username: '최기훈', passwordHash: hashPassword('123456'),
+      id: newId(), username: '최기훈', passwordHash: hashPassword(DEFAULT_ADMIN_PASSWORD),
       allowedTabs: [...DEFAULT_ADMIN_TABS], isAdmin: true,
     });
   }
@@ -2055,6 +2063,16 @@ function registerHandlers() {
     }
     const data = loadData();
     const m = (data.memberAccounts || []).find(m => m.username === String(username || '').trim());
+    // 기본 비밀번호로 시도했는데 저장된 것과 다르면, 공유 데이터를 받아오면서
+    // 임시 기본 계정이 팀의 실제 계정으로 교체된 경우다. 그냥 "비밀번호가 틀렸다"고만
+    // 하면 "처음엔 됐는데 왜 갑자기 안 되지"로 남는다.
+    if (m && password === DEFAULT_ADMIN_PASSWORD && hashPassword(password) !== m.passwordHash) {
+      return {
+        ok: false,
+        error: `기본 비밀번호(${DEFAULT_ADMIN_PASSWORD})는 공유 데이터를 받아오기 전까지만 쓰는 임시 값입니다. 지금은 공유된 실제 계정으로 바뀌었으니 팀에서 사용하는 비밀번호로 로그인하세요.`,
+        syncFailed,
+      };
+    }
     if (!m || hashPassword(password) !== m.passwordHash) {
       // 비밀번호가 틀렸다고 확정하기 전에, 방금 최신 정보를 못 받아왔다는 것도
       // 함께 알려준다 — 안 그러면 "다른 PC에서 방금 바꾼 비밀번호가 아직 이
