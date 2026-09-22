@@ -73,7 +73,7 @@ const DEFAULT_CHIP_COLORS = {
   'calib':          { bg: '#fef3c7', border: '#fde68a', text: '#92400e' },
 };
 
-function buildGrid(year, month, weekStart = 'mon') {
+function buildGrid(year, month, weekStart = 'sun') {
   // leading blanks = days from the week-start weekday up to the 1st.
   const firstDow = new Date(year, month - 1, 1).getDay();
   const lead = weekStart === 'sun' ? firstDow : (firstDow + 6) % 7;
@@ -313,7 +313,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   const [optimizing, setOptimizing] = useState(false);
   const [calSettingsPopup, setCalSettingsPopup] = useState(false);
   const [weekStart, setWeekStart] = useState(() => {
-    try { return localStorage.getItem('em-week-start') || 'mon'; } catch { return 'mon'; }
+    try { return localStorage.getItem('em-week-start') || 'sun'; } catch { return 'sun'; }
   });
   const [scheduleConfig, setScheduleConfigState] = useState(() => mergeScheduleConfig(null));
   const [cycleCatTab, setCycleCatTab] = useState('공조');
