@@ -489,7 +489,11 @@ export default function Sop({ adminUnlocked, currentMember }) {
     if (!showForm) return null;
     return (
       <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-        <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl p-6 space-y-3 max-h-[90vh] overflow-y-auto">
+        {/* 모서리를 드래그해 창 크기를 늘리거나 줄일 수 있다 — 본문이 길 때 스크롤
+            대신 창 자체를 키워 볼 수 있게. 처음 크기는 기존과 동일하고, 최소/최대
+            범위 안에서만 늘고 줄어든다. */}
+        <div className="bg-white rounded-xl shadow-xl p-6 space-y-3 overflow-auto resize"
+          style={{ width: '42rem', maxWidth: '95vw', minWidth: 420, maxHeight: '90vh', minHeight: 320 }}>
           <h2 className="font-bold text-gray-800">{editingId ? '글 수정' : '새 글쓰기'}</h2>
           <div>
             <label className="text-xs text-gray-500">제목</label>
