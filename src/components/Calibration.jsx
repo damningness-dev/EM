@@ -49,8 +49,10 @@ function certFileName(no, calibDate, sn, originalName) {
 
 // 교정 진행상황 — 견적서요청부터 완료까지 순서대로 한 단계씩만 전진한다.
 // item.progressStage: 지금까지 완료된 마지막 단계(없으면 null=시작 전).
+// item.progressType: '교정' | '수리' — 맨 처음(견적서요청) 시작할 때 한 번 고른다.
 // item.progressLog: [{ stage, by, at }] — 각 단계로 넘어갈 때 담당자·시각 기록.
 const PROGRESS_STAGES = ['견적서요청', '청구서작성', '교정일정확인', '교정완료', '지불품의서작성', '완료'];
+const PROGRESS_TYPES = ['교정', '수리'];
 
 function fmtDateTime(iso) {
   if (!iso) return '';
@@ -62,10 +64,15 @@ function fmtDateTime(iso) {
 // 모든 단계를 나열해, 어디까지 왔고 무엇이 남았는지 한눈에 보이게 한다.
 function progressTooltip(item) {
   const log = item.progressLog || [];
-  return PROGRESS_STAGES.map(stage => {
+  const header = item.progressType ? `구분: ${item.progressType}\n` : '';
+  return header + PROGRESS_STAGES.map(stage => {
     const entry = log.find(l => l.stage === stage);
     if (!entry) return `${stage}: 대기`;
-    const extra = entry.contact ? ` (연락처 ${entry.contact})` : entry.scheduledDate ? ` (예정일 ${entry.scheduledDate})` : '';
+    const parts = [];
+    if (entry.contact) parts.push(`연락처 ${entry.contact}`);
+    if (entry.reason) parts.push(`사유 ${entry.reason}`);
+    if (entry.scheduledDate) parts.push(`예정일 ${entry.scheduledDate}`);
+    const extra = parts.length ? ` (${parts.join(', ')})` : '';
     return `${stage}: ${entry.by} · ${fmtDateTime(entry.at)}${extra}`;
   }).join('\n');
 }
@@ -80,7 +87,9 @@ export default function Calibration({ adminUnlocked }) {
   const [form, setForm] = useState({});
   const [progressPrompt, setProgressPrompt] = useState(null); // { item, stage }
   const [progressBy, setProgressBy] = useState('');
+  const [progressType, setProgressType] = useState(''); // '교정' | '수리' — 견적서요청 때 한 번만 고름
   const [progressContact, setProgressContact] = useState('');
+  const [progressReason, setProgressReason] = useState('');
   const [progressDate, setProgressDate] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [showExport, setShowExport] = useState(false);
@@ -317,12 +326,14 @@ export default function Calibration({ adminUnlocked }) {
 
   // ─── 교정 진행상황 — 다음 단계로 전진 ───
   // 단계별로 담당자 이름 외에 추가로 받아야 하는 정보가 있다 — 처음 견적서를
-  // 요청할 때는 업체(또는 담당자) 연락처를, 교정일정을 확인할 때는 실제
-  // 교정예정일을 함께 받아 기록해둔다.
+  // 요청할 때는 교정/수리 구분·업체(또는 담당자) 연락처·사유를, 교정일정을
+  // 확인할 때는 실제 교정예정일을 함께 받아 기록해둔다.
   function askAdvanceProgress(item, stage) {
     if (!adminUnlocked) { showNotice('관리자 잠금 해제가 필요합니다.', true); return; }
     setProgressBy('');
+    setProgressType('');
     setProgressContact('');
+    setProgressReason('');
     setProgressDate('');
     setProgressPrompt({ item, stage });
   }
@@ -331,10 +342,16 @@ export default function Calibration({ adminUnlocked }) {
     const by = progressBy.trim();
     if (!by) { showNotice('담당자 이름을 입력하세요.', true); return; }
     const entry = { stage, by, at: new Date().toISOString() };
+    const patch = { progressStage: stage };
     if (stage === '견적서요청') {
+      if (!progressType) { showNotice('교정/수리 구분을 선택하세요.', true); return; }
       const contact = progressContact.trim();
       if (!contact) { showNotice('연락처를 입력하세요.', true); return; }
+      const reason = progressReason.trim();
+      if (!reason) { showNotice('사유를 입력하세요.', true); return; }
+      patch.progressType = progressType;
       entry.contact = contact;
+      entry.reason = reason;
     }
     if (stage === '교정일정확인') {
       if (!progressDate) { showNotice('교정예정일을 입력하세요.', true); return; }
@@ -343,7 +360,7 @@ export default function Calibration({ adminUnlocked }) {
     setProgressPrompt(null);
     const log = [...(item.progressLog || []), entry];
     try {
-      const saved = await upsertCalibration(stripDday({ ...item, progressStage: stage, progressLog: log }));
+      const saved = await upsertCalibration(stripDday({ ...item, ...patch, progressLog: log }));
       setData(prev => prev.map(d => d.id === item.id ? saved : d));
       window.electronAPI?.notifyDataChanged?.();
       syncAfterChange();
@@ -389,24 +406,25 @@ export default function Calibration({ adminUnlocked }) {
     }
   }
 
-  // 진행상황 셀 — 현재 단계 배지 + 다음 단계로 넘기는 버튼. 마우스를 올리면
-  // 견적서요청부터 전체 이력이 툴팁으로 보인다.
+  // 진행상황 셀 — 현재 단계 배지 + 다음 단계로 넘기는 버튼(다음 단계 이름을
+  // 그대로 버튼 글자로 보여준다). 마우스를 올리면 견적서요청부터 전체 이력이
+  // 툴팁으로 보인다.
   function renderProgressCell(item) {
     const curIdx = item.progressStage ? PROGRESS_STAGES.indexOf(item.progressStage) : -1;
     const next = PROGRESS_STAGES[curIdx + 1];
     return (
-      <div className="flex items-center justify-center gap-1" title={progressTooltip(item)}>
+      <div className="flex flex-col items-center gap-1" title={progressTooltip(item)}>
         <span className={`px-1.5 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap ${
           item.progressStage === '완료' ? 'bg-green-50 text-green-600'
             : item.progressStage ? 'bg-blue-50 text-blue-600'
             : 'bg-gray-50 text-gray-400'
         }`}>
-          {item.progressStage || '시작 전'}
+          {item.progressType ? `[${item.progressType}] ` : ''}{item.progressStage || '시작 전'}
         </span>
         {next && (
           <button onClick={() => askAdvanceProgress(item, next)} disabled={!adminUnlocked}
-            className="text-gray-300 hover:text-blue-600 disabled:opacity-40 disabled:cursor-not-allowed text-xs shrink-0"
-            title={adminUnlocked ? `다음 단계: ${next}` : '관리자 잠금 해제가 필요합니다'}>▶</button>
+            className="px-1.5 py-0.5 rounded border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed text-[11px] font-medium whitespace-nowrap"
+            title={adminUnlocked ? `다음 단계: ${next}` : '관리자 잠금 해제가 필요합니다'}>{next}</button>
         )}
       </div>
     );
@@ -624,12 +642,29 @@ export default function Calibration({ adminUnlocked }) {
                 onKeyDown={e => { if (e.key === 'Enter' && progressPrompt.stage !== '견적서요청' && progressPrompt.stage !== '교정일정확인') confirmAdvanceProgress(); }} />
             </div>
             {progressPrompt.stage === '견적서요청' && (
-              <div>
-                <label className="text-xs text-gray-500">연락처</label>
-                <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" placeholder="업체 또는 담당자 연락처" value={progressContact}
-                  onChange={e => setProgressContact(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') confirmAdvanceProgress(); }} />
-              </div>
+              <>
+                <div>
+                  <label className="text-xs text-gray-500">구분</label>
+                  <div className="flex gap-2 mt-0.5">
+                    {PROGRESS_TYPES.map(t => (
+                      <button key={t} type="button" onClick={() => setProgressType(t)}
+                        className={`flex-1 py-1.5 rounded-lg text-sm font-medium border ${progressType === t ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">연락처</label>
+                  <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" placeholder="업체 또는 담당자 연락처" value={progressContact}
+                    onChange={e => setProgressContact(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500">사유</label>
+                  <textarea rows={2} className="w-full border rounded px-2 py-1.5 text-sm mt-0.5 resize-y" placeholder="견적서 요청 사유" value={progressReason}
+                    onChange={e => setProgressReason(e.target.value)} />
+                </div>
+              </>
             )}
             {progressPrompt.stage === '교정일정확인' && (
               <div>
