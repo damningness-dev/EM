@@ -64,7 +64,9 @@ function progressTooltip(item) {
   const log = item.progressLog || [];
   return PROGRESS_STAGES.map(stage => {
     const entry = log.find(l => l.stage === stage);
-    return entry ? `${stage}: ${entry.by} · ${fmtDateTime(entry.at)}` : `${stage}: 대기`;
+    if (!entry) return `${stage}: 대기`;
+    const extra = entry.contact ? ` (연락처 ${entry.contact})` : entry.scheduledDate ? ` (예정일 ${entry.scheduledDate})` : '';
+    return `${stage}: ${entry.by} · ${fmtDateTime(entry.at)}${extra}`;
   }).join('\n');
 }
 
@@ -78,6 +80,8 @@ export default function Calibration({ adminUnlocked }) {
   const [form, setForm] = useState({});
   const [progressPrompt, setProgressPrompt] = useState(null); // { item, stage }
   const [progressBy, setProgressBy] = useState('');
+  const [progressContact, setProgressContact] = useState('');
+  const [progressDate, setProgressDate] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [openingItemId, setOpeningItemId] = useState(null); // 로컬에 없어 첨부파일 Gist에서 내려받는 중인 항목 id
@@ -312,17 +316,32 @@ export default function Calibration({ adminUnlocked }) {
   }
 
   // ─── 교정 진행상황 — 다음 단계로 전진 ───
+  // 단계별로 담당자 이름 외에 추가로 받아야 하는 정보가 있다 — 처음 견적서를
+  // 요청할 때는 업체(또는 담당자) 연락처를, 교정일정을 확인할 때는 실제
+  // 교정예정일을 함께 받아 기록해둔다.
   function askAdvanceProgress(item, stage) {
     if (!adminUnlocked) { showNotice('관리자 잠금 해제가 필요합니다.', true); return; }
     setProgressBy('');
+    setProgressContact('');
+    setProgressDate('');
     setProgressPrompt({ item, stage });
   }
   async function confirmAdvanceProgress() {
     const { item, stage } = progressPrompt;
     const by = progressBy.trim();
     if (!by) { showNotice('담당자 이름을 입력하세요.', true); return; }
+    const entry = { stage, by, at: new Date().toISOString() };
+    if (stage === '견적서요청') {
+      const contact = progressContact.trim();
+      if (!contact) { showNotice('연락처를 입력하세요.', true); return; }
+      entry.contact = contact;
+    }
+    if (stage === '교정일정확인') {
+      if (!progressDate) { showNotice('교정예정일을 입력하세요.', true); return; }
+      entry.scheduledDate = progressDate;
+    }
     setProgressPrompt(null);
-    const log = [...(item.progressLog || []), { stage, by, at: new Date().toISOString() }];
+    const log = [...(item.progressLog || []), entry];
     try {
       const saved = await upsertCalibration(stripDday({ ...item, progressStage: stage, progressLog: log }));
       setData(prev => prev.map(d => d.id === item.id ? saved : d));
@@ -602,8 +621,24 @@ export default function Calibration({ adminUnlocked }) {
               <label className="text-xs text-gray-500">담당자 이름</label>
               <input autoFocus className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={progressBy}
                 onChange={e => setProgressBy(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') confirmAdvanceProgress(); }} />
+                onKeyDown={e => { if (e.key === 'Enter' && progressPrompt.stage !== '견적서요청' && progressPrompt.stage !== '교정일정확인') confirmAdvanceProgress(); }} />
             </div>
+            {progressPrompt.stage === '견적서요청' && (
+              <div>
+                <label className="text-xs text-gray-500">연락처</label>
+                <input className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" placeholder="업체 또는 담당자 연락처" value={progressContact}
+                  onChange={e => setProgressContact(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') confirmAdvanceProgress(); }} />
+              </div>
+            )}
+            {progressPrompt.stage === '교정일정확인' && (
+              <div>
+                <label className="text-xs text-gray-500">교정예정일</label>
+                <input type="date" className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={progressDate}
+                  onChange={e => setProgressDate(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') confirmAdvanceProgress(); }} />
+              </div>
+            )}
             <div className="flex gap-2">
               <button onClick={confirmAdvanceProgress} className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">확인</button>
               <button onClick={() => setProgressPrompt(null)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">취소</button>
