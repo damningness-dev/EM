@@ -26,7 +26,7 @@ const CALIB_MID_COLS = [
   { key: 'next_calib_date', label: '차기교정일', sortable: true },
   { key: 'dday', label: 'D-Day', sortable: true },
   { key: 'calibNote', label: '교정내역', sortable: false },
-  { key: 'note', label: '비고', sortable: false },
+  { key: 'note', label: '진행상황', sortable: false },
 ];
 const CALIB_MID_KEYS = CALIB_MID_COLS.map(c => c.key);
 const CALIB_COL_ORDER_STORE_KEY = 'em-calib-table-col-order';
@@ -47,6 +47,27 @@ function certFileName(no, calibDate, sn, originalName) {
   return base + ext;
 }
 
+// 교정 진행상황 — 견적서요청부터 완료까지 순서대로 한 단계씩만 전진한다.
+// item.progressStage: 지금까지 완료된 마지막 단계(없으면 null=시작 전).
+// item.progressLog: [{ stage, by, at }] — 각 단계로 넘어갈 때 담당자·시각 기록.
+const PROGRESS_STAGES = ['견적서요청', '청구서작성', '교정일정확인', '교정완료', '지불품의서작성', '완료'];
+
+function fmtDateTime(iso) {
+  if (!iso) return '';
+  try { return new Date(iso).toLocaleString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }); }
+  catch { return ''; }
+}
+
+// 마우스를 올리면 보이는 전체 진행 이력 — 완료 여부와 무관하게 항상 견적서요청부터
+// 모든 단계를 나열해, 어디까지 왔고 무엇이 남았는지 한눈에 보이게 한다.
+function progressTooltip(item) {
+  const log = item.progressLog || [];
+  return PROGRESS_STAGES.map(stage => {
+    const entry = log.find(l => l.stage === stage);
+    return entry ? `${stage}: ${entry.by} · ${fmtDateTime(entry.at)}` : `${stage}: 대기`;
+  }).join('\n');
+}
+
 export default function Calibration({ adminUnlocked }) {
   const dataVersion = useDataVersion(); // 공유 동기화 시 화면 자동 최신화
   const [data, setData] = useState([]);
@@ -55,6 +76,8 @@ export default function Calibration({ adminUnlocked }) {
   const [filter, setFilter] = useState('all');
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({});
+  const [progressPrompt, setProgressPrompt] = useState(null); // { item, stage }
+  const [progressBy, setProgressBy] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [openingItemId, setOpeningItemId] = useState(null); // 로컬에 없어 첨부파일 Gist에서 내려받는 중인 항목 id
@@ -288,6 +311,26 @@ export default function Calibration({ adminUnlocked }) {
     syncAfterChange();
   }
 
+  // ─── 교정 진행상황 — 다음 단계로 전진 ───
+  function askAdvanceProgress(item, stage) {
+    if (!adminUnlocked) { showNotice('관리자 잠금 해제가 필요합니다.', true); return; }
+    setProgressBy('');
+    setProgressPrompt({ item, stage });
+  }
+  async function confirmAdvanceProgress() {
+    const { item, stage } = progressPrompt;
+    const by = progressBy.trim();
+    if (!by) { showNotice('담당자 이름을 입력하세요.', true); return; }
+    setProgressPrompt(null);
+    const log = [...(item.progressLog || []), { stage, by, at: new Date().toISOString() }];
+    try {
+      const saved = await upsertCalibration(stripDday({ ...item, progressStage: stage, progressLog: log }));
+      setData(prev => prev.map(d => d.id === item.id ? saved : d));
+      window.electronAPI?.notifyDataChanged?.();
+      syncAfterChange();
+    } catch (e) { showNotice('진행상황 저장 실패: ' + e.message, true); }
+  }
+
   const expiredCount = enriched.filter(i => i.dday !== null && i.dday < 0).length;
   const urgentCount = enriched.filter(i => i.dday !== null && i.dday >= 0 && i.dday <= 60).length;
 
@@ -309,7 +352,7 @@ export default function Calibration({ adminUnlocked }) {
         case 'next_calib_date': return <td key={key} className="px-4 py-2 text-center text-gray-400 text-xs">{formatDate(eff.next_calib_date)}</td>;
         case 'dday': return <td key={key} className="px-4 py-2 text-center text-gray-300">—</td>;
         case 'calibNote': return <td key={key} className="px-4 py-2 text-center text-gray-400 text-xs truncate" title={latestHistory(item)?.note || ''}>{latestHistory(item)?.note || '—'}</td>;
-        case 'note': return <td key={key} className="px-4 py-2"><input className="w-full border rounded px-2 py-1 text-sm text-center" placeholder="비고" value={form.note || ''} onChange={e => setForm(f => ({ ...f, note: e.target.value }))} /></td>;
+        case 'note': return <td key={key} className="px-2 py-2">{renderProgressCell(item)}</td>;
         default: return null;
       }
     }
@@ -322,9 +365,32 @@ export default function Calibration({ adminUnlocked }) {
       case 'next_calib_date': return <td key={key} className="px-4 py-3 text-center text-gray-500 text-xs">{eff.next_calib_date === '미사용' ? '미사용' : formatDate(eff.next_calib_date)}</td>;
       case 'dday': return <td key={key} className={`px-4 py-3 text-center font-semibold text-sm ${getDDayColor(item.dday)}`}>{getDDayLabel(item.dday)}</td>;
       case 'calibNote': return <td key={key} className="px-4 py-3 text-center text-xs text-gray-400 truncate" title={latestHistory(item)?.note || ''}>{latestHistory(item)?.note || ''}</td>;
-      case 'note': return <td key={key} className="px-4 py-3 text-center text-xs text-gray-400">{item.note}</td>;
+      case 'note': return <td key={key} className="px-2 py-3">{renderProgressCell(item)}</td>;
       default: return null;
     }
+  }
+
+  // 진행상황 셀 — 현재 단계 배지 + 다음 단계로 넘기는 버튼. 마우스를 올리면
+  // 견적서요청부터 전체 이력이 툴팁으로 보인다.
+  function renderProgressCell(item) {
+    const curIdx = item.progressStage ? PROGRESS_STAGES.indexOf(item.progressStage) : -1;
+    const next = PROGRESS_STAGES[curIdx + 1];
+    return (
+      <div className="flex items-center justify-center gap-1" title={progressTooltip(item)}>
+        <span className={`px-1.5 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap ${
+          item.progressStage === '완료' ? 'bg-green-50 text-green-600'
+            : item.progressStage ? 'bg-blue-50 text-blue-600'
+            : 'bg-gray-50 text-gray-400'
+        }`}>
+          {item.progressStage || '시작 전'}
+        </span>
+        {next && (
+          <button onClick={() => askAdvanceProgress(item, next)} disabled={!adminUnlocked}
+            className="text-gray-300 hover:text-blue-600 disabled:opacity-40 disabled:cursor-not-allowed text-xs shrink-0"
+            title={adminUnlocked ? `다음 단계: ${next}` : '관리자 잠금 해제가 필요합니다'}>▶</button>
+        )}
+      </div>
+    );
   }
 
   return (
@@ -520,6 +586,27 @@ export default function Calibration({ adminUnlocked }) {
             <div className="flex gap-2">
               <button onClick={confirmDelete} className="flex-1 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700">삭제</button>
               <button onClick={() => setConfirmDeleteId(null)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">취소</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {progressPrompt && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setProgressPrompt(null)}>
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-xs p-5 space-y-4" onClick={e => e.stopPropagation()}>
+            <div>
+              <p className="text-sm font-semibold text-gray-800">다음 단계로 진행</p>
+              <p className="text-xs text-gray-400 mt-0.5">{progressPrompt.item.no} · {progressPrompt.stage}</p>
+            </div>
+            <div>
+              <label className="text-xs text-gray-500">담당자 이름</label>
+              <input autoFocus className="w-full border rounded px-2 py-1.5 text-sm mt-0.5" value={progressBy}
+                onChange={e => setProgressBy(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') confirmAdvanceProgress(); }} />
+            </div>
+            <div className="flex gap-2">
+              <button onClick={confirmAdvanceProgress} className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">확인</button>
+              <button onClick={() => setProgressPrompt(null)} className="flex-1 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50">취소</button>
             </div>
           </div>
         </div>
