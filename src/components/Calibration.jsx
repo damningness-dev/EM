@@ -77,7 +77,7 @@ function progressTooltip(item) {
   }).join('\n');
 }
 
-export default function Calibration({ adminUnlocked }) {
+export default function Calibration({ adminUnlocked, jumpTarget, onJumpTargetConsumed }) {
   const dataVersion = useDataVersion(); // 공유 동기화 시 화면 자동 최신화
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -101,6 +101,7 @@ export default function Calibration({ adminUnlocked }) {
   const [backfilling, setBackfilling] = useState(false);
   const [backfillProgress, setBackfillProgress] = useState(null); // { phase, done, total }
   const [expanded, setExpanded] = useState(new Set());
+  const [flashId, setFlashId] = useState(null); // 다른 화면에서 이동해 왔을 때 잠깐 강조할 항목 id
   const [sortKey, setSortKey] = useState(null);   // null = 수동(드래그) 순서
   const [sortDir, setSortDir] = useState('asc');
   const [dragIdx, setDragIdx] = useState(null);
@@ -157,6 +158,28 @@ export default function Calibration({ adminUnlocked }) {
       for (const m of migrated) { try { await upsertCalibration(m); } catch { /* ignore */ } }
     });
   }, [dataVersion]);
+
+  // 다른 화면(이번 달 교정 예정 팝업 등)에서 특정 기기로 이동 요청이 오면, 검색/필터에
+  // 가려져 있지 않도록 초기화하고 해당 행을 펼친 뒤 강조 대상으로 표시한다. 실제
+  // 스크롤은 목록이 그 상태로 다시 그려진 뒤(아래 flashId 이펙트)에 수행한다.
+  useEffect(() => {
+    if (!jumpTarget) return;
+    setSearch('');
+    setFilter('all');
+    setExpanded(prev => new Set(prev).add(jumpTarget));
+    setFlashId(jumpTarget);
+    onJumpTargetConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpTarget]);
+
+  useEffect(() => {
+    if (!flashId) return;
+    const raf = requestAnimationFrame(() => {
+      document.getElementById(`calib-row-${flashId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    const t = setTimeout(() => setFlashId(null), 5000);
+    return () => { cancelAnimationFrame(raf); clearTimeout(t); };
+  }, [flashId]);
 
   const enriched = useMemo(() => data.map(item => {
     const eff = effectiveCalib(item);
@@ -517,7 +540,8 @@ export default function Calibration({ adminUnlocked }) {
                 return (
                   <FragmentRow key={item.id}>
                     <tr
-                      className={`hover:bg-gray-50 ${editingId === item.id ? '' : 'cursor-pointer'} ${item.dday !== null && item.dday < 0 ? 'bg-red-50' : ''} ${isDrop ? 'border-t-2 border-blue-500' : ''}`}
+                      id={`calib-row-${item.id}`}
+                      className={`hover:bg-gray-50 ${editingId === item.id ? '' : 'cursor-pointer'} ${item.dday !== null && item.dday < 0 ? 'bg-red-50' : ''} ${isDrop ? 'border-t-2 border-blue-500' : ''} ${flashId === item.id ? 'flash-highlight' : ''}`}
                       title={editingId === item.id ? undefined : '클릭하여 연도별 교정내역 펼치기/접기'}
                       // 행 아무 데나 눌러도 교정내역이 펼쳐지게 한다. 단 수정 중이거나
                       // 버튼·입력칸을 누른 경우(열기·수정·삭제·▶)는 그 동작만 하고 넘긴다.

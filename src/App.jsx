@@ -45,6 +45,7 @@ export default function App() {
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [showMemberChangePassword, setShowMemberChangePassword] = useState(false);
   const [scheduleJumpTarget, setScheduleJumpTarget] = useState(null); // {date, zoneId, num} — 구역별 현황 등에서 특정 일정으로 이동
+  const [calibJumpTarget, setCalibJumpTarget] = useState(null); // 교정 항목 id — 달력의 "이번 달 교정 예정" 팝업 등에서 교정관리의 해당 기기로 이동
 
   // 월별 모니터링 일정(CalendarView)은 "일정 저장하기"를 눌러야 실제로 저장되는
   // 초안 상태를 갖는다. 저장하지 않은 초안이 있는 채로 다른 메뉴로 이동하면
@@ -157,6 +158,15 @@ export default function App() {
     if (!currentMember && guestAllowedTabs && !guestAllowedTabs.includes('calendar')) return;
     setScheduleJumpTarget({ date, zoneId, num });
     setPage('calendar');
+  }
+
+  // 달력의 "이번 달 교정 예정" 팝업 등에서 교정 항목을 클릭하면 교정관리 화면으로
+  // 이동해 해당 기기 행을 펼치고 강조해 보여준다.
+  function jumpToCalibration(calibId) {
+    if (currentMember && !(currentMember.allowedTabs || []).includes('calibration')) return;
+    if (!currentMember && guestAllowedTabs && !guestAllowedTabs.includes('calibration')) return;
+    setCalibJumpTarget(calibId);
+    setPage('calibration');
   }
 
   useEffect(() => {
@@ -356,12 +366,16 @@ export default function App() {
           {page === 'calendar' && (
             <CalendarView ref={calendarRef} year={year} onYearChange={setYear} adminUnlocked={adminUnlocked}
               currentMember={currentMember}
-              jumpTarget={scheduleJumpTarget} onJumpTargetConsumed={() => setScheduleJumpTarget(null)} />
+              jumpTarget={scheduleJumpTarget} onJumpTargetConsumed={() => setScheduleJumpTarget(null)}
+              onJumpToCalibration={jumpToCalibration} />
           )}
           {page === 'status' && <ZoneStatus year={year} onYearChange={setYear} onJumpToSchedule={jumpToSchedule} />}
           {page === 'gantt'  && <ZoneGantt  year={year} onYearChange={setYear} />}
           {page === 'annual' && <AnnualPlan year={year} onYearChange={setYear} />}
-          {page === 'calibration' && <Calibration adminUnlocked={adminUnlocked} />}
+          {page === 'calibration' && (
+            <Calibration adminUnlocked={adminUnlocked}
+              jumpTarget={calibJumpTarget} onJumpTargetConsumed={() => setCalibJumpTarget(null)} />
+          )}
           {page === 'usagepoints' && <UsagePoints adminUnlocked={adminUnlocked} currentMember={currentMember} />}
           {page === 'weeklyduty' && <WeeklyDuty adminUnlocked={adminUnlocked} />}
           {page === 'sop' && <Sop adminUnlocked={adminUnlocked} currentMember={currentMember} />}

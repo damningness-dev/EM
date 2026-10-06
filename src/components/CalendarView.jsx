@@ -105,7 +105,7 @@ function manualScaleFontPx(percent) {
   return Math.max(3, Math.min(16, 8 * (percent || 100) / 100));
 }
 
-const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearChange, adminUnlocked, currentMember, jumpTarget, onJumpTargetConsumed }, ref) {
+const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearChange, adminUnlocked, currentMember, jumpTarget, onJumpTargetConsumed, onJumpToCalibration }, ref) {
   const today = new Date();
   const [year, setYear] = useState(initYear || today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
@@ -2924,8 +2924,9 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                 <p className="px-4 py-4 text-xs text-gray-400 text-center">이번 달 교정 예정이 없습니다.</p>
               ) : calibMonthItems.map(c => (
                 <button key={`${c.id}-${c._date}`} type="button"
-                  onClick={() => { setSelectedDay(c._date); setShowCalibPopup(false); }}
-                  className="w-full text-left px-4 py-3 hover:bg-gray-50">
+                  onClick={() => { setShowCalibPopup(false); onJumpToCalibration?.(c.id); }}
+                  className="w-full text-left px-4 py-3 hover:bg-gray-50"
+                  title="교정관리의 해당 기기로 이동">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-sm font-semibold text-gray-800 truncate">{c.name}</p>
                     <span className="text-xs text-gray-400 shrink-0">{c._date.slice(5).replace('-', '/')}</span>
