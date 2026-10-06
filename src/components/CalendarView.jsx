@@ -2285,13 +2285,11 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
           {/* 년/월 표시 + 이전/다음 (달력 테두리 안, 인쇄 시에도 표시) + 우측에 모니터링/교정/AHU
               요약(클릭하면 각각 팝업)을 함께 배치해 별도 줄 없이 한 줄로 보여준다. 요약은
               인쇄 대상이 아니므로 print:hidden. */}
-          <div className="cal-monthbar flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-100 flex-wrap">
-            <div className="flex items-center gap-4">
-              <button onClick={prevMonth} className="print:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-xl leading-none">‹</button>
-              <span className="text-2xl font-bold text-gray-900 min-w-[160px] text-center">{year}년 {MONTH_KR[month - 1]}</span>
-              <button onClick={nextMonth} className="print:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-xl leading-none">›</button>
-            </div>
-            <div className="print:hidden flex items-center gap-2 flex-wrap">
+          {/* 3열 그리드로 배치해 왼쪽/오른쪽 칩 너비가 서로 달라도 가운데 열(년/월)이
+              항상 행의 정중앙에 오도록 한다 — flex justify-between은 양쪽 내용 너비가
+              다르면 가운데 글자가 가운데에서 밀려 보인다. */}
+          <div className="cal-monthbar grid grid-cols-3 items-center gap-3 px-4 py-3 border-b border-gray-100">
+            <div className="print:hidden flex items-center gap-2 flex-wrap justify-start">
               <button type="button" onClick={() => setShowMonPopup(true)}
                 className="flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full border border-gray-200 hover:bg-gray-50 transition-colors">
                 <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
@@ -2299,6 +2297,13 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                 }`}>{monCompleteRate}%</span>
                 <span className="text-xs text-gray-600 whitespace-nowrap">모니터링 {monthDoneRows.length}/{monthTableRows.length}</span>
               </button>
+            </div>
+            <div className="flex items-center justify-center gap-4">
+              <button onClick={prevMonth} className="print:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-xl leading-none">‹</button>
+              <span className="text-2xl font-bold text-gray-900 min-w-[160px] text-center">{year}년 {MONTH_KR[month - 1]}</span>
+              <button onClick={nextMonth} className="print:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-xl leading-none">›</button>
+            </div>
+            <div className="print:hidden flex items-center gap-2 flex-wrap justify-end">
               <button type="button" onClick={() => setShowCalibPopup(true)}
                 className="flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full border border-gray-200 hover:bg-gray-50 transition-colors">
                 <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
