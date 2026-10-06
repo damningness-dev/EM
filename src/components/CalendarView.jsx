@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef, useImperativeHandle, forwardRef, Fragment } from 'react';
-import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchScheduleAssignees, setScheduleAssignee, fetchMembers, fetchTempSchedules, addTempSchedule, deleteTempSchedule, updateTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload, exportScheduleExcelTable, printDoc } from '../lib/api';
+import { fetchCalibration, fetchZones, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchScheduleAssignees, setScheduleAssignee, fetchMembers, fetchTempSchedules, addTempSchedule, deleteTempSchedule, updateTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload, exportScheduleExcelTable, printDoc } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
@@ -145,7 +145,6 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
 
   const [calibration, setCalibration] = useState([]);
   const [zones, setZones] = useState([]);
-  const [monitoring, setMonitoring] = useState({});
   const [annualPlan, setAnnualPlan] = useState({});
   const [loading, setLoading] = useState(true);
   const [showOrderManager, setShowOrderManager] = useState(false);
@@ -312,6 +311,8 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   });
   const [optimizing, setOptimizing] = useState(false);
   const [calSettingsPopup, setCalSettingsPopup] = useState(false);
+  const [showMonPopup, setShowMonPopup] = useState(false); // 상단 "모니터링" 카드 클릭 시 하단 현황을 팝업으로
+  const [showCalibPopup, setShowCalibPopup] = useState(false); // 상단 "교정 예정일" 카드 클릭 시 이번 달 교정 목록을 팝업으로
   const [weekStart, setWeekStart] = useState(() => {
     try { return localStorage.getItem('em-week-start') || 'sun'; } catch { return 'sun'; }
   });
@@ -442,11 +443,9 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     setSelectedDay(null);
     Promise.all([
       fetchCalibration(),
-      fetchMonitoringData(year, month),
       fetchAnnualPlan(year),
-    ]).then(([cal, mon, plan]) => {
+    ]).then(([cal, plan]) => {
       setCalibration(cal);
-      setMonitoring(mon);
       setAnnualPlan(plan);
       setLoading(false);
     }).catch(() => setLoading(false));
@@ -469,9 +468,9 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   // 임시일정은 덮어쓰지 않는다 (초안 유실 방지). 나머지는 초안과 무관하므로 항상 반영.
   async function reloadZonesGroups() {
     try {
-      const [zns, grps, hols, comps, temps, blocked, cal, mon, plan, schedCfg, tds, assigns] = await Promise.all([
+      const [zns, grps, hols, comps, temps, blocked, cal, plan, schedCfg, tds, assigns] = await Promise.all([
         fetchZones(), fetchGroups(), fetchHolidays(), fetchCompletions(), fetchTempSchedules(),
-        fetchBlockedDates(), fetchCalibration(), fetchMonitoringData(year, month), fetchAnnualPlan(year),
+        fetchBlockedDates(), fetchCalibration(), fetchAnnualPlan(year),
         fetchScheduleConfig(), fetchTodos(), fetchScheduleAssignees(),
       ]);
       setGroups(grps);
@@ -479,7 +478,6 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
       setCompletions(new Set(comps.map(c => `${c.zoneId}_${c.num}`)));
       setAssignees(assigns || {});
       setCalibration(cal);
-      setMonitoring(mon);
       setAnnualPlan(plan);
       if (schedCfg) {
         const merged = mergeScheduleConfig(schedCfg);
@@ -867,10 +865,6 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     return Object.values(groupMap);
   }, [zones]);
 
-  // Monitoring stats
-  const completedCount = zones.filter(z => monitoring[z.id]).length;
-  const monRate = zones.length ? Math.round(completedCount / zones.length * 100) : 0;
-
   // AHU tasks this month
   const allAhuEntries = Object.entries(annualPlan)
     .filter(([, val]) => val.planned)
@@ -895,7 +889,12 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   const totalMonthSchedule = Object.entries(scheduleByDate)
     .filter(([k]) => k.startsWith(curMonthPrefix))
     .reduce((sum, [, arr]) => sum + arr.length, 0);
-  const calibThisMonthCount = Object.keys(calibByDate).filter(k => k.startsWith(curMonthPrefix)).length;
+  // 이번 달 교정 예정 목록 — 상단 "교정 예정일" 카드를 누르면 팝업으로 보여준다.
+  const calibMonthItems = Object.entries(calibByDate)
+    .filter(([k]) => k.startsWith(curMonthPrefix))
+    .flatMap(([date, items]) => items.map(c => ({ ...c, _date: date })))
+    .sort((a, b) => a._date.localeCompare(b._date));
+  const calibThisMonthCount = calibMonthItems.length;
 
   // 모니터링 현황 패널: 이번 달 측정 일정(회차 단위)을 완료/예정으로 나눠 탭으로 보여준다.
   const monthDoneRows = monthTableRows.filter(r => completions.has(`${r.zone.id}_${r.measurement.num}`));
@@ -2280,45 +2279,40 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
         </div>
       </div>
 
-      {/* Summary bar */}
-      <div className="grid grid-cols-3 gap-3">
-        <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center gap-3">
-          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${
-            monRate === 100 ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'
-          }`}>{monRate}%</div>
-          <div>
-            <p className="text-xs text-gray-500">모니터링</p>
-            <p className="text-sm font-semibold text-gray-700">{completedCount}/{zones.length} 구역</p>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center gap-3">
-          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${
-            calibThisMonthCount > 0 ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-400'
-          }`}>{calibThisMonthCount}</div>
-          <div>
-            <p className="text-xs text-gray-500">교정 예정일</p>
-            <p className="text-sm font-semibold text-gray-700">이번달</p>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-200 px-4 py-3 flex items-center gap-3">
-          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${
-            currentMonthAhuTasks.length > 0 ? 'bg-purple-100 text-purple-600' : 'bg-gray-100 text-gray-400'
-          }`}>{currentMonthAhuTasks.filter(t => t.done).length}/{currentMonthAhuTasks.length}</div>
-          <div>
-            <p className="text-xs text-gray-500">AHU 계획</p>
-            <p className="text-sm font-semibold text-gray-700">완료/예정</p>
-          </div>
-        </div>
-      </div>
-
       <div className="flex gap-5">
         {/* Calendar */}
         <div ref={printAreaRef} className="flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden min-w-0 print-area">
-          {/* 년/월 표시 + 이전/다음 (달력 테두리 안, 인쇄 시에도 표시) */}
-          <div className="cal-monthbar flex items-center justify-center gap-4 px-4 py-3 border-b border-gray-100">
-            <button onClick={prevMonth} className="print:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-xl leading-none">‹</button>
-            <span className="text-2xl font-bold text-gray-900 min-w-[160px] text-center">{year}년 {MONTH_KR[month - 1]}</span>
-            <button onClick={nextMonth} className="print:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-xl leading-none">›</button>
+          {/* 년/월 표시 + 이전/다음 (달력 테두리 안, 인쇄 시에도 표시) + 우측에 모니터링/교정/AHU
+              요약(클릭하면 각각 팝업)을 함께 배치해 별도 줄 없이 한 줄로 보여준다. 요약은
+              인쇄 대상이 아니므로 print:hidden. */}
+          <div className="cal-monthbar flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-100 flex-wrap">
+            <div className="flex items-center gap-4">
+              <button onClick={prevMonth} className="print:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-xl leading-none">‹</button>
+              <span className="text-2xl font-bold text-gray-900 min-w-[160px] text-center">{year}년 {MONTH_KR[month - 1]}</span>
+              <button onClick={nextMonth} className="print:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-xl leading-none">›</button>
+            </div>
+            <div className="print:hidden flex items-center gap-2 flex-wrap">
+              <button type="button" onClick={() => setShowMonPopup(true)}
+                className="flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full border border-gray-200 hover:bg-gray-50 transition-colors">
+                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                  monCompleteRate === 100 ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'
+                }`}>{monCompleteRate}%</span>
+                <span className="text-xs text-gray-600 whitespace-nowrap">모니터링 {monthDoneRows.length}/{monthTableRows.length}</span>
+              </button>
+              <button type="button" onClick={() => setShowCalibPopup(true)}
+                className="flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full border border-gray-200 hover:bg-gray-50 transition-colors">
+                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                  calibThisMonthCount > 0 ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-400'
+                }`}>{calibThisMonthCount}</span>
+                <span className="text-xs text-gray-600 whitespace-nowrap">교정예정 {calibThisMonthCount}건</span>
+              </button>
+              <div className="flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full border border-gray-200">
+                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                  currentMonthAhuTasks.length > 0 ? 'bg-purple-100 text-purple-600' : 'bg-gray-100 text-gray-400'
+                }`}>{currentMonthAhuTasks.filter(t => t.done).length}/{currentMonthAhuTasks.length}</span>
+                <span className="text-xs text-gray-600 whitespace-nowrap">AHU 완료/예정</span>
+              </div>
+            </div>
           </div>
           {viewMode === 'table' ? (
             <ScheduleTable rows={visibleTableRows} completions={completions} assignees={assignees}
@@ -2452,14 +2446,13 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                     })()}
 
                     <div className={`cal-events flex flex-col gap-0.5 ${isOther ? 'opacity-50' : ''}`}>
-                      {calibEvts.map((c, i) => (
+                      {calibEvts.length > 0 && (
                         <div
-                          key={`c${i}`}
                           className="text-xs px-1 py-0.5 rounded truncate"
                           style={getCalibChipStyle()}
-                          title={`${c.name} (${dDayText(c.next_calib_date)})`}
-                        >{c.name}</div>
-                      ))}
+                          title={calibEvts.map(c => `${c.name} (${dDayText(c.next_calib_date)})`).join('\n')}
+                        >교정일정 {calibEvts.length}건</div>
+                      )}
                       {/* 임시일정은 항상 정규 일정보다 위에 표시 */}
                       {tempEvts.map((t, i) => (
                         <div
@@ -2831,77 +2824,114 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
       {/* Monitoring progress — 이번 달 측정 일정을 구역별로 묶어 완료 현황을 보여준다.
           달력 아래 전체 너비로 배치. 항목을 클릭하면 해당 날짜를 선택하고, 우측
           일정확인창과 달력의 해당 날짜 셀이 잠깐 빨갛게 깜빡여 어디인지 바로 보여준다. */}
-      {monthTableRows.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
-            <p className="text-xs font-semibold text-gray-600">📋 모니터링 현황</p>
-            <span className={`text-xs font-bold ${monCompleteRate === 100 ? 'text-green-600' : 'text-blue-600'}`}>{monCompleteRate}%</span>
-          </div>
-          <div className="px-4 pt-3">
-            <div className="w-full bg-gray-100 rounded-full h-2 mb-2 overflow-hidden">
-              <div className={`h-2 rounded-full ${monCompleteRate === 100 ? 'bg-green-500' : 'bg-blue-500'}`} style={{ width: `${monCompleteRate}%` }} />
-            </div>
-            <p className="text-xs text-gray-500 mb-2">이번 달 {monthTableRows.length}건 중 {monthDoneRows.length}건 완료</p>
-          </div>
-          <div className="flex border-b border-gray-100">
-            {[
-              { key: 'all', label: `전체 ${monthTableRows.length}` },
-              { key: 'done', label: `측정완료 ${monthDoneRows.length}` },
-              { key: 'pending', label: `예정 ${monthPendingRows.length}` },
-            ].map(t => (
-              <button
-                key={t.key}
-                onClick={() => setMonTab(t.key)}
-                className={`flex-1 py-1.5 text-[11px] font-medium border-b-2 -mb-px transition-colors ${
-                  monTab === t.key ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'
-                }`}
-              >{t.label}</button>
-            ))}
-          </div>
-          <div className="divide-y divide-gray-50 overflow-y-auto" style={{ maxHeight: calHeight ? `${calHeight}px` : '480px' }}>
-            {monTabZoneGroups.length === 0 ? (
-              <p className="px-4 py-4 text-xs text-gray-400 text-center">해당 항목이 없습니다.</p>
-            ) : monTabZoneGroups.map(g => (
-              <div key={g.zone.id} className="px-4 py-2.5">
-                {editingZoneNameId === g.zone.id ? (
-                  <input
-                    autoFocus
-                    className="text-xs font-medium text-gray-800 border border-blue-400 rounded px-1.5 py-0.5 mb-1.5 w-full focus:outline-none"
-                    value={editingZoneName}
-                    onChange={e => setEditingZoneName(e.target.value)}
-                    onClick={e => e.stopPropagation()}
-                    onKeyDown={e => { if (e.key === 'Enter') renameZoneGroup(g.zone, editingZoneName); if (e.key === 'Escape') setEditingZoneNameId(null); }}
-                    onBlur={() => renameZoneGroup(g.zone, editingZoneName)}
-                  />
-                ) : (
-                  <p
-                    className="text-xs font-medium text-gray-700 mb-1.5 truncate cursor-text"
-                    title="더블클릭하여 구역명 수정"
-                    onDoubleClick={() => { if (requireAdmin()) { setEditingZoneNameId(g.zone.id); setEditingZoneName(g.zone.name); } }}
-                  >{g.zone.name}[{g.zone.grade}]</p>
-                )}
-                <div className="flex flex-wrap gap-1.5">
-                  {g.occurrences.map((occ, i) => {
-                    const isDone = completions.has(`${g.zone.id}_${occ.measurement.num}`);
-                    return (
-                      <button
-                        key={`${occ.zone.id}-${occ.measurement.num}-${i}`}
-                        onClick={() => flashItem(occ)}
-                        className={`text-[11px] px-1.5 py-0.5 rounded border flex items-center gap-1 transition-colors ${
-                          isDone ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
-                        } ${flashTarget?.zoneId === occ.zone.id && flashTarget?.num === occ.measurement.num ? 'flash-highlight' : ''}`}
-                        title={`${g.zone.name}[${g.zone.grade}] · ${occ.ds}${isDone ? ' [완료]' : ''}`}
-                      >
-                        <span>{isDone ? '✓' : '○'}</span>
-                        <span className="font-medium">{occ.monthIdx}/{occ.monthTotal}</span>
-                        <span className="text-gray-400">{occ.ds.slice(2).replace(/-/g, '/')}</span>
-                        <span className="text-gray-400">#{occ.measurement.num}/{totalCount(occ.zone)}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+      {showMonPopup && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[150] p-4" onClick={() => setShowMonPopup(false)}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50 flex items-center justify-between shrink-0">
+              <p className="text-xs font-semibold text-gray-600">📋 모니터링 현황</p>
+              <div className="flex items-center gap-2">
+                <span className={`text-xs font-bold ${monCompleteRate === 100 ? 'text-green-600' : 'text-blue-600'}`}>{monCompleteRate}%</span>
+                <button onClick={() => setShowMonPopup(false)} className="text-gray-400 hover:text-gray-700 text-lg leading-none">✕</button>
               </div>
-            ))}
+            </div>
+            <div className="px-4 pt-3 shrink-0">
+              <div className="w-full bg-gray-100 rounded-full h-2 mb-2 overflow-hidden">
+                <div className={`h-2 rounded-full ${monCompleteRate === 100 ? 'bg-green-500' : 'bg-blue-500'}`} style={{ width: `${monCompleteRate}%` }} />
+              </div>
+              <p className="text-xs text-gray-500 mb-2">이번 달 {monthTableRows.length}건 중 {monthDoneRows.length}건 완료</p>
+            </div>
+            <div className="flex border-b border-gray-100 shrink-0">
+              {[
+                { key: 'all', label: `전체 ${monthTableRows.length}` },
+                { key: 'done', label: `측정완료 ${monthDoneRows.length}` },
+                { key: 'pending', label: `예정 ${monthPendingRows.length}` },
+              ].map(t => (
+                <button
+                  key={t.key}
+                  onClick={() => setMonTab(t.key)}
+                  className={`flex-1 py-1.5 text-[11px] font-medium border-b-2 -mb-px transition-colors ${
+                    monTab === t.key ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'
+                  }`}
+                >{t.label}</button>
+              ))}
+            </div>
+            <div className="divide-y divide-gray-50 overflow-y-auto flex-1">
+              {monTabZoneGroups.length === 0 ? (
+                <p className="px-4 py-4 text-xs text-gray-400 text-center">해당 항목이 없습니다.</p>
+              ) : monTabZoneGroups.map(g => (
+                <div key={g.zone.id} className="px-4 py-2.5">
+                  {editingZoneNameId === g.zone.id ? (
+                    <input
+                      autoFocus
+                      className="text-xs font-medium text-gray-800 border border-blue-400 rounded px-1.5 py-0.5 mb-1.5 w-full focus:outline-none"
+                      value={editingZoneName}
+                      onChange={e => setEditingZoneName(e.target.value)}
+                      onClick={e => e.stopPropagation()}
+                      onKeyDown={e => { if (e.key === 'Enter') renameZoneGroup(g.zone, editingZoneName); if (e.key === 'Escape') setEditingZoneNameId(null); }}
+                      onBlur={() => renameZoneGroup(g.zone, editingZoneName)}
+                    />
+                  ) : (
+                    <p
+                      className="text-xs font-medium text-gray-700 mb-1.5 truncate cursor-text"
+                      title="더블클릭하여 구역명 수정"
+                      onDoubleClick={() => { if (requireAdmin()) { setEditingZoneNameId(g.zone.id); setEditingZoneName(g.zone.name); } }}
+                    >{g.zone.name}[{g.zone.grade}]</p>
+                  )}
+                  <div className="flex flex-wrap gap-1.5">
+                    {g.occurrences.map((occ, i) => {
+                      const isDone = completions.has(`${g.zone.id}_${occ.measurement.num}`);
+                      return (
+                        <button
+                          key={`${occ.zone.id}-${occ.measurement.num}-${i}`}
+                          onClick={() => { flashItem(occ); setShowMonPopup(false); }}
+                          className={`text-[11px] px-1.5 py-0.5 rounded border flex items-center gap-1 transition-colors ${
+                            isDone ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
+                          } ${flashTarget?.zoneId === occ.zone.id && flashTarget?.num === occ.measurement.num ? 'flash-highlight' : ''}`}
+                          title={`${g.zone.name}[${g.zone.grade}] · ${occ.ds}${isDone ? ' [완료]' : ''}`}
+                        >
+                          <span>{isDone ? '✓' : '○'}</span>
+                          <span className="font-medium">{occ.monthIdx}/{occ.monthTotal}</span>
+                          <span className="text-gray-400">{occ.ds.slice(2).replace(/-/g, '/')}</span>
+                          <span className="text-gray-400">#{occ.measurement.num}/{totalCount(occ.zone)}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCalibPopup && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[150] p-4" onClick={() => setShowCalibPopup(false)}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[85vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50 flex items-center justify-between shrink-0">
+              <p className="text-xs font-semibold text-gray-600">🔧 이번 달 교정 예정</p>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-orange-600">{calibThisMonthCount}건</span>
+                <button onClick={() => setShowCalibPopup(false)} className="text-gray-400 hover:text-gray-700 text-lg leading-none">✕</button>
+              </div>
+            </div>
+            <div className="divide-y divide-gray-50 overflow-y-auto flex-1">
+              {calibMonthItems.length === 0 ? (
+                <p className="px-4 py-4 text-xs text-gray-400 text-center">이번 달 교정 예정이 없습니다.</p>
+              ) : calibMonthItems.map(c => (
+                <button key={`${c.id}-${c._date}`} type="button"
+                  onClick={() => { setSelectedDay(c._date); setShowCalibPopup(false); }}
+                  className="w-full text-left px-4 py-3 hover:bg-gray-50">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-semibold text-gray-800 truncate">{c.name}</p>
+                    <span className="text-xs text-gray-400 shrink-0">{c._date.slice(5).replace('-', '/')}</span>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-0.5">S/N: {c.sn || '-'}</p>
+                  <p className={`text-xs font-bold mt-1 ${
+                    differenceInDays(parseISO(c.next_calib_date), today) < 0 ? 'text-red-600' : 'text-orange-500'
+                  }`}>{dDayText(c.next_calib_date)}</p>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}
