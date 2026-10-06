@@ -62,9 +62,11 @@ function fmtDateTime(iso) {
 
 // 마우스를 올리면 보이는 전체 진행 이력 — 완료 여부와 무관하게 항상 견적서요청부터
 // 모든 단계를 나열해, 어디까지 왔고 무엇이 남았는지 한눈에 보이게 한다.
-function progressTooltip(item) {
-  const log = item.progressLog || [];
-  const header = item.progressType ? `구분: ${item.progressType}\n` : '';
+// hist: 진행상황이 매여 있는 연도별 교정내역 한 건(= latestHistory(item)).
+function progressTooltip(hist) {
+  if (!hist) return '등록된 연도별 교정내역이 없습니다.';
+  const log = hist.progressLog || [];
+  const header = `${hist.year}년 내역${hist.progressType ? ` · 구분: ${hist.progressType}` : ''}\n`;
   return header + PROGRESS_STAGES.map(stage => {
     const entry = log.find(l => l.stage === stage);
     if (!entry) return `${stage}: 대기`;
@@ -348,31 +350,34 @@ export default function Calibration({ adminUnlocked, jumpTarget, onJumpTargetCon
   }
 
   // ─── 교정 진행상황 — 다음 단계로 전진 ───
-  // 단계별로 담당자 이름 외에 추가로 받아야 하는 정보가 있다 — 처음 견적서를
-  // 요청할 때는 교정/수리 구분·업체(또는 담당자) 연락처·사유를, 교정일정을
-  // 확인할 때는 실제 교정예정일을 함께 받아 기록해둔다.
-  function askAdvanceProgress(item, stage) {
+  // 진행상황은 기기 하나가 아니라 "연도별 교정내역"의 특정 회차(버전)에 매인다 —
+  // 매년 새로 교정할 때마다 견적서요청부터 다시 진행하는 별개의 절차이기 때문이다.
+  // 항상 최신 내역(latestHistory)에 매칭한다. 단계별로 담당자 이름 외에 추가로
+  // 받아야 하는 정보가 있다 — 처음 견적서를 요청할 때는 교정/수리 구분·업체(또는
+  // 담당자) 연락처·사유를, 교정일정을 확인할 때는 실제 교정예정일을 함께 기록한다.
+  function askAdvanceProgress(item, hist, stage) {
     if (!adminUnlocked) { showNotice('관리자 잠금 해제가 필요합니다.', true); return; }
+    if (!hist) { showNotice('먼저 "+ 내역 추가"로 연도별 교정내역을 등록하세요.', true); return; }
     setProgressBy('');
     setProgressType('');
     setProgressContact('');
     setProgressReason('');
     setProgressDate('');
-    setProgressPrompt({ item, stage });
+    setProgressPrompt({ item, histId: hist.id, stage });
   }
   async function confirmAdvanceProgress() {
-    const { item, stage } = progressPrompt;
+    const { item, histId, stage } = progressPrompt;
     const by = progressBy.trim();
     if (!by) { showNotice('담당자 이름을 입력하세요.', true); return; }
     const entry = { stage, by, at: new Date().toISOString() };
-    const patch = { progressStage: stage };
+    const histPatch = { progressStage: stage };
     if (stage === '견적서요청') {
       if (!progressType) { showNotice('교정/수리 구분을 선택하세요.', true); return; }
       const contact = progressContact.trim();
       if (!contact) { showNotice('연락처를 입력하세요.', true); return; }
       const reason = progressReason.trim();
       if (!reason) { showNotice('사유를 입력하세요.', true); return; }
-      patch.progressType = progressType;
+      histPatch.progressType = progressType;
       entry.contact = contact;
       entry.reason = reason;
     }
@@ -381,9 +386,12 @@ export default function Calibration({ adminUnlocked, jumpTarget, onJumpTargetCon
       entry.scheduledDate = progressDate;
     }
     setProgressPrompt(null);
-    const log = [...(item.progressLog || []), entry];
+    const history = (item.history || []).map(h => {
+      if (h.id !== histId) return h;
+      return { ...h, ...histPatch, progressLog: [...(h.progressLog || []), entry] };
+    });
     try {
-      const saved = await upsertCalibration(stripDday({ ...item, ...patch, progressLog: log }));
+      const saved = await upsertCalibration(stripDday({ ...item, history }));
       setData(prev => prev.map(d => d.id === item.id ? saved : d));
       window.electronAPI?.notifyDataChanged?.();
       syncAfterChange();
@@ -433,19 +441,23 @@ export default function Calibration({ adminUnlocked, jumpTarget, onJumpTargetCon
   // 그대로 버튼 글자로 보여준다). 마우스를 올리면 견적서요청부터 전체 이력이
   // 툴팁으로 보인다.
   function renderProgressCell(item) {
-    const curIdx = item.progressStage ? PROGRESS_STAGES.indexOf(item.progressStage) : -1;
+    const hist = latestHistory(item);
+    if (!hist) {
+      return <span className="text-[11px] text-gray-300 whitespace-nowrap">교정내역 없음</span>;
+    }
+    const curIdx = hist.progressStage ? PROGRESS_STAGES.indexOf(hist.progressStage) : -1;
     const next = PROGRESS_STAGES[curIdx + 1];
     return (
-      <div className="flex flex-col items-center gap-1" title={progressTooltip(item)}>
+      <div className="flex flex-col items-center gap-1" title={progressTooltip(hist)}>
         <span className={`px-1.5 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap ${
-          item.progressStage === '완료' ? 'bg-green-50 text-green-600'
-            : item.progressStage ? 'bg-blue-50 text-blue-600'
+          hist.progressStage === '완료' ? 'bg-green-50 text-green-600'
+            : hist.progressStage ? 'bg-blue-50 text-blue-600'
             : 'bg-gray-50 text-gray-400'
         }`}>
-          {item.progressType ? `[${item.progressType}] ` : ''}{item.progressStage || '시작 전'}
+          {hist.progressType ? `[${hist.progressType}] ` : ''}{hist.progressStage || '시작 전'}
         </span>
         {next && (
-          <button onClick={() => askAdvanceProgress(item, next)} disabled={!adminUnlocked}
+          <button onClick={() => askAdvanceProgress(item, hist, next)} disabled={!adminUnlocked}
             className="px-1.5 py-0.5 rounded border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 disabled:opacity-40 disabled:cursor-not-allowed text-[11px] font-medium whitespace-nowrap"
             title={adminUnlocked ? `다음 단계: ${next}` : '관리자 잠금 해제가 필요합니다'}>{next}</button>
         )}
