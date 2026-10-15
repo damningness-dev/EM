@@ -1684,13 +1684,38 @@ function registerHandlers() {
   // filePath(로컬 원본) → 이 PC 캐시 → 공유 첨부파일 Gist(다운로드+캐시 저장) 순으로
   // 실제 파일을 찾아 로컬 경로를 반환한다. calibFile:open(외부 뷰어로 열기)과
   // calibFile:resolveImage(앱 안에서 바로 보여주기) 둘 다 이 로직을 함께 쓴다.
+  // 저장된 절대경로에 파일이 없을 때(파일명을 바꿨거나, 업데이트·재설치로 데이터 폴더 경로가
+  // 달라졌거나, 다른 PC에서 올린 경로일 때) 이 PC의 첨부파일 폴더에서 같은 이름의 파일을 찾는다.
+  // 정확히 같은 이름 → 없으면 " (2)" 같은 번호 꼬리표만 다른 이름 순으로 찾고, 여러 개면 가장 최근 것.
+  function findAttachmentByName(category, filePath, fileName) {
+    try {
+      const dir = calibFilesDir(category);
+      const wanted = [...new Set([filePath && path.win32.basename(String(filePath)), fileName].filter(Boolean))];
+      for (const n of wanted) {
+        const exact = path.join(dir, String(n).replace(/[^\w.\-가-힣 ()]/g, '_'));
+        if (fs.existsSync(exact)) return exact;
+      }
+      const stemOf = (n) => path.parse(String(n)).name.replace(/ \(\d+\)$/, '').toLowerCase();
+      const extOf = (n) => path.parse(String(n)).ext.toLowerCase();
+      const want = wanted.map(n => ({ stem: stemOf(n), ext: extOf(n) }));
+      const hits = fs.readdirSync(dir)
+        .filter(f => want.some(w => stemOf(f) === w.stem && extOf(f) === w.ext))
+        .map(f => ({ f, t: fs.statSync(path.join(dir, f)).mtimeMs }))
+        .sort((a, b) => b.t - a.t);
+      return hits.length ? path.join(dir, hits[0].f) : null;
+    } catch { return null; }
+  }
+
   async function resolveAttachmentLocalPath({ filePath, gistKey, fileName, category }) {
     if (filePath && fs.existsSync(filePath)) return { ok: true, path: filePath };
-    if (!gistKey) return { ok: false, error: '파일을 찾을 수 없습니다' };
+    const byName = findAttachmentByName(category, filePath, fileName);
+    if (byName) return { ok: true, path: byName };
+    const missingName = fileName || (filePath && path.win32.basename(String(filePath))) || '';
+    if (!gistKey) return { ok: false, error: `파일을 찾을 수 없습니다${missingName ? ` (${missingName})` : ''}` };
     const cachePath = attachCachePath(category, gistKey, fileName);
     if (fs.existsSync(cachePath)) return { ok: true, path: cachePath };
     const data = loadData();
-    if (!data.attachGistId) return { ok: false, error: '파일을 찾을 수 없습니다 (공유된 첨부파일 없음)' };
+    if (!data.attachGistId) return { ok: false, error: `파일을 찾을 수 없습니다 (공유된 첨부파일 없음${missingName ? `: ${missingName}` : ''})` };
     const cfg = loadSyncConfig();
     const r = await ghRequest('GET', `https://api.github.com/gists/${data.attachGistId}`, { token: effectiveToken(cfg) || undefined });
     const file = r.json.files && r.json.files[gistKey];
