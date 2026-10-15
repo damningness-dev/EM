@@ -2951,24 +2951,24 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
         const combined = isCombinedCat(zone.category);
         const major = getMajorCat(zone.category);
         const ptBadges = combined
-          ? ((zone.points_float || 0) > 0 ? [{ k: 'c', name: major, v: zone.points_float, cls: 'bg-purple-50 text-purple-700 border-purple-200' }] : [])
+          ? ((zone.points_float || 0) > 0 ? [{ k: 'c', name: major, v: zone.points_float, cls: 'bg-purple-500/20 text-purple-200 border-purple-400/40' }] : [])
           : [
-              { k: 'f', name: '부유균', v: zone.points_float, cls: 'bg-blue-50 text-blue-700 border-blue-200' },
-              { k: 'l', name: '낙하균', v: zone.points_fall, cls: 'bg-orange-50 text-orange-700 border-orange-200' },
-              { k: 's', name: '표면균', v: zone.points_surface, cls: 'bg-green-50 text-green-700 border-green-200' },
-              { k: 'p', name: '부유입자', v: zone.points_particle, cls: 'bg-pink-50 text-pink-700 border-pink-200' },
+              { k: 'f', name: '부유균', v: zone.points_float, cls: 'bg-blue-500/20 text-blue-200 border-blue-400/40' },
+              { k: 'l', name: '낙하균', v: zone.points_fall, cls: 'bg-orange-500/20 text-orange-200 border-orange-400/40' },
+              { k: 's', name: '표면균', v: zone.points_surface, cls: 'bg-green-500/20 text-green-200 border-green-400/40' },
+              { k: 'p', name: '부유입자', v: zone.points_particle, cls: 'bg-pink-500/20 text-pink-200 border-pink-400/40' },
             ].filter(b => (b.v || 0) > 0);
         const flags = [
-          isDone && { t: '완료', cls: 'bg-green-100 text-green-700' },
-          !isDone && measurement.isFirst && { t: '첫 측정', cls: 'bg-emerald-100 text-emerald-700' },
-          !isDone && measurement.isLast && { t: '마지막 측정', cls: 'bg-red-100 text-red-600' },
-          mine && { t: '내 담당', cls: 'bg-indigo-100 text-indigo-700' },
-          measurement.spanMonths > 1 && { t: measurement.spanMonths === 3 ? '분기' : measurement.spanMonths === 6 ? '반기' : measurement.spanMonths === 12 ? '연' : `${measurement.spanMonths}개월`, cls: 'bg-indigo-50 text-indigo-500' },
+          isDone && { t: '완료', cls: 'bg-green-500/20 text-green-300' },
+          !isDone && measurement.isFirst && { t: '첫 측정', cls: 'bg-emerald-500/20 text-emerald-300' },
+          !isDone && measurement.isLast && { t: '마지막 측정', cls: 'bg-red-500/20 text-red-300' },
+          mine && { t: '내 담당', cls: 'bg-indigo-500/25 text-indigo-200' },
+          measurement.spanMonths > 1 && { t: measurement.spanMonths === 3 ? '분기' : measurement.spanMonths === 6 ? '반기' : measurement.spanMonths === 12 ? '연' : `${measurement.spanMonths}개월`, cls: 'bg-indigo-500/20 text-indigo-300' },
         ].filter(Boolean);
         return (
-          <div className="fixed z-[180] pointer-events-none w-72 bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden"
+          <div className="fixed z-[180] pointer-events-none w-72 bg-gray-900 text-gray-100 rounded-xl shadow-2xl border border-gray-700 overflow-hidden"
             style={{ left: hoverTip.x, top: hoverTip.flip ? hoverTip.top : hoverTip.y, transform: hoverTip.flip ? 'translateY(-100%)' : undefined }}>
-            <div className="px-3 py-2 border-b border-gray-100">
+            <div className="px-3 py-2 border-b border-gray-700">
               <span className="inline-block max-w-full truncate text-xs font-semibold px-1.5 py-0.5 rounded" style={getChipStyle(zone.category, zone.grade)}>
                 {zone.name}[{zone.grade}]-{measurement.num}
               </span>
@@ -2979,14 +2979,14 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
               )}
             </div>
             <div className="px-3 py-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-              <span className="text-gray-400">측정일</span>
-              <span className="text-gray-700 font-medium">{format(measurement.date, 'yyyy-MM-dd')}</span>
-              <span className="text-gray-400">회차</span>
-              <span className="text-gray-700 font-medium">{measurement.num}/{totalCount(zone) || measurement.num}회</span>
-              {who && (<><span className="text-gray-400">담당자</span><span className="text-gray-700 font-medium">{who}</span></>)}
+              <span className="text-gray-500">측정일</span>
+              <span className="text-gray-100 font-medium">{format(measurement.date, 'yyyy-MM-dd')}</span>
+              <span className="text-gray-500">회차</span>
+              <span className="text-gray-100 font-medium">{measurement.num}/{totalCount(zone) || measurement.num}회</span>
+              {who && (<><span className="text-gray-500">담당자</span><span className="text-gray-100 font-medium">{who}</span></>)}
             </div>
             <div className="px-3 pb-2.5">
-              <p className="text-[10px] text-gray-400 mb-1">측정 포인트</p>
+              <p className="text-[10px] text-gray-500 mb-1">측정 포인트</p>
               {ptBadges.length > 0 ? (
                 <div className="flex flex-wrap gap-1">
                   {ptBadges.map(b => (
@@ -2994,7 +2994,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                   ))}
                 </div>
               ) : (
-                <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-red-50 text-red-600 border-red-200">{noPts ? '포인트 입력 필요' : '포인트 없음'}</span>
+                <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-red-500/20 text-red-300 border-red-400/40">{noPts ? '포인트 입력 필요' : '포인트 없음'}</span>
               )}
             </div>
           </div>
