@@ -2524,7 +2524,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                             onClick={(e) => e.stopPropagation()}
                             className={`text-xs rounded overflow-hidden flex items-stretch min-w-0 ${isDone ? 'opacity-60 cursor-default' : 'cursor-grab active:cursor-grabbing'} ${mine ? 'ring-2 ring-indigo-500' : ''} ${flashTarget?.zoneId === zone.id && flashTarget?.num === measurement.num ? 'flash-highlight' : ''}`}
                             style={getChipStyle(zone.category, zone.grade)}
-                            title={`${label}${mine ? ' [내 담당]' : ''}${noPts ? ' [포인트 입력 필요]' : ''}${isDone ? ' [완료]' : measurement.isFirst ? ' [첫 측정]' : measurement.isLast ? ' [마지막 측정]' : ''}`}
+                            title={`${label}${mine ? ' [내 담당]' : ''}${noPts ? ' [포인트 입력 필요]' : ''}${isDone ? ' [완료]' : measurement.isFirst ? ' [첫 측정]' : measurement.isLast ? ' [마지막 측정]' : ''}${zonePtTip(zone)}`}
                           >
                             {measurement.isFirst && <span className="w-1 shrink-0" style={{ backgroundColor: '#22c55e' }} />}
                             <span className={`truncate flex-1 px-1 py-0.5 ${isDone ? 'line-through' : ''} ${(measurement.isFirst || measurement.isLast) ? 'font-semibold' : ''}`}>
@@ -2921,7 +2921,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                           className={`text-[11px] px-1.5 py-0.5 rounded border flex items-center gap-1 transition-colors ${
                             isDone ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
                           } ${flashTarget?.zoneId === occ.zone.id && flashTarget?.num === occ.measurement.num ? 'flash-highlight' : ''}`}
-                          title={`${g.zone.name}[${g.zone.grade}] · ${occ.ds}${isDone ? ' [완료]' : ''}`}
+                          title={`${g.zone.name}[${g.zone.grade}] · ${occ.ds}${isDone ? ' [완료]' : ''}${zonePtTip(g.zone)}`}
                         >
                           <span>{isDone ? '✓' : '○'}</span>
                           <span className="font-medium">{occ.monthIdx}/{occ.monthTotal}</span>
@@ -3011,6 +3011,18 @@ function ptValue(zone, key) {
   if (key === 'nitro') return major === '질소가스' ? (zone.points_float || 0) : 0;
   if (key === 'comp') return major === '압축공기' ? (zone.points_float || 0) : 0;
   return isCombinedCat(zone.category) ? 0 : (zone[`points_${key}`] || 0);
+}
+// 툴팁용 포인트 요약 — "부유균 3 · 낙하균 2 · 표면균 4 · 부유입자 1" (통합 대분류는 질소/압축 하나)
+const PT_FULL = { float: '부유균', fall: '낙하균', surface: '표면균', particle: '부유입자' };
+function zonePtTip(zone) {
+  let parts;
+  if (isCombinedCat(zone.category)) {
+    const v = zone.points_float || 0;
+    parts = v > 0 ? [`${getMajorCat(zone.category)} ${v}`] : [];
+  } else {
+    parts = Object.entries(PT_FULL).map(([k, name]) => [name, zone[`points_${k}`] || 0]).filter(([, v]) => v > 0).map(([name, v]) => `${name} ${v}`);
+  }
+  return `\n포인트: ${parts.length ? parts.join(' · ') : '미입력'}`;
 }
 const SCHED_COL_META = {
   date: { label: '날짜', w: 92, align: 'left' },
