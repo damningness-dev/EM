@@ -667,6 +667,30 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     return rows;
   }, [scheduleByDate, year, month, zoneOrderRank]);
 
+  // 모니터링 현황(팝업·상단 칩) 전용 목록 — 이번 달에 측정일이 잡힌 회차 + 측정일은 다른
+  // 달이지만 이번 달이 그 측정의 허용 기간(분기·반기·년 창) 안에 들어가는 회차까지 포함한다.
+  // 분기 측정은 그 분기 3개월 어느 달에 해도 되므로, 측정일이 다른 달에 있어도 이번 달
+  // 현황에서 빠지면 누락처럼 보인다. 완료 여부는 회차 단위라, 어느 달에 측정했든 그 분기의
+  // 모든 달에서 완료로 보인다. 표 보기·엑셀 내보내기는 중복 집계를 피하려고 monthTableRows를 그대로 쓴다.
+  const monitorRows = useMemo(() => {
+    const prefix = `${year}-${String(month).padStart(2, '0')}-`;
+    const monthStart = new Date(year, month - 1, 1);
+    const monthEnd = new Date(year, month, 0, 23, 59, 59);
+    const rows = [];
+    Object.entries(scheduleByDate).forEach(([ds, arr]) => {
+      const inMonth = ds.startsWith(prefix);
+      arr.forEach(({ zone, measurement }) => {
+        if (inMonth) { rows.push({ ds, zone, measurement }); return; }
+        if (!(measurement.spanMonths > 1)) return;
+        const { min, max } = getDragBounds({ type: 'monthly', baseDate: measurement.baseDate, spanMonths: measurement.spanMonths });
+        if (min <= monthEnd && max >= monthStart) rows.push({ ds, zone, measurement, carried: true });
+      });
+    });
+    rows.sort((a, b) => a.ds.localeCompare(b.ds)
+      || (zoneOrderRank[a.zone.id] ?? 1e9) - (zoneOrderRank[b.zone.id] ?? 1e9));
+    return rows;
+  }, [scheduleByDate, year, month, zoneOrderRank]);
+
   // 로그인한 사람 본인 이름 — 담당자 배정과 대조해 "내 일정"을 가려낸다.
   const myName = currentMember?.username || '';
   const isMine = useCallback(
@@ -897,16 +921,16 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   const calibThisMonthCount = calibMonthItems.length;
 
   // 모니터링 현황 패널: 이번 달 측정 일정(회차 단위)을 완료/예정으로 나눠 탭으로 보여준다.
-  const monthDoneRows = monthTableRows.filter(r => completions.has(`${r.zone.id}_${r.measurement.num}`));
-  const monthPendingRows = monthTableRows.filter(r => !completions.has(`${r.zone.id}_${r.measurement.num}`));
-  const monCompleteRate = monthTableRows.length ? Math.round(monthDoneRows.length / monthTableRows.length * 100) : 0;
+  const monthDoneRows = monitorRows.filter(r => completions.has(`${r.zone.id}_${r.measurement.num}`));
+  const monthPendingRows = monitorRows.filter(r => !completions.has(`${r.zone.id}_${r.measurement.num}`));
+  const monCompleteRate = monitorRows.length ? Math.round(monthDoneRows.length / monitorRows.length * 100) : 0;
 
   // 구역별로 묶어서 보여준다 — 같은 구역이 이번 달에 여러 번 측정되면(측정주기가
   // 짧은 구역) 이번 달 기준 순번/총회차를 "1/2"처럼 표시한다(전체 일정의 회차
   // 번호가 아니라 이번 달 안에서의 순번).
   const monthZoneGroups = useMemo(() => {
     const byZone = new Map();
-    monthTableRows.forEach(r => {
+    monitorRows.forEach(r => {
       if (!byZone.has(r.zone.id)) byZone.set(r.zone.id, { zone: r.zone, occurrences: [] });
       byZone.get(r.zone.id).occurrences.push(r);
     });
@@ -916,7 +940,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     });
     groups.sort((a, b) => (zoneOrderRank[a.zone.id] ?? 1e9) - (zoneOrderRank[b.zone.id] ?? 1e9) || a.zone.name.localeCompare(b.zone.name));
     return groups;
-  }, [monthTableRows, zoneOrderRank]);
+  }, [monitorRows, zoneOrderRank]);
 
   // 탭(전체/측정완료/예정)에 맞춰 각 구역의 회차만 걸러내고, 걸러진 회차가 하나도
   // 없는 구역은 목록에서 뺀다.
@@ -2291,11 +2315,16 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
           <div className="cal-monthbar grid grid-cols-3 items-center gap-3 px-4 py-3 border-b border-gray-100">
             <div className="print:hidden flex items-center gap-2 flex-wrap justify-start">
               <button type="button" onClick={() => setShowMonPopup(true)}
-                className="flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full border border-gray-200 hover:bg-gray-50 transition-colors">
-                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                  monCompleteRate === 100 ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'
-                }`}>{monCompleteRate}%</span>
-                <span className="text-xs text-gray-600 whitespace-nowrap">모니터링 {monthDoneRows.length}/{monthTableRows.length}</span>
+                title="클릭하면 모니터링 현황 목록이 열립니다"
+                className="w-44 px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors text-left">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-xs text-gray-600 whitespace-nowrap">모니터링 {monthDoneRows.length}/{monitorRows.length}</span>
+                  <span className={`text-xs font-bold ${monCompleteRate === 100 ? 'text-green-600' : 'text-blue-600'}`}>{monCompleteRate}%</span>
+                </div>
+                <div className="mt-1 w-full h-2 rounded-full bg-gray-100 overflow-hidden">
+                  <div className={`h-2 rounded-full transition-all ${monCompleteRate === 100 ? 'bg-green-500' : 'bg-blue-500'}`}
+                    style={{ width: `${monCompleteRate}%` }} />
+                </div>
               </button>
             </div>
             <div className="flex items-center justify-center gap-4">
@@ -2843,11 +2872,11 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
               <div className="w-full bg-gray-100 rounded-full h-2 mb-2 overflow-hidden">
                 <div className={`h-2 rounded-full ${monCompleteRate === 100 ? 'bg-green-500' : 'bg-blue-500'}`} style={{ width: `${monCompleteRate}%` }} />
               </div>
-              <p className="text-xs text-gray-500 mb-2">이번 달 {monthTableRows.length}건 중 {monthDoneRows.length}건 완료</p>
+              <p className="text-xs text-gray-500 mb-2">이번 달 {monitorRows.length}건 중 {monthDoneRows.length}건 완료</p>
             </div>
             <div className="flex border-b border-gray-100 shrink-0">
               {[
-                { key: 'all', label: `전체 ${monthTableRows.length}` },
+                { key: 'all', label: `전체 ${monitorRows.length}` },
                 { key: 'done', label: `측정완료 ${monthDoneRows.length}` },
                 { key: 'pending', label: `예정 ${monthPendingRows.length}` },
               ].map(t => (
@@ -2898,6 +2927,11 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                           <span className="font-medium">{occ.monthIdx}/{occ.monthTotal}</span>
                           <span className="text-gray-400">{occ.ds.slice(2).replace(/-/g, '/')}</span>
                           <span className="text-gray-400">#{occ.measurement.num}/{totalCount(occ.zone)}</span>
+                          {occ.measurement.spanMonths > 1 && (
+                            <span className="text-[9px] px-1 rounded bg-indigo-50 text-indigo-500 font-medium">
+                              {occ.measurement.spanMonths === 3 ? '분기' : occ.measurement.spanMonths === 6 ? '반기' : occ.measurement.spanMonths === 12 ? '연' : `${occ.measurement.spanMonths}개월`}
+                            </span>
+                          )}
                         </button>
                       );
                     })}
