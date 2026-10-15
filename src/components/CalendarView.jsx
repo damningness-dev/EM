@@ -314,6 +314,12 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   const [showMonPopup, setShowMonPopup] = useState(false); // 상단 "모니터링" 카드 클릭 시 하단 현황을 팝업으로
   const [showCalibPopup, setShowCalibPopup] = useState(false); // 상단 "교정 예정일" 카드 클릭 시 이번 달 교정 목록을 팝업으로
   const [hoverTip, setHoverTip] = useState(null); // 일정 칩에 마우스를 올렸을 때 보이는 디자인된 툴팁
+  // 일정 칩을 드래그하는 동안 월 표시줄의 ‹ › 위에 잠깐 올려두면 달이 넘어가, 다른 달
+  // 날짜로 옮길 수 있게 한다(옮긴 날짜가 측정주기 밖이면 기존처럼 오류로 막힌다).
+  const [chipDragging, setChipDragging] = useState(false);
+  const chipDraggingRef = useRef(false);
+  const flipTimerRef = useRef(null);
+  const navRef = useRef({});
   const [weekStart, setWeekStart] = useState(() => {
     try { return localStorage.getItem('em-week-start') || 'sun'; } catch { return 'sun'; }
   });
@@ -440,7 +446,8 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
 
   // 달력에 표시할 월별 데이터(교정/모니터링 실적/AHU 계획)는 월 이동 시마다 새로 불러온다.
   useEffect(() => {
-    setLoading(true);
+    // 드래그 중 달이 넘어갈 때 스피너로 바꾸면 끌고 있는 칩이 사라져 드래그가 끊기므로 건너뛴다.
+    if (!chipDraggingRef.current) setLoading(true);
     setSelectedDay(null);
     Promise.all([
       fetchCalibration(),
@@ -579,6 +586,27 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     if (month === 12) { const y = year + 1; setYear(y); onYearChange?.(y); setMonth(1); }
     else setMonth(m => m + 1);
   }
+
+  navRef.current = { prevMonth, nextMonth };
+  function clearFlip() { if (flipTimerRef.current) { clearTimeout(flipTimerRef.current); flipTimerRef.current = null; } }
+  function armFlip(dir) {
+    clearFlip();
+    if (!chipDraggingRef.current) return;
+    flipTimerRef.current = setTimeout(() => {
+      if (dir > 0) navRef.current.nextMonth(); else navRef.current.prevMonth();
+      armFlip(dir); // 계속 올려두면 한 달씩 더 넘어간다
+    }, 700);
+  }
+  function endChipDrag() { chipDraggingRef.current = false; setChipDragging(false); clearFlip(); }
+  useEffect(() => {
+    // 끌던 칩이 달 전환으로 사라지면 dragend가 오지 않을 수 있어, 놓기·마우스 이동으로도 정리한다.
+    const done = () => endChipDrag();
+    window.addEventListener('dragend', done);
+    window.addEventListener('drop', done);
+    window.addEventListener('mousemove', done);
+    return () => { window.removeEventListener('dragend', done); window.removeEventListener('drop', done); window.removeEventListener('mousemove', done); clearFlip(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Calibration events by date string — 연도별 교정내역이 있으면 최신 내역(effectiveCalib)
   // 기준으로 표시해, 상단 필드만 예전 값으로 남아있는 항목도 항상 최신 차기교정일로 뜨게 한다.
@@ -2329,9 +2357,17 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
               </button>
             </div>
             <div className="flex items-center justify-center gap-4">
-              <button onClick={prevMonth} className="print:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-xl leading-none">‹</button>
+              <button onClick={prevMonth}
+                onDragEnter={() => armFlip(-1)} onDragOver={e => { if (chipDraggingRef.current) e.preventDefault(); }}
+                onDragLeave={clearFlip} onDrop={e => { e.preventDefault(); endChipDrag(); }}
+                title={chipDragging ? "잠시 올려두면 달이 넘어갑니다" : undefined}
+                className={`print:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-xl leading-none ${chipDragging ? "bg-blue-100 ring-2 ring-blue-400 text-blue-600 animate-pulse" : ""}`}>‹</button>
               <span className="text-2xl font-bold text-gray-900 min-w-[160px] text-center">{year}년 {MONTH_KR[month - 1]}</span>
-              <button onClick={nextMonth} className="print:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-xl leading-none">›</button>
+              <button onClick={nextMonth}
+                onDragEnter={() => armFlip(1)} onDragOver={e => { if (chipDraggingRef.current) e.preventDefault(); }}
+                onDragLeave={clearFlip} onDrop={e => { e.preventDefault(); endChipDrag(); }}
+                title={chipDragging ? "잠시 올려두면 달이 넘어갑니다" : undefined}
+                className={`print:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-xl leading-none ${chipDragging ? "bg-blue-100 ring-2 ring-blue-400 text-blue-600 animate-pulse" : ""}`}>›</button>
             </div>
             <div className="print:hidden flex items-center gap-2 flex-wrap justify-end">
               <button type="button" onClick={() => setShowCalibPopup(true)}
@@ -2508,7 +2544,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                             key={`s${i}`}
                             draggable={!isDone && adminUnlocked}
                             onDragStart={(!isDone && adminUnlocked) ? (e) => {
-                              e.stopPropagation(); setHoverTip(null);
+                              e.stopPropagation(); setHoverTip(null); chipDraggingRef.current = true; setChipDragging(true);
                               e.dataTransfer.effectAllowed = 'move';
                               e.dataTransfer.setData('text/plain', JSON.stringify({
                                 zoneId: zone.id,
