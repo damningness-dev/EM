@@ -313,6 +313,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   const [calSettingsPopup, setCalSettingsPopup] = useState(false);
   const [showMonPopup, setShowMonPopup] = useState(false); // 상단 "모니터링" 카드 클릭 시 하단 현황을 팝업으로
   const [showCalibPopup, setShowCalibPopup] = useState(false); // 상단 "교정 예정일" 카드 클릭 시 이번 달 교정 목록을 팝업으로
+  const [hoverTip, setHoverTip] = useState(null); // 일정 칩에 마우스를 올렸을 때 보이는 디자인된 툴팁
   const [weekStart, setWeekStart] = useState(() => {
     try { return localStorage.getItem('em-week-start') || 'sun'; } catch { return 'sun'; }
   });
@@ -2507,7 +2508,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                             key={`s${i}`}
                             draggable={!isDone && adminUnlocked}
                             onDragStart={(!isDone && adminUnlocked) ? (e) => {
-                              e.stopPropagation();
+                              e.stopPropagation(); setHoverTip(null);
                               e.dataTransfer.effectAllowed = 'move';
                               e.dataTransfer.setData('text/plain', JSON.stringify({
                                 zoneId: zone.id,
@@ -2524,7 +2525,8 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                             onClick={(e) => e.stopPropagation()}
                             className={`text-xs rounded overflow-hidden flex items-stretch min-w-0 ${isDone ? 'opacity-60 cursor-default' : 'cursor-grab active:cursor-grabbing'} ${mine ? 'ring-2 ring-indigo-500' : ''} ${flashTarget?.zoneId === zone.id && flashTarget?.num === measurement.num ? 'flash-highlight' : ''}`}
                             style={getChipStyle(zone.category, zone.grade)}
-                            title={`${label}${mine ? ' [내 담당]' : ''}${noPts ? ' [포인트 입력 필요]' : ''}${isDone ? ' [완료]' : measurement.isFirst ? ' [첫 측정]' : measurement.isLast ? ' [마지막 측정]' : ''}${zonePtTip(zone)}`}
+                            onMouseEnter={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHoverTip({ x: Math.max(8, Math.min(r.left, window.innerWidth - 300)), y: r.bottom + 6, top: r.top - 6, flip: r.bottom + 190 > window.innerHeight, zone, measurement, isDone, mine, noPts }); }}
+                            onMouseLeave={() => setHoverTip(null)}
                           >
                             {measurement.isFirst && <span className="w-1 shrink-0" style={{ backgroundColor: '#22c55e' }} />}
                             <span className={`truncate flex-1 px-1 py-0.5 ${isDone ? 'line-through' : ''} ${(measurement.isFirst || measurement.isLast) ? 'font-semibold' : ''}`}>
@@ -2942,6 +2944,62 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
           </div>
         </div>
       )}
+
+      {hoverTip && (() => {
+        const { zone, measurement, isDone, mine, noPts } = hoverTip;
+        const who = assignees[`${zone.id}_${measurement.num}`];
+        const combined = isCombinedCat(zone.category);
+        const major = getMajorCat(zone.category);
+        const ptBadges = combined
+          ? ((zone.points_float || 0) > 0 ? [{ k: 'c', name: major, v: zone.points_float, cls: 'bg-purple-50 text-purple-700 border-purple-200' }] : [])
+          : [
+              { k: 'f', name: '부유균', v: zone.points_float, cls: 'bg-blue-50 text-blue-700 border-blue-200' },
+              { k: 'l', name: '낙하균', v: zone.points_fall, cls: 'bg-orange-50 text-orange-700 border-orange-200' },
+              { k: 's', name: '표면균', v: zone.points_surface, cls: 'bg-green-50 text-green-700 border-green-200' },
+              { k: 'p', name: '부유입자', v: zone.points_particle, cls: 'bg-pink-50 text-pink-700 border-pink-200' },
+            ].filter(b => (b.v || 0) > 0);
+        const flags = [
+          isDone && { t: '완료', cls: 'bg-green-100 text-green-700' },
+          !isDone && measurement.isFirst && { t: '첫 측정', cls: 'bg-emerald-100 text-emerald-700' },
+          !isDone && measurement.isLast && { t: '마지막 측정', cls: 'bg-red-100 text-red-600' },
+          mine && { t: '내 담당', cls: 'bg-indigo-100 text-indigo-700' },
+          measurement.spanMonths > 1 && { t: measurement.spanMonths === 3 ? '분기' : measurement.spanMonths === 6 ? '반기' : measurement.spanMonths === 12 ? '연' : `${measurement.spanMonths}개월`, cls: 'bg-indigo-50 text-indigo-500' },
+        ].filter(Boolean);
+        return (
+          <div className="fixed z-[180] pointer-events-none w-72 bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden"
+            style={{ left: hoverTip.x, top: hoverTip.flip ? hoverTip.top : hoverTip.y, transform: hoverTip.flip ? 'translateY(-100%)' : undefined }}>
+            <div className="px-3 py-2 border-b border-gray-100">
+              <span className="inline-block max-w-full truncate text-xs font-semibold px-1.5 py-0.5 rounded" style={getChipStyle(zone.category, zone.grade)}>
+                {zone.name}[{zone.grade}]-{measurement.num}
+              </span>
+              {flags.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1.5">
+                  {flags.map(f => <span key={f.t} className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${f.cls}`}>{f.t}</span>)}
+                </div>
+              )}
+            </div>
+            <div className="px-3 py-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+              <span className="text-gray-400">측정일</span>
+              <span className="text-gray-700 font-medium">{format(measurement.date, 'yyyy-MM-dd')}</span>
+              <span className="text-gray-400">회차</span>
+              <span className="text-gray-700 font-medium">{measurement.num}/{totalCount(zone) || measurement.num}회</span>
+              {who && (<><span className="text-gray-400">담당자</span><span className="text-gray-700 font-medium">{who}</span></>)}
+            </div>
+            <div className="px-3 pb-2.5">
+              <p className="text-[10px] text-gray-400 mb-1">측정 포인트</p>
+              {ptBadges.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  {ptBadges.map(b => (
+                    <span key={b.k} className={`text-[11px] font-semibold px-1.5 py-0.5 rounded-md border ${b.cls}`}>{b.name} {b.v}</span>
+                  ))}
+                </div>
+              ) : (
+                <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-red-50 text-red-600 border-red-200">{noPts ? '포인트 입력 필요' : '포인트 없음'}</span>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {showCalibPopup && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[150] p-4" onClick={() => setShowCalibPopup(false)}>
