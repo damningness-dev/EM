@@ -797,7 +797,7 @@ function HistoryPanel({ item, onSave, onNotice, adminUnlocked }) {
     setOpeningIdx(idx);
     try {
       const r = await openCalibFile(filePath, gistKey, fileName);
-      if (r && !r.ok) onNotice('열기 실패: ' + (r.error || ''), true);
+      if (r && !r.ok) onNotice('열기 실패: ' + (r.error || '') + (/찾을 수 없/.test(r.error || '') && adminUnlocked ? ' — 🔗 버튼으로 파일을 다시 연결하세요.' : ''), true);
     } finally { setOpeningIdx(null); }
   }
 
@@ -851,7 +851,15 @@ function HistoryPanel({ item, onSave, onNotice, adminUnlocked }) {
                   </button>
                   <button onClick={() => revealCalibFile(h.filePath, h.gistKey, h.fileName)} className="text-xs px-1.5 py-1 text-gray-400 hover:text-gray-700" title="폴더에서 보기">📂</button>
                   {adminUnlocked && (
-                    <button onClick={() => edit(idx, { fileName: '', filePath: '', gistKey: '' })} className="text-xs text-gray-300 hover:text-red-500" title="첨부 제거">✕</button>
+                    <>
+                      {/* 열리지 않는 예전 링크(없어진 파일명 등)를 다른 파일로 바로 바꿔 연결한다.
+                          새 파일은 성적서 이름 규칙으로 저장되고 같은 이름이면 덮어쓴다. */}
+                      <label className="text-xs px-1.5 py-1 text-gray-400 hover:text-blue-600 cursor-pointer" title="파일 링크 변경 (다른 파일로 교체)">
+                        🔗
+                        <input type="file" className="hidden" onChange={e => { upload(idx, e.target.files?.[0]); e.target.value = ''; }} />
+                      </label>
+                      <button onClick={() => edit(idx, { fileName: '', filePath: '', gistKey: '' })} className="text-xs text-gray-300 hover:text-red-500" title="첨부 제거">✕</button>
+                    </>
                   )}
                 </span>
               ) : adminUnlocked ? (
