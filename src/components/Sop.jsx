@@ -7,6 +7,26 @@ import {
 
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
 
+// 본문 속 주소(http://, https://, www.)를 눌러 열 수 있는 하이퍼링크로 바꾼다. 문장 끝의 마침표·괄호 같은
+// 구두점은 링크에서 뺀다. 데스크톱 앱에서는 앱 창이 아니라 기본 브라우저로 연다.
+const URL_RE = /((?:https?:\/\/|www\.)[^\s<>"']+)/g;
+function linkify(text) {
+  const parts = String(text || '').split(URL_RE);
+  return parts.map((part, i) => {
+    if (i % 2 === 0) return part;
+    const m = part.match(/^(.*?)([.,;:!?)\]]*)$/);
+    const raw = m[1], tail = m[2];
+    const href = raw.startsWith('www.') ? `https://${raw}` : raw;
+    return (
+      <span key={i}>
+        <a href={href} target="_blank" rel="noopener noreferrer"
+          onClick={e => { if (isElectron) { e.preventDefault(); window.electronAPI.invoke('app:openExternal', href); } }}
+          className="text-blue-600 underline hover:text-blue-800 break-all">{raw}</a>{tail}
+      </span>
+    );
+  });
+}
+
 // 사진 크기 제한 — 사용점 관리와 동일한 기준(최대 3000px, 목록용 작은 썸네일 별도).
 function resizeImage(file, maxDim, quality) {
   return new Promise((resolve, reject) => {
@@ -370,7 +390,7 @@ export default function Sop({ adminUnlocked, currentMember }) {
       <div className="space-y-3 border-t border-gray-100 pt-4">
         {blocks.map(b => b.type === 'text' ? (
           b.text ? (
-            <p key={b.id} className="text-sm text-gray-700 whitespace-pre-wrap break-words leading-relaxed">{b.text}</p>
+            <p key={b.id} className="text-sm text-gray-700 whitespace-pre-wrap break-words leading-relaxed">{linkify(b.text)}</p>
           ) : null
         ) : (
           <img key={b.id} src={b.photo.thumb} alt="사진"

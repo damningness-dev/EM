@@ -1425,6 +1425,21 @@ function createWindow() {
 
   mainWin.removeMenu();
 
+  // 본문 안의 하이퍼링크(SOP 등)가 앱 창 자체를 그 주소로 바꿔버리지 않도록, 새 창·페이지 이동 요청은
+  // 막고 http(s) 주소만 기본 브라우저로 연다.
+  const openExternalSafe = (url) => {
+    try {
+      const u = new URL(String(url));
+      if (['http:', 'https:', 'mailto:'].includes(u.protocol)) { shell.openExternal(u.toString()); return true; }
+    } catch { /* ignore */ }
+    return false;
+  };
+  mainWin.webContents.setWindowOpenHandler(({ url }) => { openExternalSafe(url); return { action: 'deny' }; });
+  mainWin.webContents.on('will-navigate', (e, url) => {
+    const isApp = url.startsWith('file://') || url.startsWith('http://localhost:5173');
+    if (!isApp) { e.preventDefault(); openExternalSafe(url); }
+  });
+
   mainWin.webContents.on('did-finish-load', () => {
     setupAsarUpdater(mainWin);
     // 실행 시 원격 최신화 1회 + 주기 동기화 시작
@@ -1516,6 +1531,14 @@ function registerHandlers() {
   ipcMain.handle('update:download', downloadUpdate);
   ipcMain.handle('update:install', applyUpdateAndRestart);
   ipcMain.handle('app:restart', () => { app.relaunch(); app.exit(0); });
+  ipcMain.handle('app:openExternal', (_e, url) => {
+    try {
+      const u = new URL(String(url));
+      if (!['http:', 'https:', 'mailto:'].includes(u.protocol)) return { ok: false, error: '지원하지 않는 링크 형식입니다' };
+      shell.openExternal(u.toString());
+      return { ok: true };
+    } catch { return { ok: false, error: '올바른 링크가 아닙니다' }; }
+  });
 
   // ── 공유 동기화 (Gist) ──
   ipcMain.handle('sync:getConfig', () => {
