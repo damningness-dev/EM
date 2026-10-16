@@ -1162,11 +1162,12 @@ function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').repla
 // 울리면 팝업이 겹겹이 쌓여 "확인"을 여러 번 눌러야 했다. 이미 떠 있거나 대기 중인
 // 알람과 같은 것이면 넣지 않아, 한 번만 확인하면 되도록 한다.
 // 서로 다른 알람은 key가 다르므로 그대로 각각 대기열에 쌓여 따로 확인하게 된다.
-function enqueueAlarm(todo, key, occDay) {
+// info: { reminder: 같은 알람이 리마인드로 다시 울린 것인지, firedHM: 지금 울린 시각 "HH:MM" }
+function enqueueAlarm(todo, key, occDay, info = {}) {
   const id = key || `${todo.id}_`;
   if (currentAlarmKey === id) return;
   if (alarmQueue.some(a => a.key === id)) return;
-  alarmQueue.push({ todo, key: id, occDay });
+  alarmQueue.push({ todo, key: id, occDay, ...info });
   showNextAlarm();
 }
 
@@ -1188,7 +1189,7 @@ function showNextAlarm() {
   if (currentAlarmWin && !currentAlarmWin.isDestroyed()) return; // 앞 알람 확인 대기
   const next = alarmQueue.shift();
   if (!next) { currentAlarmKey = null; return; }
-  const { todo, key: alarmKey, occDay } = next;
+  const { todo, key: alarmKey, occDay, reminder, firedHM } = next;
   currentAlarmKey = alarmKey;
   try {
     const wa = screen.getPrimaryDisplay().workAreaSize;
@@ -1219,6 +1220,7 @@ function showNextAlarm() {
       html,body{margin:0}
       body{font-family:'Malgun Gothic','Segoe UI',sans-serif;background:#fff;border:2px solid #fb923c;border-radius:12px;box-sizing:border-box;display:flex;flex-direction:column;padding:14px;overflow:hidden}
       .h{display:flex;align-items:center;gap:6px;color:#ea580c;font-size:12px;font-weight:700;margin-bottom:6px}
+      .r{margin-left:6px;font-size:11px;color:#6b7280;font-weight:600}
       .q{margin-left:auto;font-size:11px;color:#9ca3af;font-weight:600}
       .t{font-size:15px;font-weight:700;color:#111827;white-space:pre-wrap;word-break:break-word;line-height:1.35}
       .n{font-size:12px;color:#6b7280;margin-top:4px;white-space:pre-wrap;word-break:break-word;line-height:1.35}
@@ -1229,7 +1231,9 @@ function showNextAlarm() {
       .btn-done{background:#16a34a;color:#fff}
       .btn-done:hover{background:#15803d}
     </style></head><body>
-      <div class="h">⏰ 할일 알람 ${todo.time ? '· ' + esc(todo.time) : ''}${remain > 0 ? `<span class="q">대기 ${remain}건</span>` : ''}</div>
+      <div class="h">⏰ 할일 알람 ${reminder
+        ? `· ${esc(firedHM || '')}<span class="r">리마인드${todo.time ? ` (원래 ${esc(todo.time)})` : ''}</span>`
+        : (todo.time ? '· ' + esc(todo.time) : '')}${remain > 0 ? `<span class="q">대기 ${remain}건</span>` : ''}</div>
       <div class="t">${esc(todo.title)}</div>
       ${todo.note ? `<div class="n">${esc(todo.note)}</div>` : ''}
       <div class="btns">
@@ -1369,12 +1373,15 @@ function checkAlarms() {
     if (fire) due.push({ todo: t, fire });
   });
   if (!due.length) return;
+  // 이미 한 번 울린 적 있는 알람이 다시 울리는 것이면 리마인드 — 팝업에 "원래 시각"이 아니라
+  // 지금 울린 시각을 보여주고 리마인드임을 표시하기 위해, 기록을 갱신하기 전에 미리 가려둔다.
+  const reminderKeys = new Set(due.filter(({ fire }) => firedAlarms.has(fire.key)).map(({ fire }) => fire.key));
   due.forEach(({ fire }) => firedAlarms.set(fire.key, now.getTime()));
   persistFiredAlarms();
   // 1) 데스크톱 팝업 창 (항상 위) — 한 번에 하나씩, 확인 전까지 유지 + 대기열.
   // 서로 다른 할일 알람은 각각 따로 확인할 수 있도록 모두 대기열에 넣는다.
   // (같은 알람이 리마인드로 다시 울린 경우는 enqueueAlarm에서 걸러진다)
-  due.forEach(({ todo, fire }) => enqueueAlarm(todo, fire.key, fire.occDay));
+  due.forEach(({ todo, fire }) => enqueueAlarm(todo, fire.key, fire.occDay, { reminder: reminderKeys.has(fire.key), firedHM: hm(now) }));
   const t = due[due.length - 1].todo; // 아래 깜빡임·토스트에 쓸 대표 항목
   // 2) 작업표시줄 깜빡임
   try { if (mainWin && !mainWin.isDestroyed()) mainWin.flashFrame(true); } catch { /* ignore */ }
