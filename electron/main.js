@@ -1335,7 +1335,25 @@ function maybeSyncWeeklyDutyTodos() {
   syncWeeklyDutyTodos();
 }
 
-const firedAlarms = new Map(); // `${id}_${occDay}_${mode}` → 마지막으로 울린 시각(ms). 리마인드 간격 계산에 씀.
+// `${id}_${occDay}_${mode}` → 마지막으로 울린 시각(ms). 리마인드 간격 계산에 씀.
+// 메모리에만 두면 앱을 다시 시작할 때(자동 업데이트 재시작·재부팅·종료 후 재실행) "이미 울렸다"는
+// 기록이 사라져, 아침 8시에 울리고 확인까지 누른 알람이 다시 시작 직후 또 울렸다. 파일에 남겨 이어간다.
+const firedAlarmsPath = () => path.join(app.getPath('userData'), 'alarm-fired.json');
+const FIRED_KEEP_MS = 3 * 86400000; // 사흘 지난 기록은 버린다
+const firedAlarms = (() => {
+  try {
+    const raw = JSON.parse(fs.readFileSync(firedAlarmsPath(), 'utf-8'));
+    const cutoff = Date.now() - FIRED_KEEP_MS;
+    return new Map(Object.entries(raw || {}).filter(([, t]) => Number.isFinite(t) && t >= cutoff));
+  } catch { return new Map(); }
+})();
+function persistFiredAlarms() {
+  try {
+    const cutoff = Date.now() - FIRED_KEEP_MS;
+    for (const [k, t] of firedAlarms) if (t < cutoff) firedAlarms.delete(k);
+    fs.writeFileSync(firedAlarmsPath(), JSON.stringify(Object.fromEntries(firedAlarms)), 'utf-8');
+  } catch { /* ignore */ }
+}
 let alarmTimer = null;
 let alarmBlockerId = null;
 function checkAlarms() {
@@ -1352,6 +1370,7 @@ function checkAlarms() {
   });
   if (!due.length) return;
   due.forEach(({ fire }) => firedAlarms.set(fire.key, now.getTime()));
+  persistFiredAlarms();
   // 1) 데스크톱 팝업 창 (항상 위) — 한 번에 하나씩, 확인 전까지 유지 + 대기열.
   // 서로 다른 할일 알람은 각각 따로 확인할 수 있도록 모두 대기열에 넣는다.
   // (같은 알람이 리마인드로 다시 울린 경우는 enqueueAlarm에서 걸러진다)
@@ -2203,6 +2222,7 @@ function registerHandlers() {
       if (i >= 0) todos[i] = todo; else todos.push(todo);
       // 알람 시간을 수정했으면 발사 기록을 지워 새 시간에 다시 울리게 한다
       for (const k of [...firedAlarms.keys()]) { if (k.startsWith(todo.id + '_')) firedAlarms.delete(k); }
+      persistFiredAlarms();
       // 완료 처리하거나 내용을 고친 할일이 대기열에 남아 있으면 지운다 — 이미 처리한
       // 일인데 나중에 팝업이 떠서 다시 확인해야 하는 상황을 막는다.
       alarmQueue = alarmQueue.filter(a => !a.key.startsWith(todo.id + '_'));
