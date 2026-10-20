@@ -200,7 +200,7 @@ export default function ZoneGantt({ year, onYearChange }) {
                 {MONTHS.map(m => (
                   <div
                     key={m}
-                    className={`flex-1 text-center text-xs py-1 border-r border-gray-100 ${
+                    className={`flex-1 text-center text-xs py-1 border-r border-gray-300 ${
                       m === currentMonth ? 'text-blue-600 font-semibold bg-blue-50/50' : 'text-gray-400'
                     }`}
                   >{m}월</div>
@@ -223,14 +223,14 @@ export default function ZoneGantt({ year, onYearChange }) {
 
                   {/* 바 트랙 — 같은 구역의 모든 등급을 한 행에 표시 */}
                   <div
-                    className="flex-1 relative bg-gray-50 rounded border border-gray-100"
+                    className="flex-1 relative bg-gray-50 rounded border border-gray-200"
                     style={{ height: ROW_H }}
                   >
                     {/* 월 구분선 */}
                     {MONTHS.map(m => (
                       <div
                         key={m}
-                        className={`absolute inset-y-0 border-l ${m === currentMonth ? 'border-blue-200' : 'border-gray-100'}`}
+                        className={`absolute inset-y-0 border-l ${m === currentMonth ? 'border-blue-300' : 'border-gray-300'}`}
                         style={{ left: `${((m - 1) / 12) * 100}%` }}
                       />
                     ))}
