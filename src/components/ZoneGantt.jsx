@@ -97,6 +97,15 @@ export default function ZoneGantt({ year, onYearChange }) {
     ? Math.min(100, Math.max(0, (differenceInDays(today, yearStart) / yearDays) * 100))
     : null;
 
+  const monthCells = MONTHS.map(m => (
+    <div
+      key={m}
+      className={`flex-1 text-center text-xs py-1 border-r border-gray-300 ${
+        m === currentMonth ? 'text-blue-600 font-semibold bg-blue-50/50' : 'text-gray-400'
+      }`}
+    >{m}월</div>
+  ));
+
   function getBarInfo(zone) {
     const range = rangeByZoneId[zone.id];
     if (!range) return null;
@@ -197,14 +206,7 @@ export default function ZoneGantt({ year, onYearChange }) {
             <div className="flex mb-2">
               <div className="w-52 shrink-0" />
               <div ref={trackRef} className="flex-1 flex border-l border-gray-200">
-                {MONTHS.map(m => (
-                  <div
-                    key={m}
-                    className={`flex-1 text-center text-xs py-1 border-r border-gray-300 ${
-                      m === currentMonth ? 'text-blue-600 font-semibold bg-blue-50/50' : 'text-gray-400'
-                    }`}
-                  >{m}월</div>
-                ))}
+                {monthCells}
               </div>
             </div>
 
@@ -306,6 +308,16 @@ export default function ZoneGantt({ year, onYearChange }) {
 
             {groups.length === 0 && (
               <p className="text-sm text-gray-400 text-center py-10">표시할 일정이 없습니다.</p>
+            )}
+
+            {/* 하단 월 표시 */}
+            {groups.length > 0 && (
+              <div className="flex mt-2">
+                <div className="w-52 shrink-0" />
+                <div className="flex-1 flex border-l border-gray-200">
+                  {monthCells}
+                </div>
+              </div>
             )}
           </div>
         </div>

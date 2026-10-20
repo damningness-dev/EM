@@ -196,18 +196,20 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   }); // [{ ts, changes:[msg,...] }] 저장할 때마다 누적되는 일정변경 알람 내역 (이 PC에 보관)
   const [showChangeHistory, setShowChangeHistory] = useState(false);
 
-  // 야근기록 — 이 PC에만 보관(공유 데이터/동기화/백업 대상 아님). { 'yyyy-MM-dd': { hours, memo } }
+  // 야근·휴가 기록 — 이 PC에만 보관(공유 데이터/동기화/백업 대상 아님). { 'yyyy-MM-dd': { hours, memo, leave } }
+  // leave: '' | 'annual'(연차) | 'am'(오전반차) | 'pm'(오후반차)
   const OVERTIME_KEY = 'em-overtime';
   const [overtime, setOvertime] = useState(() => {
     try { return JSON.parse(localStorage.getItem(OVERTIME_KEY)) || {}; } catch { return {}; }
   });
-  const [overtimeEdit, setOvertimeEdit] = useState(null); // { date, hours, memo }
+  const [overtimeEdit, setOvertimeEdit] = useState(null); // { date, hours, memo, leave }
+  const LEAVE_LABEL = { annual: '연차', am: '오전반차', pm: '오후반차' };
 
-  function saveOvertime(date, hours, memo) {
+  function saveOvertime(date, hours, memo, leave) {
     setOvertime(prev => {
       const next = { ...prev };
       const h = parseFloat(hours);
-      if (h > 0 || memo.trim()) next[date] = { hours: h > 0 ? h : 0, memo: memo.trim() };
+      if (h > 0 || memo.trim() || leave) next[date] = { hours: h > 0 ? h : 0, memo: memo.trim(), leave: leave || '' };
       else delete next[date];
       try { localStorage.setItem(OVERTIME_KEY, JSON.stringify(next)); } catch { /* 저장 실패는 무시 */ }
       return next;
@@ -1701,13 +1703,25 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
       {overtimeEdit && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/40" onClick={() => setOvertimeEdit(null)}>
           <div className="bg-white rounded-2xl shadow-2xl w-96 p-6" onClick={e => e.stopPropagation()}>
-            <h3 className="text-base font-bold text-gray-900 mb-1">야근 기록</h3>
+            <h3 className="text-base font-bold text-gray-900 mb-1">야근 · 휴가 기록</h3>
             <p className="text-sm text-gray-400 mb-1">{overtimeEdit.date}</p>
             <p className="text-[11px] text-amber-600 mb-4">이 PC에만 저장되며 공유·동기화·백업에 포함되지 않습니다.</p>
-            <label className="block text-xs text-gray-500 mb-1">시간 (달력에 표시됩니다)</label>
+            <label className="block text-xs text-gray-500 mb-1">휴가</label>
+            <div className="flex gap-1.5 mb-4">
+              {[['', '없음'], ['annual', '연차'], ['am', '오전반차'], ['pm', '오후반차']].map(([v, label]) => (
+                <button key={v || 'none'} type="button"
+                  onClick={() => setOvertimeEdit(p => ({ ...p, leave: v }))}
+                  className={`flex-1 py-1.5 text-xs rounded-lg border transition-colors ${
+                    overtimeEdit.leave === v
+                      ? 'bg-sky-500 text-white border-sky-500 font-semibold'
+                      : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+                  }`}>{label}</button>
+              ))}
+            </div>
+            <label className="block text-xs text-gray-500 mb-1">야근 시간 (달력에 표시됩니다)</label>
             <div className="flex items-center gap-2 mb-4">
               <input
-                type="number" min="0" max="24" step="0.5" autoFocus
+                type="number" min="0" max="24" step="0.5"
                 value={overtimeEdit.hours}
                 onChange={e => setOvertimeEdit(p => ({ ...p, hours: e.target.value }))}
                 className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
@@ -1721,16 +1735,16 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
               onChange={e => setOvertimeEdit(p => ({ ...p, memo: e.target.value }))}
               rows={4}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 mb-5 resize-none"
-              placeholder="야근 사유, 작업 내용 등을 기록하세요"
+              placeholder="야근 사유, 작업 내용, 휴가 메모 등을 기록하세요"
             />
             <div className="flex gap-2 justify-end">
               {overtime[overtimeEdit.date] && (
-                <button onClick={() => saveOvertime(overtimeEdit.date, '', '')}
+                <button onClick={() => saveOvertime(overtimeEdit.date, '', '', '')}
                   className="mr-auto px-4 py-2 text-sm text-red-500 bg-red-50 rounded-lg hover:bg-red-100">삭제</button>
               )}
               <button onClick={() => setOvertimeEdit(null)}
                 className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>
-              <button onClick={() => saveOvertime(overtimeEdit.date, overtimeEdit.hours, overtimeEdit.memo)}
+              <button onClick={() => saveOvertime(overtimeEdit.date, overtimeEdit.hours, overtimeEdit.memo, overtimeEdit.leave)}
                 className="px-4 py-2 text-sm text-white bg-amber-500 rounded-lg hover:bg-amber-600">저장</button>
             </div>
           </div>
@@ -2559,14 +2573,15 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                       const overtimeBtn = isOther ? null : (
                         <button
                           type="button"
-                          onClick={(e) => { e.stopPropagation(); setOvertimeEdit({ date: dateStr, hours: ot?.hours ? String(ot.hours) : '', memo: ot?.memo || '' }); }}
-                          title={ot ? `야근 ${ot.hours ? ot.hours + '시간' : ''}${ot.memo ? '\n' + ot.memo : ''}\n(클릭하여 수정)` : '야근기록 (이 PC에만 저장)'}
+                          onClick={(e) => { e.stopPropagation(); setOvertimeEdit({ date: dateStr, hours: ot?.hours ? String(ot.hours) : '', memo: ot?.memo || '', leave: ot?.leave || '' }); }}
+                          title={ot ? `${[ot.leave && LEAVE_LABEL[ot.leave], ot.hours > 0 && `야근 ${ot.hours}시간`].filter(Boolean).join(' · ')}${ot.memo ? '\n' + ot.memo : ''}\n(클릭하여 수정)` : '야근·휴가 기록 (이 PC에만 저장)'}
                           className={`print:hidden shrink-0 flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] leading-none transition-opacity ${
-                            ot ? 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                            ot ? (ot.leave && !(ot.hours > 0) ? 'bg-sky-100 text-sky-700 hover:bg-sky-200' : 'bg-amber-100 text-amber-700 hover:bg-amber-200')
                                : 'text-gray-400 hover:text-amber-600 hover:bg-amber-50 opacity-0 group-hover:opacity-100'
                           }`}
                         >
                           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                          {ot?.leave && <span className="font-semibold">{LEAVE_LABEL[ot.leave]}</span>}
                           {ot && ot.hours > 0 && <span className="font-semibold">{ot.hours}h</span>}
                         </button>
                       );

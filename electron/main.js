@@ -192,6 +192,7 @@ async function checkForUpdate() {
 const DOWNLOAD_RETRIES = 3;
 
 async function downloadUpdate() {
+  if (downloadingUpdate) return; // 이미 받는 중이면 중복 다운로드로 같은 파일을 덮어쓰지 않음
   const dest = getUpdatePath();
   downloadingUpdate = true;
   let lastErr = null;
@@ -227,7 +228,21 @@ async function downloadUpdate() {
   }
 }
 
-function applyUpdateAndRestart() {
+// 업데이트는 항상 "latest" 릴리즈 하나(전체 패치)만 받으므로 여러 버전이 밀려 있어도
+// 중간 버전을 차례로 설치하지 않고 최신으로 한 번에 올라간다. 다만 받아 둔 뒤에 더 새
+// 버전이 올라왔다면(예: 준비 완료 알림을 띄워 둔 사이 연달아 배포) 낡은 파일로 재시작해
+// 또 한 번 재시작하게 되지 않도록, 재시작 직전에 최신 버전을 한 번 더 확인해 받는다.
+async function applyUpdateAndRestart() {
+  if (downloadingUpdate) return; // 최신 버전을 받는 중에는 끝날 때까지 기다린다(완료 알림이 다시 뜸)
+  try {
+    const meta = await fetchJSON(META_URL);
+    if (meta.version !== app.getVersion() && meta.version !== downloadedVersion) {
+      await downloadUpdate();
+      if (downloadedVersion !== meta.version) return; // 실패 시 오류 상태가 이미 전달됨
+    }
+  } catch {
+    // 확인 실패(오프라인 등)는 이미 받아 둔 파일로 그대로 진행
+  }
   const updateSrc = getUpdatePath();
   if (!fs.existsSync(updateSrc)) {
     sendStatus({ type: 'error', message: '업데이트 파일이 없습니다. 다시 다운로드해 주세요.' });
