@@ -202,6 +202,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   const [overtime, setOvertime] = useState(() => {
     try { return JSON.parse(localStorage.getItem(OVERTIME_KEY)) || {}; } catch { return {}; }
   });
+  const [overtimeTip, setOvertimeTip] = useState(null); // 야근·휴가 배지 호버 툴팁 { x, y, date, ot }
   const [overtimeEdit, setOvertimeEdit] = useState(null); // { date, hours, memo, leave }
   const LEAVE_LABEL = { annual: '연차', am: '오전반차', pm: '오후반차' };
 
@@ -2573,8 +2574,12 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                       const overtimeBtn = isOther ? null : (
                         <button
                           type="button"
-                          onClick={(e) => { e.stopPropagation(); setOvertimeEdit({ date: dateStr, hours: ot?.hours ? String(ot.hours) : '', memo: ot?.memo || '', leave: ot?.leave || '' }); }}
-                          title={ot ? `${[ot.leave && LEAVE_LABEL[ot.leave], ot.hours > 0 && `야근 ${ot.hours}시간`].filter(Boolean).join(' · ')}${ot.memo ? '\n' + ot.memo : ''}\n(클릭하여 수정)` : '야근·휴가 기록 (이 PC에만 저장)'}
+                          onClick={(e) => { e.stopPropagation(); setOvertimeTip(null); setOvertimeEdit({ date: dateStr, hours: ot?.hours ? String(ot.hours) : '', memo: ot?.memo || '', leave: ot?.leave || '' }); }}
+                          onMouseEnter={(e) => {
+                            const r = e.currentTarget.getBoundingClientRect();
+                            setOvertimeTip({ x: Math.max(8, Math.min(r.left, window.innerWidth - 270)), y: r.bottom + 6, top: r.top - 6, flip: r.bottom + 160 > window.innerHeight, date: dateStr, ot });
+                          }}
+                          onMouseLeave={() => setOvertimeTip(null)}
                           className={`print:hidden shrink-0 flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] leading-none transition-opacity ${
                             ot ? (ot.leave && !(ot.hours > 0) ? 'bg-sky-100 text-sky-700 hover:bg-sky-200' : 'bg-amber-100 text-amber-700 hover:bg-amber-200')
                                : 'text-gray-400 hover:text-amber-600 hover:bg-amber-50 opacity-0 group-hover:opacity-100'
@@ -3071,6 +3076,33 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
           </div>
         </div>
       )}
+
+      {overtimeTip && (() => {
+        const { ot, date } = overtimeTip;
+        return (
+          <div className="fixed z-[180] pointer-events-none w-64 bg-gray-900 text-gray-100 rounded-xl shadow-2xl border border-gray-700 overflow-hidden"
+            style={{ left: overtimeTip.x, top: overtimeTip.flip ? overtimeTip.top : overtimeTip.y, transform: overtimeTip.flip ? 'translateY(-100%)' : undefined }}>
+            <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold">{ot ? '야근 · 휴가 기록' : '야근 · 휴가 기록하기'}</span>
+              <span className="text-[10px] text-gray-500">{date}</span>
+            </div>
+            <div className="px-3 py-2 text-xs">
+              {ot ? (
+                <>
+                  <div className="flex flex-wrap gap-1">
+                    {ot.leave && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-sky-500/20 text-sky-200 border-sky-400/40">{LEAVE_LABEL[ot.leave]}</span>}
+                    {ot.hours > 0 && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-amber-500/20 text-amber-200 border-amber-400/40">야근 {ot.hours}시간</span>}
+                  </div>
+                  {ot.memo && <p className="mt-1.5 text-gray-200 whitespace-pre-wrap break-words">{ot.memo}</p>}
+                </>
+              ) : (
+                <p className="text-gray-300">눌러서 야근·연차·반차를 기록하세요.</p>
+              )}
+              <p className="mt-1.5 text-[10px] text-gray-500">{ot ? '클릭하여 수정 · ' : ''}이 PC에만 저장됩니다</p>
+            </div>
+          </div>
+        );
+      })()}
 
       {hoverTip && (() => {
         const { zone, measurement, isDone, mine, noPts } = hoverTip;
