@@ -204,7 +204,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   });
   const [overtimeTip, setOvertimeTip] = useState(null); // 연장·휴가 배지 호버 툴팁 { x, y, date, ot }
   const [overtimeEdit, setOvertimeEdit] = useState(null); // { date, hours, memo, leave }
-  const LEAVE_LABEL = { annual: '연차', am: '오전반차', pm: '오후반차' };
+  const LEAVE_LABEL = { annual: '연차', am: '오전', pm: '오후' }; // 달력 배지·툴팁용 짧은 표기
 
   function saveOvertime(date, hours, memo, leave) {
     setOvertime(prev => {
