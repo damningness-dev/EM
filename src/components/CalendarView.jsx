@@ -1714,7 +1714,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                   onClick={() => setOvertimeEdit(p => ({ ...p, leave: v }))}
                   className={`flex-1 py-1.5 text-xs rounded-lg border transition-colors ${
                     overtimeEdit.leave === v
-                      ? 'bg-sky-500 text-white border-sky-500 font-semibold'
+                      ? 'bg-red-500 text-white border-red-500 font-semibold'
                       : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
                   }`}>{label}</button>
               ))}
@@ -2581,7 +2581,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                           }}
                           onMouseLeave={() => setOvertimeTip(null)}
                           className={`print:hidden shrink-0 flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] leading-none transition-opacity ${
-                            ot ? (ot.leave && !(ot.hours > 0) ? 'bg-sky-100 text-sky-700 hover:bg-sky-200' : 'bg-amber-100 text-amber-700 hover:bg-amber-200')
+                            ot ? (ot.leave ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'bg-amber-100 text-amber-700 hover:bg-amber-200')
                                : 'text-gray-400 hover:text-amber-600 hover:bg-amber-50 opacity-0 group-hover:opacity-100'
                           }`}
                         >
@@ -3091,7 +3091,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
               {ot ? (
                 <>
                   <div className="flex flex-wrap gap-1">
-                    {ot.leave && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-sky-500/20 text-sky-200 border-sky-400/40">{LEAVE_LABEL[ot.leave]}</span>}
+                    {ot.leave && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-red-500/20 text-red-300 border-red-400/40">{LEAVE_LABEL[ot.leave]}</span>}
                     {ot.hours > 0 && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-amber-500/20 text-amber-200 border-amber-400/40">연장 {ot.hours}시간</span>}
                   </div>
                   {ot.memo && <p className="mt-1.5 text-gray-200 whitespace-pre-wrap break-words">{ot.memo}</p>}
