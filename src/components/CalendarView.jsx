@@ -3121,14 +3121,18 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
         const who = assignees[`${zone.id}_${measurement.num}`];
         const combined = isCombinedCat(zone.category);
         const major = getMajorCat(zone.category);
-        const ptBadges = combined
-          ? ((zone.points_float || 0) > 0 ? [{ k: 'c', name: major, v: zone.points_float, cls: 'bg-purple-500/20 text-purple-200 border-purple-400/40' }] : [])
-          : [
-              { k: 'f', name: '부유균', v: zone.points_float, cls: 'bg-blue-500/20 text-blue-200 border-blue-400/40' },
-              { k: 'l', name: '낙하균', v: zone.points_fall, cls: 'bg-orange-500/20 text-orange-200 border-orange-400/40' },
-              { k: 's', name: '표면균', v: zone.points_surface, cls: 'bg-green-500/20 text-green-200 border-green-400/40' },
-              { k: 'p', name: '부유입자', v: zone.points_particle, cls: 'bg-pink-500/20 text-pink-200 border-pink-400/40' },
-            ].filter(b => (b.v || 0) > 0);
+        // 포인트 배지는 달력 칸과 같이 2행: 1행 부유균·낙하균·표면균·부유입자, 2행 질소·압축(통합 대분류)
+        const majorShort = { '질소가스': '질소', '압축공기': '압축' };
+        const ptRow1 = combined ? [] : [
+          { k: 'f', name: '부유균', v: zone.points_float, cls: 'bg-blue-500/20 text-blue-200 border-blue-400/40' },
+          { k: 'l', name: '낙하균', v: zone.points_fall, cls: 'bg-orange-500/20 text-orange-200 border-orange-400/40' },
+          { k: 's', name: '표면균', v: zone.points_surface, cls: 'bg-green-500/20 text-green-200 border-green-400/40' },
+          { k: 'p', name: '부유입자', v: zone.points_particle, cls: 'bg-pink-500/20 text-pink-200 border-pink-400/40' },
+        ].filter(b => (b.v || 0) > 0);
+        const ptRow2 = combined && (zone.points_float || 0) > 0
+          ? [{ k: 'c', name: majorShort[major] || major, v: zone.points_float, cls: 'bg-purple-500/20 text-purple-200 border-purple-400/40' }]
+          : [];
+        const hasPtBadges = ptRow1.length + ptRow2.length > 0;
         const flags = [
           isDone && { t: '완료', cls: 'bg-green-500/20 text-green-300' },
           !isDone && measurement.isFirst && { t: '첫 측정', cls: 'bg-emerald-500/20 text-emerald-300' },
@@ -3158,11 +3162,22 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
             </div>
             <div className="px-3 pb-2.5">
               <p className="text-[10px] text-gray-500 mb-1">측정 포인트</p>
-              {ptBadges.length > 0 ? (
-                <div className="flex flex-wrap gap-1">
-                  {ptBadges.map(b => (
-                    <span key={b.k} className={`text-[11px] font-semibold px-1.5 py-0.5 rounded-md border ${b.cls}`}>{b.name} {b.v}</span>
-                  ))}
+              {hasPtBadges ? (
+                <div className="flex flex-col gap-1">
+                  {ptRow1.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {ptRow1.map(b => (
+                        <span key={b.k} className={`text-[11px] font-semibold px-1.5 py-0.5 rounded-md border ${b.cls}`}>{b.name} {b.v}</span>
+                      ))}
+                    </div>
+                  )}
+                  {ptRow2.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {ptRow2.map(b => (
+                        <span key={b.k} className={`text-[11px] font-semibold px-1.5 py-0.5 rounded-md border ${b.cls}`}>{b.name} {b.v}</span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-red-500/20 text-red-300 border-red-400/40">{noPts ? '포인트 입력 필요' : '포인트 없음'}</span>
