@@ -2556,7 +2556,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                       const majorAbbr = { '질소가스': '질', '압축공기': '압', '용수': '용' };
                       const majorChipCls = { '질소가스': 'bg-purple-100 text-purple-700', '압축공기': 'bg-yellow-100 text-yellow-700', '용수': 'bg-teal-100 text-teal-700' };
                       const ptsChips = hasPts ? (
-                        <div className={`flex flex-wrap gap-0.5 ${isOther ? 'opacity-50' : ''}`}>
+                        <div className={`flex flex-wrap justify-end gap-0.5 ${isOther ? 'opacity-50' : ''}`}>
                           {catPts.nonComb.f > 0 && <span className="text-[9px] leading-none bg-blue-50 text-blue-700 px-0.5 py-0.5 rounded">부{catPts.nonComb.f}</span>}
                           {catPts.nonComb.l > 0 && <span className="text-[9px] leading-none bg-orange-50 text-orange-700 px-0.5 py-0.5 rounded">낙{catPts.nonComb.l}</span>}
                           {catPts.nonComb.s > 0 && <span className="text-[9px] leading-none bg-green-50 text-green-700 px-0.5 py-0.5 rounded">표{catPts.nonComb.s}</span>}
@@ -2602,12 +2602,13 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                         </div>
                       ) : (
                         <div className="flex items-center justify-between gap-0.5 mb-0.5">
-                          <div className="flex items-center gap-0.5">
+                          {/* 날짜·연장/휴가 배지는 자기 폭만큼 확보(shrink-0), 포인트 칩은 남은 폭을 전부 쓰며 오른쪽 끝에 붙는다 */}
+                          <div className="flex items-center gap-0.5 shrink-0">
                             <div className={dateNumClass}>{day}</div>
                             {overtimeBtn}
                             {blockedBadge}
                           </div>
-                          {ptsChips}
+                          {ptsChips && <div className="flex-1 min-w-0">{ptsChips}</div>}
                         </div>
                       );
                     })()}
