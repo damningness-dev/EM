@@ -196,13 +196,13 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   }); // [{ ts, changes:[msg,...] }] 저장할 때마다 누적되는 일정변경 알람 내역 (이 PC에 보관)
   const [showChangeHistory, setShowChangeHistory] = useState(false);
 
-  // 야근·휴가 기록 — 이 PC에만 보관(공유 데이터/동기화/백업 대상 아님). { 'yyyy-MM-dd': { hours, memo, leave } }
+  // 연장·휴가 기록 — 이 PC에만 보관(공유 데이터/동기화/백업 대상 아님). { 'yyyy-MM-dd': { hours, memo, leave } }
   // leave: '' | 'annual'(연차) | 'am'(오전반차) | 'pm'(오후반차)
   const OVERTIME_KEY = 'em-overtime';
   const [overtime, setOvertime] = useState(() => {
     try { return JSON.parse(localStorage.getItem(OVERTIME_KEY)) || {}; } catch { return {}; }
   });
-  const [overtimeTip, setOvertimeTip] = useState(null); // 야근·휴가 배지 호버 툴팁 { x, y, date, ot }
+  const [overtimeTip, setOvertimeTip] = useState(null); // 연장·휴가 배지 호버 툴팁 { x, y, date, ot }
   const [overtimeEdit, setOvertimeEdit] = useState(null); // { date, hours, memo, leave }
   const LEAVE_LABEL = { annual: '연차', am: '오전반차', pm: '오후반차' };
 
@@ -1700,11 +1700,11 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
         </div>
       )}
 
-      {/* 야근기록 (이 PC에만 저장) */}
+      {/* 연장기록 (이 PC에만 저장) */}
       {overtimeEdit && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/40" onClick={() => setOvertimeEdit(null)}>
           <div className="bg-white rounded-2xl shadow-2xl w-96 p-6" onClick={e => e.stopPropagation()}>
-            <h3 className="text-base font-bold text-gray-900 mb-1">야근 · 휴가 기록</h3>
+            <h3 className="text-base font-bold text-gray-900 mb-1">연장 · 휴가 기록</h3>
             <p className="text-sm text-gray-400 mb-1">{overtimeEdit.date}</p>
             <p className="text-[11px] text-amber-600 mb-4">이 PC에만 저장되며 공유·동기화·백업에 포함되지 않습니다.</p>
             <label className="block text-xs text-gray-500 mb-1">휴가</label>
@@ -1719,7 +1719,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                   }`}>{label}</button>
               ))}
             </div>
-            <label className="block text-xs text-gray-500 mb-1">야근 시간 (달력에 표시됩니다)</label>
+            <label className="block text-xs text-gray-500 mb-1">연장 시간 (달력에 표시됩니다)</label>
             <div className="flex items-center gap-2 mb-4">
               <input
                 type="number" min="0" max="24" step="0.5"
@@ -1736,7 +1736,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
               onChange={e => setOvertimeEdit(p => ({ ...p, memo: e.target.value }))}
               rows={4}
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 mb-5 resize-none"
-              placeholder="야근 사유, 작업 내용, 휴가 메모 등을 기록하세요"
+              placeholder="연장 사유, 작업 내용, 휴가 메모 등을 기록하세요"
             />
             <div className="flex gap-2 justify-end">
               {overtime[overtimeEdit.date] && (
@@ -3083,7 +3083,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
           <div className="fixed z-[180] pointer-events-none w-64 bg-gray-900 text-gray-100 rounded-xl shadow-2xl border border-gray-700 overflow-hidden"
             style={{ left: overtimeTip.x, top: overtimeTip.flip ? overtimeTip.top : overtimeTip.y, transform: overtimeTip.flip ? 'translateY(-100%)' : undefined }}>
             <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between gap-2">
-              <span className="text-xs font-semibold">{ot ? '야근 · 휴가 기록' : '야근 · 휴가 기록하기'}</span>
+              <span className="text-xs font-semibold">{ot ? '연장 · 휴가 기록' : '연장 · 휴가 기록하기'}</span>
               <span className="text-[10px] text-gray-500">{date}</span>
             </div>
             <div className="px-3 py-2 text-xs">
@@ -3091,12 +3091,12 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                 <>
                   <div className="flex flex-wrap gap-1">
                     {ot.leave && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-sky-500/20 text-sky-200 border-sky-400/40">{LEAVE_LABEL[ot.leave]}</span>}
-                    {ot.hours > 0 && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-amber-500/20 text-amber-200 border-amber-400/40">야근 {ot.hours}시간</span>}
+                    {ot.hours > 0 && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-amber-500/20 text-amber-200 border-amber-400/40">연장 {ot.hours}시간</span>}
                   </div>
                   {ot.memo && <p className="mt-1.5 text-gray-200 whitespace-pre-wrap break-words">{ot.memo}</p>}
                 </>
               ) : (
-                <p className="text-gray-300">눌러서 야근·연차·반차를 기록하세요.</p>
+                <p className="text-gray-300">눌러서 연장·연차·반차를 기록하세요.</p>
               )}
               <p className="mt-1.5 text-[10px] text-gray-500">{ot ? '클릭하여 수정 · ' : ''}이 PC에만 저장됩니다</p>
             </div>
