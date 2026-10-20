@@ -2555,16 +2555,27 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                       }`;
                       const majorAbbr = { '질소가스': '질소', '압축공기': '압축', '용수': '용' };
                       const majorChipCls = { '질소가스': 'bg-purple-100 text-purple-700', '압축공기': 'bg-yellow-100 text-yellow-700', '용수': 'bg-teal-100 text-teal-700' };
+                      // 포인트 칩은 두 행: 1행 부·낙·표·입자(+임시), 2행 질소·압축(·용수). 2행 칩이 있으면 1행이 비어도 자리를 유지해 항상 2번째 행에 둔다.
+                      const combEntries = Object.entries(catPts.combined).filter(([, v]) => v > 0);
+                      const row1Has = catPts.nonComb.f + catPts.nonComb.l + catPts.nonComb.s + catPts.nonComb.p + tempPtsTotal > 0;
                       const ptsChips = hasPts ? (
-                        <div className={`flex flex-wrap gap-0.5 ${isOther ? 'opacity-50' : ''}`}>
-                          {catPts.nonComb.f > 0 && <span className="text-[9px] leading-none bg-blue-50 text-blue-700 px-0.5 py-0.5 rounded">부{catPts.nonComb.f}</span>}
-                          {catPts.nonComb.l > 0 && <span className="text-[9px] leading-none bg-orange-50 text-orange-700 px-0.5 py-0.5 rounded">낙{catPts.nonComb.l}</span>}
-                          {catPts.nonComb.s > 0 && <span className="text-[9px] leading-none bg-green-50 text-green-700 px-0.5 py-0.5 rounded">표{catPts.nonComb.s}</span>}
-                          {catPts.nonComb.p > 0 && <span className="text-[9px] leading-none bg-pink-50 text-pink-700 px-0.5 py-0.5 rounded">입{catPts.nonComb.p}</span>}
-                          {Object.entries(catPts.combined).map(([major, v]) => v > 0 && (
-                            <span key={major} className={`text-[9px] leading-none px-0.5 py-0.5 rounded ${majorChipCls[major] || 'bg-purple-100 text-purple-700'}`}>{majorAbbr[major] || major.slice(0, 1)}{v}</span>
-                          ))}
-                          {tempPtsTotal > 0 && <span className="text-[9px] leading-none bg-gray-100 text-gray-500 px-0.5 py-0.5 rounded">임{tempPtsTotal}</span>}
+                        <div className={`flex flex-col items-end gap-0.5 ${isOther ? 'opacity-50' : ''}`}>
+                          {(row1Has || combEntries.length > 0) && (
+                            <div className="flex flex-wrap justify-end gap-0.5 min-h-[13px]">
+                              {catPts.nonComb.f > 0 && <span className="text-[9px] leading-none bg-blue-50 text-blue-700 px-0.5 py-0.5 rounded">부{catPts.nonComb.f}</span>}
+                              {catPts.nonComb.l > 0 && <span className="text-[9px] leading-none bg-orange-50 text-orange-700 px-0.5 py-0.5 rounded">낙{catPts.nonComb.l}</span>}
+                              {catPts.nonComb.s > 0 && <span className="text-[9px] leading-none bg-green-50 text-green-700 px-0.5 py-0.5 rounded">표{catPts.nonComb.s}</span>}
+                              {catPts.nonComb.p > 0 && <span className="text-[9px] leading-none bg-pink-50 text-pink-700 px-0.5 py-0.5 rounded">입자{catPts.nonComb.p}</span>}
+                              {tempPtsTotal > 0 && <span className="text-[9px] leading-none bg-gray-100 text-gray-500 px-0.5 py-0.5 rounded">임{tempPtsTotal}</span>}
+                            </div>
+                          )}
+                          {combEntries.length > 0 && (
+                            <div className="flex flex-wrap justify-end gap-0.5">
+                              {combEntries.map(([major, v]) => (
+                                <span key={major} className={`text-[9px] leading-none px-0.5 py-0.5 rounded ${majorChipCls[major] || 'bg-purple-100 text-purple-700'}`}>{majorAbbr[major] || major.slice(0, 1)}{v}</span>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ) : null;
                       const blockedBadge = isBlocked
@@ -2590,16 +2601,25 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                           {ot && ot.hours > 0 && <span className="font-semibold">{ot.hours}h</span>}
                         </button>
                       );
-                      // 첫 줄: 날짜 + 연장/휴가 배지(+공휴일명·비움), 둘째 줄: 포인트 칩(항상 아래 줄, 폭 전체 사용)
-                      return (
+                      return isHol ? (
                         <div className="mb-0.5">
                           <div className="flex items-center gap-0.5">
                             <div className={dateNumClass}>{day}</div>
                             {overtimeBtn}
-                            {isHol && <span className="text-[9px] leading-none text-red-500 truncate">{holidays[dateStr]}</span>}
+                            <span className="text-[9px] leading-none text-red-500 truncate">{holidays[dateStr]}</span>
                             {blockedBadge}
                           </div>
                           {ptsChips && <div className="mt-0.5">{ptsChips}</div>}
+                        </div>
+                      ) : (
+                        <div className="flex items-start justify-between gap-0.5 mb-0.5">
+                          {/* 날짜·연장/휴가 배지는 자기 폭만큼 확보(shrink-0), 포인트 칩은 남은 폭을 쓰며 오른쪽 끝에 붙는다 */}
+                          <div className="flex items-center gap-0.5 shrink-0 h-6">
+                            <div className={dateNumClass}>{day}</div>
+                            {overtimeBtn}
+                            {blockedBadge}
+                          </div>
+                          {ptsChips && <div className="flex-1 min-w-0">{ptsChips}</div>}
                         </div>
                       );
                     })()}
