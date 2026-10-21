@@ -3145,8 +3145,9 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
           <div className="fixed z-[180] pointer-events-none w-72 bg-gray-900 text-gray-100 rounded-xl shadow-2xl border border-gray-700 overflow-hidden"
             style={{ left: hoverTip.x, top: hoverTip.flip ? hoverTip.top : hoverTip.y, transform: hoverTip.flip ? 'translateY(-100%)' : undefined }}>
             <div className="px-3 py-2 border-b border-gray-700">
-              <span className="inline-block max-w-full truncate text-xs font-semibold px-1.5 py-0.5 rounded" style={getChipStyle(zone.category, zone.grade)}>
-                <GradeBadge grade={zone.grade} />{zone.name}-{measurement.num}
+              {/* 단계(P1/P2/P3/유지)만 검은 버튼, 이름은 일반 글자 */}
+              <span className="block max-w-full truncate text-xs font-semibold text-gray-100">
+                <GradeBadge grade={zone.grade} onDark />{zone.name}-{measurement.num}
               </span>
               {flags.length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-1.5">
@@ -3234,10 +3235,10 @@ const PT_TYPES = [
   { key: 'particle', label: '입', cls: 'text-pink-600' },
 ];
 // 등급(P1·P2·P3·유지)을 일정 이름 앞에 검은 배경 버튼 모양으로 표시 — 예: [P1]31호기
-function GradeBadge({ grade, size }) {
+function GradeBadge({ grade, size, onDark }) {
   if (!grade) return null;
   return (
-    <span className={`inline-block align-middle bg-gray-900 text-white font-bold rounded leading-none mr-1 ${size === 'md' ? 'text-[11px] px-1.5 py-1' : 'text-[9px] px-1 py-0.5'}`}>{grade}</span>
+    <span className={`inline-block align-middle ${onDark ? 'bg-black border border-gray-500' : 'bg-gray-900'} text-white font-bold rounded leading-none mr-1 ${size === 'md' ? 'text-[11px] px-1.5 py-1' : 'text-[9px] px-1 py-0.5'}`}>{grade}</span>
   );
 }
 
