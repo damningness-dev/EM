@@ -3149,10 +3149,9 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
             style={{ left: hoverTip.x, top: hoverTip.flip ? hoverTip.top : hoverTip.y, transform: hoverTip.flip ? 'translateY(-100%)' : undefined }}>
             <div className="px-3 py-2 border-b border-gray-700">
               {/* 단계(P1/P2/P3/유지)만 검은 버튼, 이름은 일반 글자 */}
-              <span className="flex items-center min-w-0 text-xs font-semibold text-gray-100">
-                <span className="shrink-0"><GradeBadge grade={zone.grade} onDark /></span>
-                <span className="truncate min-w-0">{zone.name}</span>
-                <span className="shrink-0">-{measurement.num}</span>
+              {/* 툴팁에서는 이름이 길어도 생략하지 않고 줄바꿈해 전부 보여준다 */}
+              <span className="block text-xs font-semibold text-gray-100 break-words">
+                <GradeBadge grade={zone.grade} onDark />{zone.name}-{measurement.num}
               </span>
               {flags.length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-1.5">
