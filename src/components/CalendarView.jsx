@@ -2643,7 +2643,6 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                       ))}
                       {schedEvts.map(({ zone, measurement }, i) => {
                         const bounds = getDragBounds(measurement, scheduleAvoid);
-                        const label = `${zone.name}[${zone.grade}]-${measurement.num}`;
                         const noPts = !(zone.points_surface || zone.points_float || zone.points_fall || zone.points_particle);
                         const isDone = completions.has(`${zone.id}_${measurement.num}`);
                         const mine = isMine(zone.id, measurement.num); // 본인 담당이면 눈에 띄게
@@ -2676,7 +2675,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                             <span className={`truncate flex-1 px-1 py-0.5 ${isDone ? 'line-through' : ''} ${(measurement.isFirst || measurement.isLast) ? 'font-semibold' : ''}`}>
                               {noPts && <span className="text-red-600 font-bold">*</span>}
                               {mine && <span className="font-bold">👤 </span>}
-                              {label}
+                              <GradeBadge grade={zone.grade} />{zone.name}-{measurement.num}
                             </span>
                             {measurement.isLast && <span className="w-1 shrink-0" style={{ backgroundColor: '#ef4444' }} />}
                           </div>
@@ -2928,7 +2927,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                             </div>
                           </div>
                           <p className={`text-sm font-medium break-words ${isDone ? 'text-gray-400 line-through' : 'text-gray-800'}`}>
-                            {zone.name}[{zone.grade}]
+                            <GradeBadge grade={zone.grade} size="md" />{zone.name}
                           </p>
                           {assignees[compKey] && (
                             <p className={`text-xs mt-0.5 ${assignees[compKey] === myName
@@ -3055,7 +3054,9 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                       className="text-xs font-medium text-gray-700 mb-1.5 truncate cursor-text"
                       title="더블클릭하여 구역명 수정"
                       onDoubleClick={() => { if (requireAdmin()) { setEditingZoneNameId(g.zone.id); setEditingZoneName(g.zone.name); } }}
-                    >{g.zone.name}[{g.zone.grade}]</p>
+                    >
+                      <GradeBadge grade={g.zone.grade} />{g.zone.name}
+                    </p>
                   )}
                   <div className="flex flex-wrap gap-1.5">
                     {g.occurrences.map((occ, i) => {
@@ -3145,7 +3146,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
             style={{ left: hoverTip.x, top: hoverTip.flip ? hoverTip.top : hoverTip.y, transform: hoverTip.flip ? 'translateY(-100%)' : undefined }}>
             <div className="px-3 py-2 border-b border-gray-700">
               <span className="inline-block max-w-full truncate text-xs font-semibold px-1.5 py-0.5 rounded" style={getChipStyle(zone.category, zone.grade)}>
-                {zone.name}[{zone.grade}]-{measurement.num}
+                <GradeBadge grade={zone.grade} />{zone.name}-{measurement.num}
               </span>
               {flags.length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-1.5">
@@ -3232,6 +3233,14 @@ const PT_TYPES = [
   { key: 'surface', label: '표', cls: 'text-green-600' },
   { key: 'particle', label: '입', cls: 'text-pink-600' },
 ];
+// 등급(P1·P2·P3·유지)을 일정 이름 앞에 검은 배경 버튼 모양으로 표시 — 예: [P1]31호기
+function GradeBadge({ grade, size }) {
+  if (!grade) return null;
+  return (
+    <span className={`inline-block align-middle bg-gray-900 text-white font-bold rounded leading-none mr-1 ${size === 'md' ? 'text-[11px] px-1.5 py-1' : 'text-[9px] px-1 py-0.5'}`}>{grade}</span>
+  );
+}
+
 const MAJOR_PT = { '질소가스': { label: '질', cls: 'text-purple-600' }, '압축공기': { label: '압', cls: 'text-yellow-700' } };
 
 // 구역 1건의 포인트 breakdown 스팬들 (통합 대분류는 하나로, 그 외 부/낙/표/입)
