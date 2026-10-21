@@ -2672,10 +2672,13 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                             onMouseLeave={() => setHoverTip(null)}
                           >
                             {measurement.isFirst && <span className="w-1 shrink-0" style={{ backgroundColor: '#22c55e' }} />}
-                            <span className={`truncate flex-1 px-1 py-0.5 ${isDone ? 'line-through' : ''} ${(measurement.isFirst || measurement.isLast) ? 'font-semibold' : ''}`}>
-                              {noPts && <span className="text-red-600 font-bold">*</span>}
-                              {mine && <span className="font-bold">👤 </span>}
-                              <GradeBadge grade={zone.grade} />{zone.name}-{measurement.num}
+                            {/* 이름이 길면 이름만 …로 줄이고, 앞의 단계 버튼과 뒤의 -회차는 항상 보이게 한다 */}
+                            <span className={`flex items-center min-w-0 flex-1 px-1 py-0.5 ${isDone ? 'line-through' : ''} ${(measurement.isFirst || measurement.isLast) ? 'font-semibold' : ''}`}>
+                              {noPts && <span className="text-red-600 font-bold shrink-0">*</span>}
+                              {mine && <span className="font-bold shrink-0">👤 </span>}
+                              <span className="shrink-0"><GradeBadge grade={zone.grade} /></span>
+                              <span className="truncate min-w-0">{zone.name}</span>
+                              <span className="shrink-0">-{measurement.num}</span>
                             </span>
                             {measurement.isLast && <span className="w-1 shrink-0" style={{ backgroundColor: '#ef4444' }} />}
                           </div>
@@ -3146,8 +3149,10 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
             style={{ left: hoverTip.x, top: hoverTip.flip ? hoverTip.top : hoverTip.y, transform: hoverTip.flip ? 'translateY(-100%)' : undefined }}>
             <div className="px-3 py-2 border-b border-gray-700">
               {/* 단계(P1/P2/P3/유지)만 검은 버튼, 이름은 일반 글자 */}
-              <span className="block max-w-full truncate text-xs font-semibold text-gray-100">
-                <GradeBadge grade={zone.grade} onDark />{zone.name}-{measurement.num}
+              <span className="flex items-center min-w-0 text-xs font-semibold text-gray-100">
+                <span className="shrink-0"><GradeBadge grade={zone.grade} onDark /></span>
+                <span className="truncate min-w-0">{zone.name}</span>
+                <span className="shrink-0">-{measurement.num}</span>
               </span>
               {flags.length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-1.5">
