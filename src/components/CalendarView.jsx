@@ -1059,6 +1059,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
 
   // 단계 버튼(검은 배경) 글씨색 — 단계별 설정 색을 검은 배경에서도 보이도록 흰색과 섞어 밝게 만든다
   function gradeBtnColor(grade) {
+    if (grade === '유지관리') return '#ffffff'; // 남색은 검은 배경에서 안 보여 흰색 고정
     const hex = (chipColors[`grade_${grade}`] ?? DEFAULT_CHIP_COLORS[`grade_${grade}`])?.text;
     const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
     if (!m) return '#ffffff';
@@ -2687,8 +2688,8 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                               {noPts && <span className="text-red-600 font-bold shrink-0">*</span>}
                               {mine && <span className="font-bold shrink-0">👤 </span>}
                               <span className="shrink-0"><GradeBadge color={gradeBtnColor(zone.grade)} grade={zone.grade} /></span>
-                              <span className="truncate min-w-0 text-black">{zone.name}</span>
-                              <span className="shrink-0 text-black">-{measurement.num}</span>
+                              <span className="truncate min-w-0">{zone.name}</span>
+                              <span className="shrink-0">-{measurement.num}</span>
                             </span>
                             {measurement.isLast && <span className="w-1 shrink-0" style={{ backgroundColor: '#ef4444' }} />}
                           </div>
