@@ -2924,9 +2924,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                         >
                           <div className="flex items-center justify-between gap-1 mb-1">
                             <div className="flex items-center gap-1">
-                              <span className="text-xs font-medium px-1.5 py-0.5 rounded" style={getChipStyle(zone.category, zone.grade)}>
-                                {zone.grade}
-                              </span>
+                              <GradeBadge color={gradeBtnColor(zone.grade)} grade={zone.grade} size="md" />
                               {measurement.isFirst && <span className="text-xs text-green-600 font-bold">첫측정</span>}
                               {measurement.isLast && <span className="text-xs text-red-600 font-bold">마지막</span>}
                               {isDone && <span className="text-xs bg-green-500 text-white px-1 py-0.5 rounded font-bold">✓완료</span>}
@@ -2941,7 +2939,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                             </div>
                           </div>
                           <p className={`text-sm font-medium break-words ${isDone ? 'text-gray-400 line-through' : 'text-gray-800'}`}>
-                            <GradeBadge color={gradeBtnColor(zone.grade)} grade={zone.grade} size="md" />{zone.name}
+                            {zone.name}
                           </p>
                           {assignees[compKey] && (
                             <p className={`text-xs mt-0.5 ${assignees[compKey] === myName
