@@ -1057,6 +1057,16 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     return { backgroundColor: cat.bg, borderColor: cat.border, borderWidth: '1px', borderStyle: 'solid', color: grd.text };
   }
 
+  // 단계 버튼(검은 배경) 글씨색 — 단계별 설정 색을 검은 배경에서도 보이도록 흰색과 섞어 밝게 만든다
+  function gradeBtnColor(grade) {
+    const hex = (chipColors[`grade_${grade}`] ?? DEFAULT_CHIP_COLORS[`grade_${grade}`])?.text;
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+    if (!m) return '#ffffff';
+    const n = parseInt(m[1], 16);
+    const mix = (c) => Math.round(c + (255 - c) * 0.55).toString(16).padStart(2, '0');
+    return `#${mix((n >> 16) & 255)}${mix((n >> 8) & 255)}${mix(n & 255)}`;
+  }
+
   // 교정 배지 색상 — 만료/7일 이내/이번달 구분 없이 하나의 커스터마이즈 가능한 색으로 통일.
   function getCalibChipStyle() {
     const c = chipColors.calib ?? DEFAULT_CHIP_COLORS.calib;
@@ -2676,9 +2686,9 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                             <span className={`flex items-center min-w-0 flex-1 px-1 py-0.5 ${isDone ? 'line-through' : ''} ${(measurement.isFirst || measurement.isLast) ? 'font-semibold' : ''}`}>
                               {noPts && <span className="text-red-600 font-bold shrink-0">*</span>}
                               {mine && <span className="font-bold shrink-0">👤 </span>}
-                              <span className="shrink-0"><GradeBadge grade={zone.grade} /></span>
-                              <span className="truncate min-w-0">{zone.name}</span>
-                              <span className="shrink-0">-{measurement.num}</span>
+                              <span className="shrink-0"><GradeBadge color={gradeBtnColor(zone.grade)} grade={zone.grade} /></span>
+                              <span className="truncate min-w-0 text-black">{zone.name}</span>
+                              <span className="shrink-0 text-black">-{measurement.num}</span>
                             </span>
                             {measurement.isLast && <span className="w-1 shrink-0" style={{ backgroundColor: '#ef4444' }} />}
                           </div>
@@ -2930,7 +2940,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                             </div>
                           </div>
                           <p className={`text-sm font-medium break-words ${isDone ? 'text-gray-400 line-through' : 'text-gray-800'}`}>
-                            <GradeBadge grade={zone.grade} size="md" />{zone.name}
+                            <GradeBadge color={gradeBtnColor(zone.grade)} grade={zone.grade} size="md" />{zone.name}
                           </p>
                           {assignees[compKey] && (
                             <p className={`text-xs mt-0.5 ${assignees[compKey] === myName
@@ -3058,7 +3068,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                       title="더블클릭하여 구역명 수정"
                       onDoubleClick={() => { if (requireAdmin()) { setEditingZoneNameId(g.zone.id); setEditingZoneName(g.zone.name); } }}
                     >
-                      <GradeBadge grade={g.zone.grade} />{g.zone.name}
+                      <GradeBadge color={gradeBtnColor(g.zone.grade)} grade={g.zone.grade} />{g.zone.name}
                     </p>
                   )}
                   <div className="flex flex-wrap gap-1.5">
@@ -3151,7 +3161,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
               {/* 단계(P1/P2/P3/유지)만 검은 버튼, 이름은 일반 글자 */}
               {/* 툴팁에서는 이름이 길어도 생략하지 않고 줄바꿈해 전부 보여준다 */}
               <span className="block text-xs font-semibold text-gray-100 break-words">
-                <GradeBadge grade={zone.grade} onDark />{zone.name}-{measurement.num}
+                <GradeBadge color={gradeBtnColor(zone.grade)} grade={zone.grade} onDark />{zone.name}-{measurement.num}
               </span>
               {flags.length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-1.5">
@@ -3239,10 +3249,11 @@ const PT_TYPES = [
   { key: 'particle', label: '입', cls: 'text-pink-600' },
 ];
 // 등급(P1·P2·P3·유지)을 일정 이름 앞에 검은 배경 버튼 모양으로 표시 — 예: [P1]31호기
-function GradeBadge({ grade, size, onDark }) {
+// onDark(일정 툴팁)에서만 "유지관리"를 전체 이름으로, 그 외에는 "유지"로 줄여 보인다.
+function GradeBadge({ grade, size, onDark, color }) {
   if (!grade) return null;
   return (
-    <span className={`inline-block align-middle ${onDark ? 'bg-black border border-gray-500' : 'bg-gray-900'} text-white font-bold rounded leading-none mr-1 ${size === 'md' ? 'text-[11px] px-1.5 py-1' : 'text-[9px] px-1 py-0.5'}`}>{grade}</span>
+    <span className={`inline-block align-middle ${onDark ? 'bg-black border border-gray-500' : 'bg-gray-900'} font-bold rounded leading-none mr-1 ${size === 'md' ? 'text-[11px] px-1.5 py-1' : 'text-[9px] px-1 py-0.5'}`} style={{ color: color || '#ffffff' }}>{!onDark && grade === '유지관리' ? '유지' : grade}</span>
   );
 }
 
