@@ -2687,7 +2687,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                             <span className={`flex items-center min-w-0 flex-1 px-1 py-0.5 ${isDone ? 'line-through' : ''} ${(measurement.isFirst || measurement.isLast) ? 'font-semibold' : ''}`}>
                               {noPts && <span className="text-red-600 font-bold shrink-0">*</span>}
                               {mine && <span className="font-bold shrink-0">👤 </span>}
-                              <span className="shrink-0"><GradeBadge color={gradeBtnColor(zone.grade)} grade={zone.grade} /></span>
+                              <span className="shrink-0 flex items-center"><GradeBadge color={gradeBtnColor(zone.grade)} grade={zone.grade} /></span>
                               <span className="truncate min-w-0">{zone.name}</span>
                               <span className="shrink-0 ml-0.5">[{measurement.num}/{totalCount(zone) || measurement.num}]</span>
                             </span>
@@ -3252,7 +3252,7 @@ const PT_TYPES = [
 function GradeBadge({ grade, size, onDark, color }) {
   if (!grade) return null;
   return (
-    <span className={`inline-block align-middle ${onDark ? 'bg-black border border-gray-500' : 'bg-gray-900'} font-bold rounded leading-none mr-1 ${size === 'md' ? 'text-[11px] px-1.5 py-1' : 'text-[9px] px-1 py-0.5'}`} style={{ color: color || '#ffffff' }}>{!onDark && grade === '유지관리' ? '유지' : grade}</span>
+    <span className={`inline-flex items-center align-middle ${onDark ? 'bg-black border border-gray-500' : 'bg-gray-900'} font-bold rounded leading-none mr-1 ${size === 'md' ? 'text-[11px] px-1.5 py-1' : 'text-[9px] px-1 py-0.5'}`} style={{ color: color || '#ffffff' }}>{!onDark && grade === '유지관리' ? '유지' : grade}</span>
   );
 }
 
