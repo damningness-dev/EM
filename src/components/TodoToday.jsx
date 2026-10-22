@@ -69,7 +69,17 @@ function todoNaturalMatch(todo, dateStr) {
   const interval = Math.max(1, todo.interval || 1);
   const dayDiff = Math.round((d - base) / 86400000);
   if (repeat === 'daily') return dayDiff >= 0 && dayDiff % interval === 0;
-  if (repeat === 'weekly') return dayDiff >= 0 && dayDiff % (7 * interval) === 0;
+  if (repeat === 'weekly') {
+    if (dayDiff < 0) return false;
+    // 요일을 여러 개 고른 경우(weekDays: 0=일 … 6=토): 시작일이 속한 주(일요일 시작)를 0주로 보고
+    // interval주마다, 고른 요일 모두에서 발생한다. 요일을 고르지 않은 예전 할일은 시작일과 같은 요일.
+    const wd = Array.isArray(todo.weekDays) ? todo.weekDays : [];
+    if (wd.length === 0) return dayDiff % (7 * interval) === 0;
+    if (!wd.includes(d.getDay())) return false;
+    const baseSun = Math.round((base - base.getDay() * 86400000) / 86400000);
+    const daySun = Math.round((d - d.getDay() * 86400000) / 86400000);
+    return Math.round((daySun - baseSun) / 7) % interval === 0;
+  }
   const per = repeat === 'monthly' ? 1 : repeat === 'quarter' ? 3 : repeat === 'half' ? 6 : repeat === 'yearly' ? 12 : 0;
   if (per > 0) {
     const step = per * interval;
@@ -131,6 +141,10 @@ function repeatText(todo) {
   if (r === 'none') return todo.due ? '마감까지 매일' : '';
   const iv = todo.interval > 1 ? todo.interval : '';
   const shiftSuffix = todo.holidayShift === 'before' ? ' (휴일→전날)' : todo.holidayShift === 'after' ? ' (휴일→다음날)' : '';
+  if (r === 'weekly' && Array.isArray(todo.weekDays) && todo.weekDays.length > 0) {
+    const days = [...todo.weekDays].sort((a, b) => a - b).map(i => DOW[i]).join('·');
+    return `${todo.interval > 1 ? `${todo.interval}주마다 ` : '매주 '}${days}${shiftSuffix}`;
+  }
   if (r === 'monthly' && todo.monthlyMode === 'nthWeekday') return `${iv}매월 ${NTH_LABEL[todo.nth || 1]} ${DOW[todo.dow || 0]}요일${shiftSuffix}`;
   if (r === 'monthly' && todo.monthlyMode === 'day') return `${iv}매월 ${todo.monthlyDay || ''}일${shiftSuffix}`;
   return iv + REPEAT_LABEL[r] + shiftSuffix;
@@ -487,7 +501,7 @@ export default function TodoToday({ currentMember }) {
   const blankForm = {
     title: '', date: todayStr(), due: '', note: '',
     // 일정 반복
-    repeat: 'none', interval: 1, monthlyMode: 'day', monthlyDay: new Date().getDate(), nth: 1, dow: new Date().getDay(),
+    repeat: 'none', interval: 1, weekDays: [new Date().getDay()], monthlyMode: 'day', monthlyDay: new Date().getDate(), nth: 1, dow: new Date().getDay(),
     holidayShift: 'none',
     // 알람
     alarmEnabled: false, alarmMode: 'atTime', alarmTime: '09:00', alarmMinBefore: 30, alarmDayBefore: 1, alarmBase: 'each',
@@ -593,6 +607,10 @@ export default function TodoToday({ currentMember }) {
       due: f.due || '',
       repeat: f.repeat || 'none',
       interval: Math.max(1, parseInt(f.interval) || 1),
+      // 매주 반복의 요일(여러 개 가능) — 하나도 안 골랐으면 시작일 요일
+      weekDays: f.repeat === 'weekly'
+        ? ((f.weekDays || []).length > 0 ? [...f.weekDays].sort((a, b) => a - b) : [new Date((f.date || todayStr()) + 'T00:00:00').getDay()])
+        : [],
       monthlyMode: f.monthlyMode || 'day',
       monthlyDay: Math.max(1, Math.min(31, parseInt(f.monthlyDay) || 1)),
       nth: f.nth || 1, dow: f.dow ?? 0,
@@ -630,6 +648,7 @@ export default function TodoToday({ currentMember }) {
     setTodoForm({
       title: t.title, date: t.date || todayStr(), due: t.due || '', note: t.note || '',
       repeat: t.repeat || 'none', interval: t.interval || 1,
+      weekDays: Array.isArray(t.weekDays) && t.weekDays.length > 0 ? t.weekDays : [t.date ? new Date(t.date + 'T00:00:00').getDay() : new Date().getDay()],
       monthlyMode: t.monthlyMode || 'day', monthlyDay: t.monthlyDay || new Date(t.date + 'T00:00:00').getDate() || 1,
       nth: t.nth || 1, dow: t.dow ?? (t.date ? new Date(t.date + 'T00:00:00').getDay() : 0),
       holidayShift: t.holidayShift || 'none',
@@ -780,6 +799,26 @@ export default function TodoToday({ currentMember }) {
                   className="w-12 border border-gray-300 rounded px-1 py-1 text-sm text-center" />
                 {todoForm.repeat === 'daily' ? '일' : todoForm.repeat === 'weekly' ? '주' : todoForm.repeat === 'monthly' ? '개월' : todoForm.repeat === 'quarter' ? '분기' : todoForm.repeat === 'half' ? '반기' : '년'}마다
               </label>
+            )}
+            {todoForm.repeat === 'weekly' && (
+              <div className="flex items-center gap-1" title="반복할 요일을 하나 이상 선택하세요">
+                <span className="text-xs text-gray-600 mr-0.5">요일</span>
+                {DOW.map((d, i) => {
+                  const on = (todoForm.weekDays || []).includes(i);
+                  return (
+                    <button key={i} type="button"
+                      onClick={() => setTodoForm(f => {
+                        const cur = f.weekDays || [];
+                        const next = cur.includes(i) ? cur.filter(x => x !== i) : [...cur, i];
+                        return { ...f, weekDays: next.length > 0 ? next : cur }; // 최소 1개는 유지
+                      })}
+                      className={`w-7 h-7 text-xs rounded-full border transition-colors ${on
+                        ? (i === 0 ? 'bg-red-500 text-white border-red-500' : i === 6 ? 'bg-blue-500 text-white border-blue-500' : 'bg-gray-800 text-white border-gray-800')
+                        : 'bg-white text-gray-500 border-gray-300 hover:bg-gray-50'}`}
+                    >{d}</button>
+                  );
+                })}
+              </div>
             )}
             {todoForm.repeat === 'monthly' && (
               <>

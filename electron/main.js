@@ -1050,7 +1050,17 @@ function todoNaturalMatch(todo, dateStr) {
   const interval = Math.max(1, todo.interval || 1);
   const dayDiff = Math.round((d - base) / 86400000);
   if (repeat === 'daily') return dayDiff >= 0 && dayDiff % interval === 0;
-  if (repeat === 'weekly') return dayDiff >= 0 && dayDiff % (7 * interval) === 0;
+  if (repeat === 'weekly') {
+    if (dayDiff < 0) return false;
+    // 요일을 여러 개 고른 경우(weekDays: 0=일 … 6=토): 시작일이 속한 주(일요일 시작)를 0주로 보고
+    // interval주마다, 고른 요일 모두에서 발생한다. 요일을 고르지 않은 예전 할일은 시작일과 같은 요일.
+    const wd = Array.isArray(todo.weekDays) ? todo.weekDays : [];
+    if (wd.length === 0) return dayDiff % (7 * interval) === 0;
+    if (!wd.includes(d.getDay())) return false;
+    const baseSun = Math.round((base - base.getDay() * 86400000) / 86400000);
+    const daySun = Math.round((d - d.getDay() * 86400000) / 86400000);
+    return Math.round((daySun - baseSun) / 7) % interval === 0;
+  }
   // 월/분기/반기/년
   const per = repeat === 'monthly' ? 1 : repeat === 'quarter' ? 3 : repeat === 'half' ? 6 : repeat === 'yearly' ? 12 : 0;
   if (per > 0) {
