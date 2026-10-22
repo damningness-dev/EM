@@ -107,12 +107,16 @@ function manualScaleFontPx(percent) {
 
 // 인쇄 표시 옵션 — 등급 버튼(P1·P2·P3·유지)과 일정 뒤 회차([1/12])를 끄고 켠다. 자동 맞춤·수동
 // 배율 모두에 적용된다(숨기면 칸 안 공간이 늘어 자동 맞춤의 글씨도 더 크게 잡힌다).
-function printToggleCss(prefix, { showGrade, showRound, showOt, showLegend }) {
+function printToggleCss(prefix, { showGrade, showRound, showOt, showLegend, showDone }) {
   return `
     ${showGrade ? '' : `${prefix} .cal-grade-btn { display: none !important; }`}
     ${showRound ? '' : `${prefix} .cal-round { display: none !important; }`}
     ${showOt ? '' : `${prefix} .cal-ot-btn { display: none !important; }`}
     ${showLegend ? '' : `${prefix} .cal-legend { display: none !important; }`}
+    ${showDone ? '' : `
+      ${prefix} .cal-done { opacity: 1 !important; text-decoration: none !important; }
+      ${prefix} .cal-done-row { background-color: transparent !important; }
+      ${prefix} .cal-done-badge { visibility: hidden !important; }`}
   `;
 }
 
@@ -375,14 +379,17 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   const [printShowLegend, setPrintShowLegend] = useState(() => { // 인쇄에 하단 범례 표시
     try { return JSON.parse(localStorage.getItem('em-print-scale'))?.showLegend !== false; } catch { return true; }
   });
+  const [printShowDone, setPrintShowDone] = useState(() => { // 인쇄에 완료 표시(취소선·흐림·완료 배지) 표시
+    try { return JSON.parse(localStorage.getItem('em-print-scale'))?.showDone !== false; } catch { return true; }
+  });
   const [printCellPercent, setPrintCellPercent] = useState(() => loadScalePref('cell')); // 셀 비율(주말 칸 폭, 달력)
   const [printHeightPercent, setPrintHeightPercent] = useState(() => { // 높이 배율(0 = 모든 주 같은 높이)
     try { const v = JSON.parse(localStorage.getItem('em-print-scale'))?.height; return Number.isFinite(v) ? v : 0; } catch { return 0; }
   });
   const [printZoomPercent, setPrintZoomPercent] = useState(() => loadScalePref('zoom')); // 표 보기 전체 크기
   useEffect(() => {
-    try { localStorage.setItem('em-print-scale', JSON.stringify({ mode: printScaleMode, percent: printScalePercent, button: printButtonPercent, cell: printCellPercent, height: printHeightPercent, zoom: printZoomPercent, showGrade: printShowGrade, showRound: printShowRound, showOt: printShowOt, showLegend: printShowLegend })); } catch { /* ignore */ }
-  }, [printScaleMode, printScalePercent, printButtonPercent, printCellPercent, printHeightPercent, printZoomPercent, printShowGrade, printShowRound, printShowOt, printShowLegend]);
+    try { localStorage.setItem('em-print-scale', JSON.stringify({ mode: printScaleMode, percent: printScalePercent, button: printButtonPercent, cell: printCellPercent, height: printHeightPercent, zoom: printZoomPercent, showGrade: printShowGrade, showRound: printShowRound, showOt: printShowOt, showLegend: printShowLegend, showDone: printShowDone })); } catch { /* ignore */ }
+  }, [printScaleMode, printScalePercent, printButtonPercent, printCellPercent, printHeightPercent, printZoomPercent, printShowGrade, printShowRound, printShowOt, printShowLegend, printShowDone]);
 
   // 수동 배율 미리보기 — 실제 인쇄와 똑같은 .print-portal 레이아웃 규칙을 쓰는
   // 달력 사본을 배율 설정 팝오버 안에 작게(transform:scale) 그려서, 인쇄해보지
@@ -404,7 +411,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     container.appendChild(styleTag);
     container.appendChild(clone);
     const P = '.print-portal.print-preview-box';
-    const toggle = printToggleCss(P, { showGrade: printShowGrade, showRound: printShowRound, showOt: printShowOt, showLegend: printShowLegend });
+    const toggle = printToggleCss(P, { showGrade: printShowGrade, showRound: printShowRound, showOt: printShowOt, showLegend: printShowLegend, showDone: printShowDone });
     if (viewMode === 'table') {
       // 실제 표 인쇄와 같은 규칙 — 높이 제한 없이 표 전체가 흐르고(여러 페이지), 수동이면 zoom 적용
       styleTag.textContent = `
@@ -432,7 +439,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
       })();
     }
     return () => { cancelled = true; };
-  }, [showPrintScale, printScaleMode, viewMode, printScalePercent, printButtonPercent, printCellPercent, printHeightPercent, printZoomPercent, printShowGrade, printShowRound, printShowOt, printShowLegend, weekStart]);
+  }, [showPrintScale, printScaleMode, viewMode, printScalePercent, printButtonPercent, printCellPercent, printHeightPercent, printZoomPercent, printShowGrade, printShowRound, printShowOt, printShowLegend, printShowDone, weekStart]);
   const [optimizeCapacities, setOptimizeCapacities] = useState(() => {
     try {
       const saved = localStorage.getItem('em-daily-capacities');
@@ -935,7 +942,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     // @page는 선택자로 조건부 지정이 안 되므로, 별도 <style>을 끼워 넣어
     // index.css의 기본 규칙을 상황에 맞게 덮어쓴다.
     const isTable = viewMode === 'table';
-    const toggleCss = printToggleCss('.print-portal', { showGrade: printShowGrade, showRound: printShowRound, showOt: printShowOt, showLegend: printShowLegend });
+    const toggleCss = printToggleCss('.print-portal', { showGrade: printShowGrade, showRound: printShowRound, showOt: printShowOt, showLegend: printShowLegend, showDone: printShowDone });
     const styleEl = document.createElement('style');
     document.head.appendChild(styleEl);
     // 수동 배율 — 표는 zoom으로 전체를 비례 확대/축소(표는 여러 페이지로 자연스럽게
@@ -2457,6 +2464,10 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                       <input type="checkbox" checked={printShowLegend} onChange={e => setPrintShowLegend(e.target.checked)} />
                       범례 표시
                     </label>
+                    <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer select-none" title="완료된 일정의 취소선·흐리게 표시와 표의 완료 배지">
+                      <input type="checkbox" checked={printShowDone} onChange={e => setPrintShowDone(e.target.checked)} />
+                      완료 표시
+                    </label>
                   </div>
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 mb-1.5 cursor-pointer select-none">
                     <input type="radio" checked={printScaleMode === 'auto'} onChange={() => setPrintScaleMode('auto')} />
@@ -2798,7 +2809,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                         <div
                           key={`t${i}`}
                           onClick={(e) => e.stopPropagation()}
-                          className={`text-xs px-1 py-0.5 rounded truncate bg-orange-50 border border-orange-200 text-orange-600 ${t.done ? 'line-through opacity-60' : ''}`}
+                          className={`text-xs px-1 py-0.5 rounded truncate bg-orange-50 border border-orange-200 text-orange-600 ${t.done ? 'cal-done line-through opacity-60' : ''}`}
                           title={`${t.name}[임시]${t.done ? ' [완료]' : ''}`}
                         >{t.name}[임시]</div>
                       ))}
@@ -2827,14 +2838,14 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                             } : undefined}
                             onDragEnd={(!isDone && adminUnlocked) ? () => setDragOverDay(null) : undefined}
                             onClick={(e) => e.stopPropagation()}
-                            className={`text-xs rounded overflow-hidden flex items-stretch min-w-0 ${isDone ? 'opacity-60 cursor-default' : 'cursor-grab active:cursor-grabbing'} ${mine ? 'ring-2 ring-indigo-500' : ''} ${flashTarget?.zoneId === zone.id && flashTarget?.num === measurement.num ? 'flash-highlight' : ''}`}
+                            className={`text-xs rounded overflow-hidden flex items-stretch min-w-0 ${isDone ? 'cal-done opacity-60 cursor-default' : 'cursor-grab active:cursor-grabbing'} ${mine ? 'ring-2 ring-indigo-500' : ''} ${flashTarget?.zoneId === zone.id && flashTarget?.num === measurement.num ? 'flash-highlight' : ''}`}
                             style={getChipStyle(zone.category, zone.grade)}
                             onMouseEnter={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHoverTip({ x: Math.max(8, Math.min(r.left, window.innerWidth - 300)), y: r.bottom + 6, top: r.top - 6, flip: r.bottom + 190 > window.innerHeight, zone, measurement, isDone, mine, noPts }); }}
                             onMouseLeave={() => setHoverTip(null)}
                           >
                             {measurement.isFirst && <span className="w-1 shrink-0" style={{ backgroundColor: '#22c55e' }} />}
                             {/* 이름이 길면 이름만 …로 줄이고, 앞의 단계 버튼과 뒤의 -회차는 항상 보이게 한다 */}
-                            <span className={`cal-chip-pad flex items-center min-w-0 flex-1 px-1 py-0.5 ${isDone ? 'line-through' : ''} ${(measurement.isFirst || measurement.isLast) ? 'font-semibold' : ''}`}>
+                            <span className={`cal-chip-pad flex items-center min-w-0 flex-1 px-1 py-0.5 ${isDone ? 'cal-done line-through' : ''} ${(measurement.isFirst || measurement.isLast) ? 'font-semibold' : ''}`}>
                               {noPts && <span className="text-red-600 font-bold shrink-0">*</span>}
                               {mine && <span className="font-bold shrink-0">👤 </span>}
                               <span className="shrink-0 flex items-center"><GradeBadge color={gradeBtnColor(zone.grade)} grade={zone.grade} /></span>
@@ -3508,7 +3519,7 @@ function ScheduleTable({ rows, completions, assignees = {}, adminUnlocked, membe
     const alignCls = meta.align === 'left' ? '' : 'text-center';
     if (key === 'date') return <td key={key} className={`${cellBase} font-semibold ${dowCls}`}>{ri === 0 ? g.ds : ''}</td>;
     if (key === 'dow') return <td key={key} className={`${cellBase} text-center font-semibold ${dowCls}`}>{ri === 0 ? DOW[dow] : ''}</td>;
-    if (key === 'zone') return <td key={key} className={`${cellBase} truncate`}><span className={`inline-flex items-center max-w-full px-1 py-0.5 rounded ${done ? 'line-through opacity-60' : ''}`} style={getChipStyle(zone.category, zone.grade)}><GradeBadge color={gradeBtnColor?.(zone.grade)} grade={zone.grade} /><span className="truncate">{zone.name}</span></span></td>;
+    if (key === 'zone') return <td key={key} className={`${cellBase} truncate`}><span className={`inline-flex items-center max-w-full px-1 py-0.5 rounded ${done ? 'cal-done line-through opacity-60' : ''}`} style={getChipStyle(zone.category, zone.grade)}><GradeBadge color={gradeBtnColor?.(zone.grade)} grade={zone.grade} /><span className="truncate">{zone.name}</span></span></td>;
     if (key === 'num') { const total = totalCount(zone) || measurement.num; const numCls = measurement.isFirst ? 'text-green-600' : measurement.isLast ? 'text-red-600' : 'text-gray-700'; return <td key={key} className={`${cellBase} text-center font-bold ${numCls}`}>{measurement.num}/{total}회</td>; }
     if (key === 'assignee') {
       const who = assignees[`${zone.id}_${measurement.num}`] || '';
@@ -3528,7 +3539,7 @@ function ScheduleTable({ rows, completions, assignees = {}, adminUnlocked, membe
         </td>
       );
     }
-    if (key === 'status') return <td key={key} className={`${cellBase} text-center`}><span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${done ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{done ? '완료' : '예정'}</span></td>;
+    if (key === 'status') return <td key={key} className={`${cellBase} text-center`}><span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${done ? 'cal-done-badge bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{done ? '완료' : '예정'}</span></td>;
     // 포인트 컬럼
     const v = ptValue(zone, key);
     return <td key={key} className={`${cellBase} ${alignCls} ${v > 0 ? PT_CLS[key] + ' font-medium' : 'text-gray-300'}`}>{v || 0}</td>;
@@ -3579,7 +3590,7 @@ function ScheduleTable({ rows, completions, assignees = {}, adminUnlocked, membe
                   return (
                     <tr key={`${zone.id}_${measurement.num}`}
                       onDoubleClick={() => onToggleDone(zone, measurement)}
-                      className={`cursor-pointer hover:bg-blue-50/40 ${done ? 'bg-green-50/40' : ''}`}
+                      className={`cursor-pointer hover:bg-blue-50/40 ${done ? 'cal-done-row bg-green-50/40' : ''}`}
                       title="더블클릭으로 완료 처리">
                       {colOrder.map(key => bodyCell(key, { zone, measurement, ri, g, dow, dowCls }))}
                     </tr>
