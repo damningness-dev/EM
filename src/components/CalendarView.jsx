@@ -830,7 +830,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   function handleExportExcel() {
     const DOW = ['일', '월', '화', '수', '목', '금', '토'];
     const columns = [
-      { label: '날짜', width: 12 }, { label: '요일', width: 6 }, { label: '구분', width: 22 }, { label: '회차', width: 8 },
+      { label: '날짜', width: 12 }, { label: '요일', width: 6 }, { label: '일정명', width: 26 }, { label: '구분', width: 10 }, { label: '회차', width: 8 },
       { label: '부유균', width: 9 }, { label: '낙하균', width: 9 }, { label: '표면균', width: 9 }, { label: '부유입자', width: 9 },
       { label: '질소', width: 8 }, { label: '압축', width: 8 }, { label: '완료여부', width: 10 },
     ];
@@ -838,7 +838,9 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
       const d = new Date(ds + 'T00:00:00');
       const done = completions.has(`${zone.id}_${measurement.num}`);
       return [
-        ds, DOW[d.getDay()], `${zone.name}[${zone.grade}]`, measurement.num,
+        // 일정명 / 구분(P1·P2·P3·유지관리) 열을 나누고, 회차는 "현재/전체"(예: 1/12)로 표기한다.
+        // 회차는 문자열이라 엑셀이 날짜로 바꾸지 않는다.
+        ds, DOW[d.getDay()], zone.name, zone.grade, `${measurement.num}/${totalCount(zone) || measurement.num}`,
         ptValue(zone, 'float') || '', ptValue(zone, 'fall') || '', ptValue(zone, 'surface') || '', ptValue(zone, 'particle') || '',
         ptValue(zone, 'nitro') || '', ptValue(zone, 'comp') || '',
         done ? '완료' : '예정',
