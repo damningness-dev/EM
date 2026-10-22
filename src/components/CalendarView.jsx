@@ -105,6 +105,36 @@ function manualScaleFontPx(percent) {
   return Math.max(3, Math.min(16, 8 * (percent || 100) / 100));
 }
 
+// 수동 인쇄 배율(달력) — 세 가지를 따로 조절한다.
+//  · font   글씨 배율: 칸 안 모든 글씨 크기
+//  · button 버튼 배율: 일정 박스·단계 버튼·포인트 칩·연장/휴가 배지·날짜 원의 크기(여백·글씨)
+//  · zoom   스케일 배율: 달력 전체를 같은 비율로 확대/축소(페이지 크기는 그대로 — 내용 밀도가 바뀜)
+// prefix는 실제 인쇄(.print-portal)와 설정창 미리보기(.print-portal.print-preview-box)가 같이 쓴다.
+function manualCalendarCss(prefix, { font, button, zoom }) {
+  const f = manualScaleFontPx(font);
+  const b = Math.max(0.3, (button || 100) / 100);
+  const z = Math.max(0.3, (zoom || 100) / 100);
+  const dot = Math.max(6, Math.round(f * 1.6 * b));
+  const r = (n) => Math.round(n * 100) / 100;
+  return `
+    ${prefix} .print-area {
+      zoom: ${z};
+      width: ${r(100 / z)}% !important;
+      height: ${r(760 / z)}px !important;
+    }
+    ${prefix} .cal-day,
+    ${prefix} .cal-day * {
+      font-size: ${f}px !important;
+      line-height: 1.12 !important;
+    }
+    ${prefix} .cal-day .rounded-full { width: ${dot}px !important; height: ${dot}px !important; }
+    ${prefix} .cal-day .cal-chip-pad { padding: ${r(2 * b)}px ${r(4 * b)}px !important; }
+    ${prefix} .cal-day .cal-grade-btn { font-size: ${r(f * b)}px !important; padding: ${r(1 * b)}px ${r(4 * b)}px !important; margin-right: ${r(3 * b)}px !important; }
+    ${prefix} .cal-day .cal-pt-chip { font-size: ${r(f * b)}px !important; padding: ${r(1 * b)}px ${r(2 * b)}px !important; }
+    ${prefix} .cal-day .cal-ot-btn { font-size: ${r(f * b)}px !important; padding: ${r(1 * b)}px ${r(3 * b)}px !important; }
+  `;
+}
+
 const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearChange, adminUnlocked, currentMember, jumpTarget, onJumpTargetConsumed, onJumpToCalibration }, ref) {
   const today = new Date();
   const [year, setYear] = useState(initYear || today.getFullYear());
@@ -288,12 +318,16 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   const [printScaleMode, setPrintScaleMode] = useState(() => {
     try { return JSON.parse(localStorage.getItem('em-print-scale'))?.mode === 'manual' ? 'manual' : 'auto'; } catch { return 'auto'; }
   });
-  const [printScalePercent, setPrintScalePercent] = useState(() => {
-    try { const s = JSON.parse(localStorage.getItem('em-print-scale')); return Number.isFinite(s?.percent) ? s.percent : 100; } catch { return 100; }
-  });
+  // 글씨(percent — 예전 저장값과 호환) / 버튼 / 스케일 배율을 각각 따로 저장한다.
+  const loadScalePref = (key) => {
+    try { const v = JSON.parse(localStorage.getItem('em-print-scale'))?.[key]; return Number.isFinite(v) ? v : 100; } catch { return 100; }
+  };
+  const [printScalePercent, setPrintScalePercent] = useState(() => loadScalePref('percent')); // 글씨 배율
+  const [printButtonPercent, setPrintButtonPercent] = useState(() => loadScalePref('button')); // 버튼 배율
+  const [printZoomPercent, setPrintZoomPercent] = useState(() => loadScalePref('zoom')); // 스케일 배율
   useEffect(() => {
-    try { localStorage.setItem('em-print-scale', JSON.stringify({ mode: printScaleMode, percent: printScalePercent })); } catch { /* ignore */ }
-  }, [printScaleMode, printScalePercent]);
+    try { localStorage.setItem('em-print-scale', JSON.stringify({ mode: printScaleMode, percent: printScalePercent, button: printButtonPercent, zoom: printZoomPercent })); } catch { /* ignore */ }
+  }, [printScaleMode, printScalePercent, printButtonPercent, printZoomPercent]);
 
   // 수동 배율 미리보기 — 실제 인쇄와 똑같은 .print-portal 레이아웃 규칙을 쓰는
   // 달력 사본을 배율 설정 팝오버 안에 작게(transform:scale) 그려서, 인쇄해보지
@@ -308,23 +342,11 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     container.innerHTML = '';
     const clone = src.cloneNode(true);
     clone.style.transform = 'none';
-    const fontPx = manualScaleFontPx(printScalePercent);
-    const dotPx = Math.max(6, Math.round(fontPx * 1.6));
     const styleTag = document.createElement('style');
-    styleTag.textContent = `
-      .print-portal.print-preview-box .cal-day,
-      .print-portal.print-preview-box .cal-day * {
-        font-size: ${fontPx}px !important;
-        line-height: 1.12 !important;
-      }
-      .print-portal.print-preview-box .cal-day .rounded-full {
-        width: ${dotPx}px !important;
-        height: ${dotPx}px !important;
-      }
-    `;
+    styleTag.textContent = manualCalendarCss('.print-portal.print-preview-box', { font: printScalePercent, button: printButtonPercent, zoom: printZoomPercent });
     container.appendChild(styleTag);
     container.appendChild(clone);
-  }, [showPrintScale, printScaleMode, viewMode, printScalePercent]);
+  }, [showPrintScale, printScaleMode, viewMode, printScalePercent, printButtonPercent, printZoomPercent]);
   const [optimizeCapacities, setOptimizeCapacities] = useState(() => {
     try {
       const saved = localStorage.getItem('em-daily-capacities');
@@ -830,11 +852,10 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     const isTable = viewMode === 'table';
     const styleEl = document.createElement('style');
     document.head.appendChild(styleEl);
-    // 수동 배율 — 표는 zoom으로 전체를 비례 확대/축소(표는 여러 페이지로
-    // 자연스럽게 흐르므로 박스 크기 개념이 없음). 달력은 .print-area의 760px
-    // 고정 크기는 그대로 두고, 그 안의 일정 박스·글씨 크기만 바꾼다(자동 맞춤과
-    // 같은 방식 — manualScaleFontPx로 배율을 글씨 크기로 환산).
-    const manualZoom = printScaleMode === 'manual' ? printScalePercent : null;
+    // 수동 배율 — 표는 스케일 배율을 zoom으로 적용해 전체를 비례 확대/축소(표는 여러
+    // 페이지로 자연스럽게 흐르므로 박스 크기 개념이 없음). 달력은 글씨·버튼·스케일
+    // 세 배율을 각각 적용한다(manualCalendarCss).
+    const manualZoom = printScaleMode === 'manual' ? printZoomPercent : null;
 
     if (isTable) {
       styleEl.textContent = `
@@ -847,19 +868,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
         }
       `;
     } else if (manualZoom) {
-      const fontPx = manualScaleFontPx(manualZoom);
-      const dotPx = Math.max(6, Math.round(fontPx * 1.6));
-      styleEl.textContent = `
-        .print-portal .cal-day,
-        .print-portal .cal-day * {
-          font-size: ${fontPx}px !important;
-          line-height: 1.12 !important;
-        }
-        .print-portal .cal-day .rounded-full {
-          width: ${dotPx}px !important;
-          height: ${dotPx}px !important;
-        }
-      `;
+      styleEl.textContent = manualCalendarCss('.print-portal', { font: printScalePercent, button: printButtonPercent, zoom: printZoomPercent });
     } else {
       // 미리 계산한 공식은 실제 렌더링 여백과 어긋나 잘리거나(부족) 반대로 다른
       // 주까지 불필요하게 작아질 수 있어(과함) 믿을 수 없다 — 화면 밖에 실제로
@@ -2340,7 +2349,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                 title="인쇄 배율 설정"
                 className="px-2 border-l border-gray-200 text-gray-500 hover:bg-gray-50 font-medium"
               >
-                {printScaleMode === 'manual' ? `${printScalePercent}%` : '⚙'}
+                {printScaleMode === 'manual' ? '수동' : '⚙'}
               </button>
             </div>
             {showPrintScale && (
@@ -2356,14 +2365,29 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                   </label>
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
                     <input type="radio" checked={printScaleMode === 'manual'} onChange={() => setPrintScaleMode('manual')} />
-                    수동 배율 (전체 크기는 그대로, 글씨·일정박스만 조절)
+                    수동 배율 (글씨·버튼·스케일을 각각 조절)
                   </label>
                   {printScaleMode === 'manual' && (
-                    <div className="flex items-center gap-2 pl-5 mt-1.5" style={{ width: printScaleMode === 'manual' && viewMode !== 'table' ? PRINT_PREVIEW_BOX_W : 300 }}>
-                      <input type="range" min="50" max="150" step="5" value={printScalePercent}
-                        onChange={e => setPrintScalePercent(parseInt(e.target.value))}
-                        className="flex-1" />
-                      <span className="text-xs font-semibold text-gray-700 w-10 text-right">{printScalePercent}%</span>
+                    <div className="pl-5 mt-1.5 space-y-1" style={{ width: viewMode !== 'table' ? PRINT_PREVIEW_BOX_W : 300 }}>
+                      {[
+                        ...(viewMode !== 'table' ? [
+                          ['글씨 배율', printScalePercent, setPrintScalePercent, 50, 150, '칸 안의 모든 글씨 크기'],
+                          ['버튼 배율', printButtonPercent, setPrintButtonPercent, 50, 200, '일정 박스·단계 버튼·포인트 칩·날짜 원'],
+                        ] : []),
+                        ['스케일 배율', printZoomPercent, setPrintZoomPercent, 50, 150, viewMode === 'table' ? '표 전체 크기' : '달력 전체를 같은 비율로 확대/축소'],
+                      ].map(([label, value, setter, min, max, hint]) => (
+                        <div key={label} className="flex items-center gap-2" title={hint}>
+                          <span className="text-xs text-gray-600 w-20 shrink-0">{label}</span>
+                          <input type="range" min={min} max={max} step="5" value={value}
+                            onChange={e => setter(parseInt(e.target.value))}
+                            className="flex-1" />
+                          <span className="text-xs font-semibold text-gray-700 w-10 text-right">{value}%</span>
+                        </div>
+                      ))}
+                      <button
+                        onClick={() => { setPrintScalePercent(100); setPrintButtonPercent(100); setPrintZoomPercent(100); }}
+                        className="text-[11px] text-gray-500 hover:text-gray-800 underline"
+                      >모두 100%로 초기화</button>
                     </div>
                   )}
                   {printScaleMode === 'manual' && viewMode !== 'table' && (
@@ -2573,17 +2597,17 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                         <div className={`flex flex-col items-end gap-0.5 ${isOther ? 'opacity-50' : ''}`}>
                           {(row1Has || combEntries.length > 0) && (
                             <div className="flex flex-wrap justify-end gap-0.5 min-h-[13px]">
-                              {catPts.nonComb.f > 0 && <span className="text-[9px] leading-none bg-blue-50 text-blue-700 px-0.5 py-0.5 rounded">부{catPts.nonComb.f}</span>}
-                              {catPts.nonComb.l > 0 && <span className="text-[9px] leading-none bg-orange-50 text-orange-700 px-0.5 py-0.5 rounded">낙{catPts.nonComb.l}</span>}
-                              {catPts.nonComb.s > 0 && <span className="text-[9px] leading-none bg-green-50 text-green-700 px-0.5 py-0.5 rounded">표{catPts.nonComb.s}</span>}
-                              {catPts.nonComb.p > 0 && <span className="text-[9px] leading-none bg-pink-50 text-pink-700 px-0.5 py-0.5 rounded">입자{catPts.nonComb.p}</span>}
-                              {tempPtsTotal > 0 && <span className="text-[9px] leading-none bg-gray-100 text-gray-500 px-0.5 py-0.5 rounded">임{tempPtsTotal}</span>}
+                              {catPts.nonComb.f > 0 && <span className="cal-pt-chip text-[9px] leading-none bg-blue-50 text-blue-700 px-0.5 py-0.5 rounded">부{catPts.nonComb.f}</span>}
+                              {catPts.nonComb.l > 0 && <span className="cal-pt-chip text-[9px] leading-none bg-orange-50 text-orange-700 px-0.5 py-0.5 rounded">낙{catPts.nonComb.l}</span>}
+                              {catPts.nonComb.s > 0 && <span className="cal-pt-chip text-[9px] leading-none bg-green-50 text-green-700 px-0.5 py-0.5 rounded">표{catPts.nonComb.s}</span>}
+                              {catPts.nonComb.p > 0 && <span className="cal-pt-chip text-[9px] leading-none bg-pink-50 text-pink-700 px-0.5 py-0.5 rounded">입자{catPts.nonComb.p}</span>}
+                              {tempPtsTotal > 0 && <span className="cal-pt-chip text-[9px] leading-none bg-gray-100 text-gray-500 px-0.5 py-0.5 rounded">임{tempPtsTotal}</span>}
                             </div>
                           )}
                           {combEntries.length > 0 && (
                             <div className="flex flex-wrap justify-end gap-0.5">
                               {combEntries.map(([major, v]) => (
-                                <span key={major} className={`text-[9px] leading-none px-0.5 py-0.5 rounded ${majorChipCls[major] || 'bg-purple-100 text-purple-700'}`}>{majorAbbr[major] || major.slice(0, 1)}{v}</span>
+                                <span key={major} className={`cal-pt-chip text-[9px] leading-none px-0.5 py-0.5 rounded ${majorChipCls[major] || 'bg-purple-100 text-purple-700'}`}>{majorAbbr[major] || major.slice(0, 1)}{v}</span>
                               ))}
                             </div>
                           )}
@@ -2602,7 +2626,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                             setOvertimeTip({ x: Math.max(8, Math.min(r.left, window.innerWidth - 270)), y: r.bottom + 6, top: r.top - 6, flip: r.bottom + 160 > window.innerHeight, date: dateStr, ot });
                           }}
                           onMouseLeave={() => setOvertimeTip(null)}
-                          className={`print:hidden shrink-0 flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] leading-none transition-opacity ${
+                          className={`cal-ot-btn print:hidden shrink-0 flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] leading-none transition-opacity ${
                             ot ? (ot.leave ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'bg-amber-100 text-amber-700 hover:bg-amber-200')
                                : 'text-gray-400 hover:text-amber-600 hover:bg-amber-50 opacity-0 group-hover:opacity-100'
                           }`}
@@ -2684,7 +2708,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                           >
                             {measurement.isFirst && <span className="w-1 shrink-0" style={{ backgroundColor: '#22c55e' }} />}
                             {/* 이름이 길면 이름만 …로 줄이고, 앞의 단계 버튼과 뒤의 -회차는 항상 보이게 한다 */}
-                            <span className={`flex items-center min-w-0 flex-1 px-1 py-0.5 ${isDone ? 'line-through' : ''} ${(measurement.isFirst || measurement.isLast) ? 'font-semibold' : ''}`}>
+                            <span className={`cal-chip-pad flex items-center min-w-0 flex-1 px-1 py-0.5 ${isDone ? 'line-through' : ''} ${(measurement.isFirst || measurement.isLast) ? 'font-semibold' : ''}`}>
                               {noPts && <span className="text-red-600 font-bold shrink-0">*</span>}
                               {mine && <span className="font-bold shrink-0">👤 </span>}
                               <span className="shrink-0 flex items-center"><GradeBadge color={gradeBtnColor(zone.grade)} grade={zone.grade} /></span>
@@ -3252,7 +3276,7 @@ const PT_TYPES = [
 function GradeBadge({ grade, size, onDark, color }) {
   if (!grade) return null;
   return (
-    <span className={`inline-flex items-center align-middle ${onDark ? 'bg-black border border-gray-500' : 'bg-gray-900'} font-bold rounded leading-none mr-1 ${size === 'md' ? 'text-[11px] px-1.5 py-1' : 'text-[9px] px-1 py-0.5'}`} style={{ color: color || '#ffffff' }}>{!onDark && grade === '유지관리' ? '유지' : grade}</span>
+    <span className={`cal-grade-btn inline-flex items-center align-middle ${onDark ? 'bg-black border border-gray-500' : 'bg-gray-900'} font-bold rounded leading-none mr-1 ${size === 'md' ? 'text-[11px] px-1.5 py-1' : 'text-[9px] px-1 py-0.5'}`} style={{ color: color || '#ffffff' }}>{!onDark && grade === '유지관리' ? '유지' : grade}</span>
   );
 }
 
