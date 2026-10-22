@@ -48,6 +48,14 @@ body {
 .print-portal .cal-monthbar {
   flex: 0 0 auto;
   padding: 1px 0 !important;
+  /* 인쇄에서는 좌우 칩(print:hidden)이 빠져 3열 그리드의 첫 칸으로 쏠리므로, 남는 것(년/월)
+     하나를 배율·폭과 상관없이 항상 정중앙에 두도록 flex 가운데 정렬로 바꾼다. */
+  display: flex !important;
+  justify-content: center;
+}
+/* 미리보기(화면)에서도 실제 인쇄와 똑같이 좌우 칩·월 이동 화살표는 숨긴다. */
+.print-portal .cal-monthbar .print\:hidden {
+  display: none !important;
 }
 .print-portal .cal-monthbar span {
   font-size: 13px !important;
