@@ -312,6 +312,11 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   const [optimizePopup, setOptimizePopup] = useState(false);
   const [viewMode, setViewMode] = useState('calendar'); // 'calendar' | 'table'
 
+  // 주 시작 요일 — 아래 인쇄 배율 미리보기(셀 비율)가 의존하므로 그보다 먼저 선언해야 한다.
+  const [weekStart, setWeekStart] = useState(() => {
+    try { return localStorage.getItem('em-week-start') || 'sun'; } catch { return 'sun'; }
+  });
+
   // 인쇄 배율 — 기본은 자동 맞춤(달력은 실측 후 글씨를 줄여 한 페이지에 맞춤,
   // 표는 자연스럽게 흐름). 수동으로 켜면 자동 계산을 건너뛰고 사용자가 고른
   // 배율(zoom)을 그대로 적용한다. 이 PC에 마지막 선택을 기억해둔다.
@@ -366,9 +371,6 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   const chipDraggingRef = useRef(false);
   const flipTimerRef = useRef(null);
   const navRef = useRef({});
-  const [weekStart, setWeekStart] = useState(() => {
-    try { return localStorage.getItem('em-week-start') || 'sun'; } catch { return 'sun'; }
-  });
   const [scheduleConfig, setScheduleConfigState] = useState(() => mergeScheduleConfig(null));
   const [cycleCatTab, setCycleCatTab] = useState('공조');
 
