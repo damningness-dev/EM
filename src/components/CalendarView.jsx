@@ -107,11 +107,12 @@ function manualScaleFontPx(percent) {
 
 // 인쇄 표시 옵션 — 등급 버튼(P1·P2·P3·유지)과 일정 뒤 회차([1/12])를 끄고 켠다. 자동 맞춤·수동
 // 배율 모두에 적용된다(숨기면 칸 안 공간이 늘어 자동 맞춤의 글씨도 더 크게 잡힌다).
-function printToggleCss(prefix, { showGrade, showRound, showOt }) {
+function printToggleCss(prefix, { showGrade, showRound, showOt, showLegend }) {
   return `
     ${showGrade ? '' : `${prefix} .cal-grade-btn { display: none !important; }`}
     ${showRound ? '' : `${prefix} .cal-round { display: none !important; }`}
     ${showOt ? '' : `${prefix} .cal-ot-btn { display: none !important; }`}
+    ${showLegend ? '' : `${prefix} .cal-legend { display: none !important; }`}
   `;
 }
 
@@ -371,14 +372,17 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   const [printShowOt, setPrintShowOt] = useState(() => { // 인쇄에 근무시간(연장·휴가 기록) 배지 표시 — 기본 꺼짐
     try { return JSON.parse(localStorage.getItem('em-print-scale'))?.showOt === true; } catch { return false; }
   });
+  const [printShowLegend, setPrintShowLegend] = useState(() => { // 인쇄에 하단 범례 표시
+    try { return JSON.parse(localStorage.getItem('em-print-scale'))?.showLegend !== false; } catch { return true; }
+  });
   const [printCellPercent, setPrintCellPercent] = useState(() => loadScalePref('cell')); // 셀 비율(주말 칸 폭, 달력)
   const [printHeightPercent, setPrintHeightPercent] = useState(() => { // 높이 배율(0 = 모든 주 같은 높이)
     try { const v = JSON.parse(localStorage.getItem('em-print-scale'))?.height; return Number.isFinite(v) ? v : 0; } catch { return 0; }
   });
   const [printZoomPercent, setPrintZoomPercent] = useState(() => loadScalePref('zoom')); // 표 보기 전체 크기
   useEffect(() => {
-    try { localStorage.setItem('em-print-scale', JSON.stringify({ mode: printScaleMode, percent: printScalePercent, button: printButtonPercent, cell: printCellPercent, height: printHeightPercent, zoom: printZoomPercent, showGrade: printShowGrade, showRound: printShowRound, showOt: printShowOt })); } catch { /* ignore */ }
-  }, [printScaleMode, printScalePercent, printButtonPercent, printCellPercent, printHeightPercent, printZoomPercent, printShowGrade, printShowRound, printShowOt]);
+    try { localStorage.setItem('em-print-scale', JSON.stringify({ mode: printScaleMode, percent: printScalePercent, button: printButtonPercent, cell: printCellPercent, height: printHeightPercent, zoom: printZoomPercent, showGrade: printShowGrade, showRound: printShowRound, showOt: printShowOt, showLegend: printShowLegend })); } catch { /* ignore */ }
+  }, [printScaleMode, printScalePercent, printButtonPercent, printCellPercent, printHeightPercent, printZoomPercent, printShowGrade, printShowRound, printShowOt, printShowLegend]);
 
   // 수동 배율 미리보기 — 실제 인쇄와 똑같은 .print-portal 레이아웃 규칙을 쓰는
   // 달력 사본을 배율 설정 팝오버 안에 작게(transform:scale) 그려서, 인쇄해보지
@@ -400,7 +404,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     container.appendChild(styleTag);
     container.appendChild(clone);
     const P = '.print-portal.print-preview-box';
-    const toggle = printToggleCss(P, { showGrade: printShowGrade, showRound: printShowRound, showOt: printShowOt });
+    const toggle = printToggleCss(P, { showGrade: printShowGrade, showRound: printShowRound, showOt: printShowOt, showLegend: printShowLegend });
     if (viewMode === 'table') {
       // 실제 표 인쇄와 같은 규칙 — 높이 제한 없이 표 전체가 흐르고(여러 페이지), 수동이면 zoom 적용
       styleTag.textContent = `
@@ -428,7 +432,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
       })();
     }
     return () => { cancelled = true; };
-  }, [showPrintScale, printScaleMode, viewMode, printScalePercent, printButtonPercent, printCellPercent, printHeightPercent, printZoomPercent, printShowGrade, printShowRound, printShowOt, weekStart]);
+  }, [showPrintScale, printScaleMode, viewMode, printScalePercent, printButtonPercent, printCellPercent, printHeightPercent, printZoomPercent, printShowGrade, printShowRound, printShowOt, printShowLegend, weekStart]);
   const [optimizeCapacities, setOptimizeCapacities] = useState(() => {
     try {
       const saved = localStorage.getItem('em-daily-capacities');
@@ -931,7 +935,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     // @page는 선택자로 조건부 지정이 안 되므로, 별도 <style>을 끼워 넣어
     // index.css의 기본 규칙을 상황에 맞게 덮어쓴다.
     const isTable = viewMode === 'table';
-    const toggleCss = printToggleCss('.print-portal', { showGrade: printShowGrade, showRound: printShowRound, showOt: printShowOt });
+    const toggleCss = printToggleCss('.print-portal', { showGrade: printShowGrade, showRound: printShowRound, showOt: printShowOt, showLegend: printShowLegend });
     const styleEl = document.createElement('style');
     document.head.appendChild(styleEl);
     // 수동 배율 — 표는 zoom으로 전체를 비례 확대/축소(표는 여러 페이지로 자연스럽게
@@ -2448,6 +2452,10 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                     <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer select-none" title="달력에 기록한 연장 시간·연차/오전/오후 배지 (이 PC에만 저장된 기록)">
                       <input type="checkbox" checked={printShowOt} onChange={e => setPrintShowOt(e.target.checked)} />
                       근무시간 표시 (연장·휴가)
+                    </label>
+                    <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer select-none">
+                      <input type="checkbox" checked={printShowLegend} onChange={e => setPrintShowLegend(e.target.checked)} />
+                      범례 표시
                     </label>
                   </div>
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 mb-1.5 cursor-pointer select-none">
