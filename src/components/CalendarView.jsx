@@ -105,6 +105,16 @@ function manualScaleFontPx(percent) {
   return Math.max(3, Math.min(16, 8 * (percent || 100) / 100));
 }
 
+// 인쇄 표시 옵션 — 등급 버튼(P1·P2·P3·유지)과 일정 뒤 회차([1/12])를 끄고 켠다. 자동 맞춤·수동
+// 배율 모두에 적용된다(숨기면 칸 안 공간이 늘어 자동 맞춤의 글씨도 더 크게 잡힌다).
+function printToggleCss(prefix, { showGrade, showRound, showOt }) {
+  return `
+    ${showGrade ? '' : `${prefix} .cal-grade-btn { display: none !important; }`}
+    ${showRound ? '' : `${prefix} .cal-round { display: none !important; }`}
+    ${showOt ? '' : `${prefix} .cal-ot-btn { display: none !important; }`}
+  `;
+}
+
 // 복제한 달력에서 주(행)별 일정 칩 개수의 최댓값을 센다(높이 배율에서 행 높이를 나눌 때 사용).
 function weekChipCounts(root) {
   const cells = Array.from(root.querySelectorAll('.cal-day'));
@@ -262,7 +272,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   function saveOvertime(date, hours, memo, leave) {
     setOvertime(prev => {
       const next = { ...prev };
-      const h = parseFloat(hours);
+      const h = Math.round(parseFloat(hours)); // 연장 시간은 1시간 단위(소수 없음)
       if (h > 0 || memo.trim() || leave) next[date] = { hours: h > 0 ? h : 0, memo: memo.trim(), leave: leave || '' };
       else delete next[date];
       try { localStorage.setItem(OVERTIME_KEY, JSON.stringify(next)); } catch { /* 저장 실패는 무시 */ }
@@ -352,14 +362,23 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   };
   const [printScalePercent, setPrintScalePercent] = useState(() => loadScalePref('percent')); // 글씨 배율
   const [printButtonPercent, setPrintButtonPercent] = useState(() => loadScalePref('button')); // 버튼 배율
+  const [printShowGrade, setPrintShowGrade] = useState(() => { // 인쇄에 등급 버튼 표시
+    try { return JSON.parse(localStorage.getItem('em-print-scale'))?.showGrade !== false; } catch { return true; }
+  });
+  const [printShowRound, setPrintShowRound] = useState(() => { // 인쇄에 일정 뒤 회차 [1/12] 표시
+    try { return JSON.parse(localStorage.getItem('em-print-scale'))?.showRound !== false; } catch { return true; }
+  });
+  const [printShowOt, setPrintShowOt] = useState(() => { // 인쇄에 근무시간(연장·휴가 기록) 배지 표시 — 기본 꺼짐
+    try { return JSON.parse(localStorage.getItem('em-print-scale'))?.showOt === true; } catch { return false; }
+  });
   const [printCellPercent, setPrintCellPercent] = useState(() => loadScalePref('cell')); // 셀 비율(주말 칸 폭, 달력)
   const [printHeightPercent, setPrintHeightPercent] = useState(() => { // 높이 배율(0 = 모든 주 같은 높이)
     try { const v = JSON.parse(localStorage.getItem('em-print-scale'))?.height; return Number.isFinite(v) ? v : 0; } catch { return 0; }
   });
   const [printZoomPercent, setPrintZoomPercent] = useState(() => loadScalePref('zoom')); // 표 보기 전체 크기
   useEffect(() => {
-    try { localStorage.setItem('em-print-scale', JSON.stringify({ mode: printScaleMode, percent: printScalePercent, button: printButtonPercent, cell: printCellPercent, height: printHeightPercent, zoom: printZoomPercent })); } catch { /* ignore */ }
-  }, [printScaleMode, printScalePercent, printButtonPercent, printCellPercent, printHeightPercent, printZoomPercent]);
+    try { localStorage.setItem('em-print-scale', JSON.stringify({ mode: printScaleMode, percent: printScalePercent, button: printButtonPercent, cell: printCellPercent, height: printHeightPercent, zoom: printZoomPercent, showGrade: printShowGrade, showRound: printShowRound, showOt: printShowOt })); } catch { /* ignore */ }
+  }, [printScaleMode, printScalePercent, printButtonPercent, printCellPercent, printHeightPercent, printZoomPercent, printShowGrade, printShowRound, printShowOt]);
 
   // 수동 배율 미리보기 — 실제 인쇄와 똑같은 .print-portal 레이아웃 규칙을 쓰는
   // 달력 사본을 배율 설정 팝오버 안에 작게(transform:scale) 그려서, 인쇄해보지
@@ -375,10 +394,10 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     const clone = src.cloneNode(true);
     clone.style.transform = 'none';
     const styleTag = document.createElement('style');
-    styleTag.textContent = manualCalendarCss('.print-portal.print-preview-box', { font: printScalePercent, button: printButtonPercent, cell: printCellPercent, height: printHeightPercent, rows: weekChipCounts(clone), weekStart });
+    styleTag.textContent = manualCalendarCss('.print-portal.print-preview-box', { font: printScalePercent, button: printButtonPercent, cell: printCellPercent, height: printHeightPercent, rows: weekChipCounts(clone), weekStart }) + printToggleCss('.print-portal.print-preview-box', { showGrade: printShowGrade, showRound: printShowRound, showOt: printShowOt });
     container.appendChild(styleTag);
     container.appendChild(clone);
-  }, [showPrintScale, printScaleMode, viewMode, printScalePercent, printButtonPercent, printCellPercent, printHeightPercent, printZoomPercent, weekStart]);
+  }, [showPrintScale, printScaleMode, viewMode, printScalePercent, printButtonPercent, printCellPercent, printHeightPercent, printZoomPercent, printShowGrade, printShowRound, printShowOt, weekStart]);
   const [optimizeCapacities, setOptimizeCapacities] = useState(() => {
     try {
       const saved = localStorage.getItem('em-daily-capacities');
@@ -881,6 +900,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     // @page는 선택자로 조건부 지정이 안 되므로, 별도 <style>을 끼워 넣어
     // index.css의 기본 규칙을 상황에 맞게 덮어쓴다.
     const isTable = viewMode === 'table';
+    const toggleCss = printToggleCss('.print-portal', { showGrade: printShowGrade, showRound: printShowRound, showOt: printShowOt });
     const styleEl = document.createElement('style');
     document.head.appendChild(styleEl);
     // 수동 배율 — 표는 zoom으로 전체를 비례 확대/축소(표는 여러 페이지로 자연스럽게
@@ -891,6 +911,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     if (isTable) {
       styleEl.textContent = `
         @page { size: A4 portrait; margin: 12mm; }
+        ${toggleCss}
         .print-portal .print-area {
           height: auto !important;
           max-height: none !important;
@@ -899,7 +920,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
         }
       `;
     } else if (manualZoom) {
-      styleEl.textContent = manualCalendarCss('.print-portal', { font: printScalePercent, button: printButtonPercent, cell: printCellPercent, height: printHeightPercent, rows: weekChipCounts(clone), weekStart });
+      styleEl.textContent = manualCalendarCss('.print-portal', { font: printScalePercent, button: printButtonPercent, cell: printCellPercent, height: printHeightPercent, rows: weekChipCounts(clone), weekStart }) + toggleCss;
     } else {
       // 미리 계산한 공식은 실제 렌더링 여백과 어긋나 잘리거나(부족) 반대로 다른
       // 주까지 불필요하게 작아질 수 있어(과함) 믿을 수 없다 — 화면 밖에 실제로
@@ -924,6 +945,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
             width: ${dotPx}px !important;
             height: ${dotPx}px !important;
           }
+          ${toggleCss}
         `;
         // eslint-disable-next-line no-await-in-loop
         await new Promise(r => requestAnimationFrame(() => r()));
@@ -1773,7 +1795,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
             <label className="block text-xs text-gray-500 mb-1">연장 시간 (달력에 표시됩니다)</label>
             <div className="flex items-center gap-2 mb-4">
               <input
-                type="number" min="0" max="24" step="0.5"
+                type="number" min="0" max="24" step="1"
                 value={overtimeEdit.hours}
                 onChange={e => setOvertimeEdit(p => ({ ...p, hours: e.target.value }))}
                 className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
@@ -2383,6 +2405,20 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                     <p className="text-sm font-semibold text-gray-700">🖨 인쇄 설정</p>
                     <button onClick={() => setShowPrintScale(false)} className="text-gray-400 hover:text-gray-700 text-lg leading-none">✕</button>
                   </div>
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-1 mb-2 pb-2 border-b border-gray-100">
+                    <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer select-none">
+                      <input type="checkbox" checked={printShowGrade} onChange={e => setPrintShowGrade(e.target.checked)} />
+                      등급 버튼 표시 (P1·P2·P3·유지)
+                    </label>
+                    <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer select-none">
+                      <input type="checkbox" checked={printShowRound} onChange={e => setPrintShowRound(e.target.checked)} />
+                      일정 뒤 회차 표시 ([1/12])
+                    </label>
+                    <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer select-none" title="달력에 기록한 연장 시간·연차/오전/오후 배지 (이 PC에만 저장된 기록)">
+                      <input type="checkbox" checked={printShowOt} onChange={e => setPrintShowOt(e.target.checked)} />
+                      근무시간 표시 (연장·휴가)
+                    </label>
+                  </div>
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 mb-1.5 cursor-pointer select-none">
                     <input type="radio" checked={printScaleMode === 'auto'} onChange={() => setPrintScaleMode('auto')} />
                     자동 맞춤 (기본 — 한 페이지에 맞게 글씨 크기 자동 조절)
@@ -2748,7 +2784,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                               {mine && <span className="font-bold shrink-0">👤 </span>}
                               <span className="shrink-0 flex items-center"><GradeBadge color={gradeBtnColor(zone.grade)} grade={zone.grade} /></span>
                               <span className="truncate min-w-0">{zone.name}</span>
-                              <span className="shrink-0 ml-0.5">[{measurement.num}/{totalCount(zone) || measurement.num}]</span>
+                              <span className="cal-round shrink-0 ml-0.5">[{measurement.num}/{totalCount(zone) || measurement.num}]</span>
                             </span>
                             {measurement.isLast && <span className="w-1 shrink-0" style={{ backgroundColor: '#ef4444' }} />}
                           </div>
