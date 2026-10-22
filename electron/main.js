@@ -61,6 +61,48 @@ function sendStatus(status) {
 function getUpdatePath() {
   return path.join(app.getPath('userData'), 'app.asar.update');
 }
+// 받아서 체크섬까지 확인한 업데이트의 버전·체크섬 — 다음 실행 때 자동 적용 여부 판단용
+function getUpdateMetaPath() {
+  return getUpdatePath() + '.json';
+}
+
+// 숫자 버전(1.0.365) 비교: a가 b보다 새것이면 true
+function isNewerVersion(a, b) {
+  const pa = String(a).split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b).split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+  }
+  return false;
+}
+
+// 앱이 시작될 때, 이전 실행 중에 받아 둔(검증 완료) 새 버전이 있으면 창을 띄우기 전에
+// 바로 적용하고 재시작한다. 새 버전 화면이 깨져서 "지금 재시작" 버튼조차 못 누르는 상태가
+// 돼도, 앱을 껐다 켜기만 하면 이미 받아 둔 고친 버전으로 올라가게 하기 위함이다.
+// 적용했으면 true(곧 재시작됨), 아니면 false.
+function applyStagedUpdateOnLaunch() {
+  const updateSrc = getUpdatePath();
+  const metaPath = getUpdateMetaPath();
+  try {
+    if (!fs.existsSync(updateSrc)) { try { fs.unlinkSync(metaPath); } catch { /* 무시 */ } return false; }
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+    const stale = !meta?.version || !isNewerVersion(meta.version, app.getVersion());
+    const sha = stale ? null : crypto.createHash('sha256').update(fs.readFileSync(updateSrc)).digest('hex');
+    if (stale || !meta.sha256 || sha !== meta.sha256) {
+      // 이미 반영됐거나(같은/낮은 버전), 검증 정보가 없거나, 파일이 손상된 경우는 지운다.
+      try { fs.unlinkSync(updateSrc); } catch { /* 무시 */ }
+      try { fs.unlinkSync(metaPath); } catch { /* 무시 */ }
+      return false;
+    }
+    try { fs.unlinkSync(metaPath); } catch { /* 무시 */ }
+    app.relaunch({ args: [`--apply-update=${updateSrc}`] });
+    app.exit(0);
+    return true;
+  } catch {
+    // 메타가 없거나 읽을 수 없으면(예전 버전이 받아 둔 파일 등) 자동 적용하지 않는다.
+    return false;
+  }
+}
 
 // _bustCache: 회사/공유망의 캐싱 프록시가 릴리즈 다운로드 URL을 자체적으로
 // 캐싱해 두었다가 우리가 조건부 요청을 보내지도 않았는데 304(Not Modified)로
@@ -208,6 +250,7 @@ async function downloadUpdate() {
           throw new Error(`파일 검증 실패 (체크섬 불일치)${attempt < DOWNLOAD_RETRIES ? ` — 재시도 중 (${attempt}/${DOWNLOAD_RETRIES})` : ''}`);
         }
         downloadedVersion = meta.version;
+        try { fs.writeFileSync(getUpdateMetaPath(), JSON.stringify({ version: meta.version, sha256 })); } catch { /* 무시 */ }
         sendStatus({ type: 'downloaded', version: meta.version });
         return;
       } catch (err) {
@@ -1545,6 +1588,7 @@ if (applyUpdateArg) {
 } else {
   // Normal startup
   app.whenReady().then(async () => {
+    if (!isDev && applyStagedUpdateOnLaunch()) return;
     migrateLegacyTodosOnce();
     // 이미 공유 설정(Gist ID)이 있는 PC라면, 기본 관리자를 심기 전에 먼저 한 번
     // 받아본다 — 안 그러면 "이미 진짜 관리자 계정이 공유에 있는데 이 PC가

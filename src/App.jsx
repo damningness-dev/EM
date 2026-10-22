@@ -10,6 +10,7 @@ import ZoneGantt from './components/ZoneGantt';
 import TodoToday from './components/TodoToday';
 import CalendarView from './components/CalendarView';
 import UpdateNotifier from './components/UpdateNotifier';
+import ErrorBoundary from './components/ErrorBoundary';
 import SyncChangeNotifier from './components/SyncChangeNotifier';
 import SyncControl from './components/SyncControl';
 import BackupControl from './components/BackupControl';
@@ -360,7 +361,7 @@ export default function App() {
               )}
             </div>
           ) : (
-            <>
+            <ErrorBoundary resetKey={page}>
           {page === 'dashboard' && <Dashboard year={year} />}
           {page === 'todo' && <TodoToday currentMember={currentMember} />}
           {page === 'calendar' && (
@@ -379,7 +380,7 @@ export default function App() {
           {page === 'usagepoints' && <UsagePoints adminUnlocked={adminUnlocked} currentMember={currentMember} />}
           {page === 'weeklyduty' && <WeeklyDuty adminUnlocked={adminUnlocked} />}
           {page === 'sop' && <Sop adminUnlocked={adminUnlocked} currentMember={currentMember} />}
-            </>
+            </ErrorBoundary>
           )}
         </main>
       </div>
