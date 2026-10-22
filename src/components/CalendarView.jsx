@@ -108,20 +108,21 @@ function manualScaleFontPx(percent) {
 // 수동 인쇄 배율(달력) — 세 가지를 따로 조절한다.
 //  · font   글씨 배율: 칸 안 모든 글씨 크기
 //  · button 버튼 배율: 일정 박스·단계 버튼·포인트 칩·연장/휴가 배지·날짜 원의 크기(여백·글씨)
-//  · zoom   스케일 배율: 달력 전체를 같은 비율로 확대/축소(페이지 크기는 그대로 — 내용 밀도가 바뀜)
+//  · cell   셀 비율: 달력 전체 크기는 A4 기준으로 고정한 채, 주말(토·일) 칸의 폭을 평일
+//           칸 대비 몇 %로 할지 정한다(100% = 같은 폭, 작게 하면 평일 칸이 그만큼 넓어짐).
 // prefix는 실제 인쇄(.print-portal)와 설정창 미리보기(.print-portal.print-preview-box)가 같이 쓴다.
-function manualCalendarCss(prefix, { font, button, zoom }) {
+function manualCalendarCss(prefix, { font, button, cell, weekStart }) {
   const f = manualScaleFontPx(font);
   const b = Math.max(0.3, (button || 100) / 100);
-  const z = Math.max(0.3, (zoom || 100) / 100);
+  const w = Math.max(0.2, (cell || 100) / 100); // 주말 칸 폭 비율
   const dot = Math.max(6, Math.round(f * 1.6 * b));
   const r = (n) => Math.round(n * 100) / 100;
+  const cols = (weekStart === 'mon'
+    ? [1, 1, 1, 1, 1, w, w]
+    : [w, 1, 1, 1, 1, 1, w]).map(x => `minmax(0, ${r(x)}fr)`).join(' '); // minmax(0,…)로 내용이 길어도 열 폭이 밀리지 않게
   return `
-    ${prefix} .print-area {
-      zoom: ${z};
-      width: ${r(100 / z)}% !important;
-      height: ${r(760 / z)}px !important;
-    }
+    ${prefix} .cal-dow,
+    ${prefix} .cal-grid { grid-template-columns: ${cols} !important; }
     ${prefix} .cal-day,
     ${prefix} .cal-day * {
       font-size: ${f}px !important;
@@ -324,10 +325,11 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   };
   const [printScalePercent, setPrintScalePercent] = useState(() => loadScalePref('percent')); // 글씨 배율
   const [printButtonPercent, setPrintButtonPercent] = useState(() => loadScalePref('button')); // 버튼 배율
-  const [printZoomPercent, setPrintZoomPercent] = useState(() => loadScalePref('zoom')); // 스케일 배율
+  const [printCellPercent, setPrintCellPercent] = useState(() => loadScalePref('cell')); // 셀 비율(주말 칸 폭, 달력)
+  const [printZoomPercent, setPrintZoomPercent] = useState(() => loadScalePref('zoom')); // 표 보기 전체 크기
   useEffect(() => {
-    try { localStorage.setItem('em-print-scale', JSON.stringify({ mode: printScaleMode, percent: printScalePercent, button: printButtonPercent, zoom: printZoomPercent })); } catch { /* ignore */ }
-  }, [printScaleMode, printScalePercent, printButtonPercent, printZoomPercent]);
+    try { localStorage.setItem('em-print-scale', JSON.stringify({ mode: printScaleMode, percent: printScalePercent, button: printButtonPercent, cell: printCellPercent, zoom: printZoomPercent })); } catch { /* ignore */ }
+  }, [printScaleMode, printScalePercent, printButtonPercent, printCellPercent, printZoomPercent]);
 
   // 수동 배율 미리보기 — 실제 인쇄와 똑같은 .print-portal 레이아웃 규칙을 쓰는
   // 달력 사본을 배율 설정 팝오버 안에 작게(transform:scale) 그려서, 인쇄해보지
@@ -343,10 +345,10 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     const clone = src.cloneNode(true);
     clone.style.transform = 'none';
     const styleTag = document.createElement('style');
-    styleTag.textContent = manualCalendarCss('.print-portal.print-preview-box', { font: printScalePercent, button: printButtonPercent, zoom: printZoomPercent });
+    styleTag.textContent = manualCalendarCss('.print-portal.print-preview-box', { font: printScalePercent, button: printButtonPercent, cell: printCellPercent, weekStart });
     container.appendChild(styleTag);
     container.appendChild(clone);
-  }, [showPrintScale, printScaleMode, viewMode, printScalePercent, printButtonPercent, printZoomPercent]);
+  }, [showPrintScale, printScaleMode, viewMode, printScalePercent, printButtonPercent, printCellPercent, printZoomPercent, weekStart]);
   const [optimizeCapacities, setOptimizeCapacities] = useState(() => {
     try {
       const saved = localStorage.getItem('em-daily-capacities');
@@ -852,9 +854,9 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     const isTable = viewMode === 'table';
     const styleEl = document.createElement('style');
     document.head.appendChild(styleEl);
-    // 수동 배율 — 표는 스케일 배율을 zoom으로 적용해 전체를 비례 확대/축소(표는 여러
-    // 페이지로 자연스럽게 흐르므로 박스 크기 개념이 없음). 달력은 글씨·버튼·스케일
-    // 세 배율을 각각 적용한다(manualCalendarCss).
+    // 수동 배율 — 표는 zoom으로 전체를 비례 확대/축소(표는 여러 페이지로 자연스럽게
+    // 흐르므로 박스 크기 개념이 없음). 달력은 전체를 A4 기준으로 고정하고 글씨·버튼·
+    // 셀 비율 세 가지를 각각 적용한다(manualCalendarCss).
     const manualZoom = printScaleMode === 'manual' ? printZoomPercent : null;
 
     if (isTable) {
@@ -868,7 +870,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
         }
       `;
     } else if (manualZoom) {
-      styleEl.textContent = manualCalendarCss('.print-portal', { font: printScalePercent, button: printButtonPercent, zoom: printZoomPercent });
+      styleEl.textContent = manualCalendarCss('.print-portal', { font: printScalePercent, button: printButtonPercent, cell: printCellPercent, weekStart });
     } else {
       // 미리 계산한 공식은 실제 렌더링 여백과 어긋나 잘리거나(부족) 반대로 다른
       // 주까지 불필요하게 작아질 수 있어(과함) 믿을 수 없다 — 화면 밖에 실제로
@@ -2365,7 +2367,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                   </label>
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
                     <input type="radio" checked={printScaleMode === 'manual'} onChange={() => setPrintScaleMode('manual')} />
-                    수동 배율 (글씨·버튼·스케일을 각각 조절)
+                    수동 배율 (글씨·버튼·셀 비율을 각각 조절)
                   </label>
                   {printScaleMode === 'manual' && (
                     <div className="pl-5 mt-1.5 space-y-1" style={{ width: viewMode !== 'table' ? PRINT_PREVIEW_BOX_W : 300 }}>
@@ -2374,7 +2376,9 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                           ['글씨 배율', printScalePercent, setPrintScalePercent, 50, 150, '칸 안의 모든 글씨 크기'],
                           ['버튼 배율', printButtonPercent, setPrintButtonPercent, 50, 200, '일정 박스·단계 버튼·포인트 칩·날짜 원'],
                         ] : []),
-                        ['스케일 배율', printZoomPercent, setPrintZoomPercent, 50, 150, viewMode === 'table' ? '표 전체 크기' : '달력 전체를 같은 비율로 확대/축소'],
+                        viewMode === 'table'
+                          ? ['표 크기', printZoomPercent, setPrintZoomPercent, 50, 150, '표 전체 크기']
+                          : ['셀 비율', printCellPercent, setPrintCellPercent, 30, 150, '달력 전체 크기는 A4에 고정, 토·일 칸의 폭을 평일 칸 대비 몇 %로 할지(작게 하면 평일 칸이 넓어짐)'],
                       ].map(([label, value, setter, min, max, hint]) => (
                         <div key={label} className="flex items-center gap-2" title={hint}>
                           <span className="text-xs text-gray-600 w-20 shrink-0">{label}</span>
@@ -2385,7 +2389,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                         </div>
                       ))}
                       <button
-                        onClick={() => { setPrintScalePercent(100); setPrintButtonPercent(100); setPrintZoomPercent(100); }}
+                        onClick={() => { setPrintScalePercent(100); setPrintButtonPercent(100); setPrintCellPercent(100); setPrintZoomPercent(100); }}
                         className="text-[11px] text-gray-500 hover:text-gray-800 underline"
                       >모두 100%로 초기화</button>
                     </div>
