@@ -2365,7 +2365,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
           <div className="relative">
             <div className="flex rounded-xl border border-gray-200 overflow-hidden bg-white text-sm">
               <button
-                onClick={handlePrint}
+                onClick={() => setShowPrintScale(true)}
                 title={viewMode === 'table'
                   ? '이번 달 일정 표를 세로 PDF로 열기 (뷰어에서 인쇄하면 세로로 출력)'
                   : '이번 달 일정을 가로 PDF로 열기 (뷰어에서 인쇄하면 항상 가로로 출력)'}
@@ -2373,19 +2373,12 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
               >
                 🖨 인쇄({viewMode === 'table' ? '세로' : '가로'} PDF)
               </button>
-              <button
-                onClick={() => setShowPrintScale(v => !v)}
-                title="인쇄 배율 설정"
-                className="px-2 border-l border-gray-200 text-gray-500 hover:bg-gray-50 font-medium"
-              >
-                {printScaleMode === 'manual' ? '수동' : '⚙'}
-              </button>
             </div>
             {showPrintScale && (
               <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/50" onClick={() => setShowPrintScale(false)}>
                 <div className="bg-white border border-gray-200 rounded-2xl shadow-2xl p-4 max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
                   <div className="flex items-center justify-between mb-2">
-                    <p className="text-sm font-semibold text-gray-700">🖨 인쇄 배율</p>
+                    <p className="text-sm font-semibold text-gray-700">🖨 인쇄 설정</p>
                     <button onClick={() => setShowPrintScale(false)} className="text-gray-400 hover:text-gray-700 text-lg leading-none">✕</button>
                   </div>
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 mb-1.5 cursor-pointer select-none">
@@ -2439,6 +2432,14 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                   {printScaleMode === 'manual' && viewMode === 'table' && (
                     <p className="text-[11px] text-gray-400 mt-2 leading-relaxed">배율이 너무 크면 인쇄 영역을 벗어나 잘릴 수 있습니다.</p>
                   )}
+                  <div className="flex justify-end gap-2 mt-3 pt-3 border-t border-gray-100">
+                    <button onClick={() => setShowPrintScale(false)}
+                      className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>
+                    <button onClick={() => { setShowPrintScale(false); handlePrint(); }}
+                      className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700">
+                      🖨 인쇄({viewMode === 'table' ? '세로' : '가로'} PDF)
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
