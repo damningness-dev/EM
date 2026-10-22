@@ -385,18 +385,49 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   // 않고도 화면에서 바로 확인할 수 있게 한다. 배율을 바꿀 때마다 다시 그린다.
   const printPreviewRef = useRef(null);
   const PRINT_PREVIEW_W = 1100, PRINT_PREVIEW_H = 760, PRINT_PREVIEW_BOX_W = 960;
+  // 표 인쇄 미리보기 폭(A4 세로 인쇄영역 = 210mm − 좌우 12mm = 186mm ≈ 703px)과 한 페이지 높이(297 − 24 = 273mm ≈ 1032px)
+  const TABLE_PREVIEW_W = 703, TABLE_PREVIEW_PAGE_H = 1032, TABLE_PREVIEW_BOX_W = 760;
   useEffect(() => {
-    if (!showPrintScale || printScaleMode !== 'manual' || viewMode === 'table') return;
+    if (!showPrintScale) return;
     const src = printAreaRef.current;
     const container = printPreviewRef.current;
     if (!src || !container) return;
+    let cancelled = false;
     container.innerHTML = '';
     const clone = src.cloneNode(true);
     clone.style.transform = 'none';
     const styleTag = document.createElement('style');
-    styleTag.textContent = manualCalendarCss('.print-portal.print-preview-box', { font: printScalePercent, button: printButtonPercent, cell: printCellPercent, height: printHeightPercent, rows: weekChipCounts(clone), weekStart }) + printToggleCss('.print-portal.print-preview-box', { showGrade: printShowGrade, showRound: printShowRound, showOt: printShowOt });
     container.appendChild(styleTag);
     container.appendChild(clone);
+    const P = '.print-portal.print-preview-box';
+    const toggle = printToggleCss(P, { showGrade: printShowGrade, showRound: printShowRound, showOt: printShowOt });
+    if (viewMode === 'table') {
+      // 실제 표 인쇄와 같은 규칙 — 높이 제한 없이 표 전체가 흐르고(여러 페이지), 수동이면 zoom 적용
+      styleTag.textContent = `
+        ${P} .print-area { height: auto !important; max-height: none !important; overflow: visible !important; ${printScaleMode === 'manual' ? `zoom: ${printZoomPercent}% !important;` : ''} }
+        ${toggle}
+      `;
+    } else if (printScaleMode === 'manual') {
+      styleTag.textContent = manualCalendarCss(P, { font: printScalePercent, button: printButtonPercent, cell: printCellPercent, height: printHeightPercent, rows: weekChipCounts(clone), weekStart }) + toggle;
+    } else {
+      // 자동 맞춤 — handlePrint와 같은 방식으로, 각 날짜 칸이 넘치지 않을 때까지 글씨를 8px에서 0.5px씩 줄여
+      // 실제 인쇄가 잡을 글씨 크기를 미리 보여준다.
+      (async () => {
+        const cells = clone.querySelectorAll('.cal-day');
+        for (let fontPx = 8; fontPx >= 4; fontPx -= 0.5) {
+          const dotPx = Math.max(8, Math.round(fontPx * 1.6));
+          styleTag.textContent = `
+            ${P} .cal-day, ${P} .cal-day * { font-size: ${fontPx}px !important; line-height: 1.12 !important; }
+            ${P} .cal-day .rounded-full { width: ${dotPx}px !important; height: ${dotPx}px !important; }
+            ${toggle}
+          `;
+          await new Promise(r => requestAnimationFrame(() => r()));
+          if (cancelled) return;
+          if (!Array.from(cells).some(cell => cell.scrollHeight > cell.clientHeight + 1)) break;
+        }
+      })();
+    }
+    return () => { cancelled = true; };
   }, [showPrintScale, printScaleMode, viewMode, printScalePercent, printButtonPercent, printCellPercent, printHeightPercent, printZoomPercent, printShowGrade, printShowRound, printShowOt, weekStart]);
   const [optimizeCapacities, setOptimizeCapacities] = useState(() => {
     try {
@@ -2453,23 +2484,39 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                       >모두 기본값으로 초기화</button>
                     </div>
                   )}
-                  {printScaleMode === 'manual' && viewMode !== 'table' && (
-                    <div className="mt-2">
-                      <p className="text-[11px] text-gray-400 mb-1">미리보기 — 글씨가 잘려 보이면 배율을 낮추세요</p>
-                      <div className="border border-gray-200 rounded-lg overflow-hidden bg-white mx-auto"
-                        style={{ width: PRINT_PREVIEW_BOX_W, height: PRINT_PREVIEW_BOX_W * (PRINT_PREVIEW_H / PRINT_PREVIEW_W) }}>
-                        <div ref={printPreviewRef} className="print-portal print-preview-box"
-                          style={{
-                            display: 'block', width: PRINT_PREVIEW_W, height: PRINT_PREVIEW_H,
-                            transform: `scale(${PRINT_PREVIEW_BOX_W / PRINT_PREVIEW_W})`, transformOrigin: 'top left',
-                            pointerEvents: 'none',
-                          }} />
-                      </div>
-                    </div>
-                  )}
-                  {printScaleMode === 'manual' && viewMode === 'table' && (
-                    <p className="text-[11px] text-gray-400 mt-2 leading-relaxed">배율이 너무 크면 인쇄 영역을 벗어나 잘릴 수 있습니다.</p>
-                  )}
+                  <div className="mt-2">
+                    {viewMode !== 'table' ? (
+                      <>
+                        <p className="text-[11px] text-gray-400 mb-1">
+                          미리보기 — {printScaleMode === 'auto' ? '자동 맞춤이 계산한 글씨 크기로 보입니다' : '글씨가 잘려 보이면 배율을 낮추세요'}
+                        </p>
+                        <div className="border border-gray-200 rounded-lg overflow-hidden bg-white mx-auto"
+                          style={{ width: PRINT_PREVIEW_BOX_W, height: PRINT_PREVIEW_BOX_W * (PRINT_PREVIEW_H / PRINT_PREVIEW_W) }}>
+                          <div ref={printPreviewRef} className="print-portal print-preview-box"
+                            style={{
+                              display: 'block', width: PRINT_PREVIEW_W, height: PRINT_PREVIEW_H,
+                              transform: `scale(${PRINT_PREVIEW_BOX_W / PRINT_PREVIEW_W})`, transformOrigin: 'top left',
+                              pointerEvents: 'none',
+                            }} />
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-[11px] text-gray-400 mb-1">미리보기 — 표 전체(A4 세로). 붉은 점선은 페이지 경계(대략)이며 스크롤해서 전부 볼 수 있습니다</p>
+                        <div className="border border-gray-200 rounded-lg overflow-y-auto bg-gray-100 mx-auto" style={{ width: TABLE_PREVIEW_BOX_W, maxHeight: '58vh' }}>
+                          <div style={{ zoom: TABLE_PREVIEW_BOX_W / TABLE_PREVIEW_W, position: 'relative', width: TABLE_PREVIEW_W, background: '#fff' }}>
+                            <div ref={printPreviewRef} className="print-portal print-preview-box"
+                              style={{ display: 'block', width: TABLE_PREVIEW_W, pointerEvents: 'none' }} />
+                            <div style={{
+                              position: 'absolute', inset: 0, pointerEvents: 'none',
+                              backgroundImage: 'linear-gradient(to bottom, transparent calc(100% - 2px), #f87171 calc(100% - 2px))',
+                              backgroundSize: `100% ${TABLE_PREVIEW_PAGE_H}px`,
+                            }} />
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
                   <div className="flex justify-end gap-2 mt-3 pt-3 border-t border-gray-100">
                     <button onClick={() => setShowPrintScale(false)}
                       className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>
@@ -3453,7 +3500,7 @@ function ScheduleTable({ rows, completions, assignees = {}, adminUnlocked, membe
     const alignCls = meta.align === 'left' ? '' : 'text-center';
     if (key === 'date') return <td key={key} className={`${cellBase} font-semibold ${dowCls}`}>{ri === 0 ? g.ds : ''}</td>;
     if (key === 'dow') return <td key={key} className={`${cellBase} text-center font-semibold ${dowCls}`}>{ri === 0 ? DOW[dow] : ''}</td>;
-    if (key === 'zone') return <td key={key} className={`${cellBase} truncate`}><span className={`inline-block px-1 py-0.5 rounded ${done ? 'line-through opacity-60' : ''}`} style={getChipStyle(zone.category, zone.grade)}><GradeBadge color={gradeBtnColor?.(zone.grade)} grade={zone.grade} />{zone.name}</span></td>;
+    if (key === 'zone') return <td key={key} className={`${cellBase} truncate`}><span className={`inline-flex items-center max-w-full px-1 py-0.5 rounded ${done ? 'line-through opacity-60' : ''}`} style={getChipStyle(zone.category, zone.grade)}><GradeBadge color={gradeBtnColor?.(zone.grade)} grade={zone.grade} /><span className="truncate">{zone.name}</span></span></td>;
     if (key === 'num') { const total = totalCount(zone) || measurement.num; const numCls = measurement.isFirst ? 'text-green-600' : measurement.isLast ? 'text-red-600' : 'text-gray-700'; return <td key={key} className={`${cellBase} text-center font-bold ${numCls}`}>{measurement.num}/{total}회</td>; }
     if (key === 'assignee') {
       const who = assignees[`${zone.id}_${measurement.num}`] || '';
