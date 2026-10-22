@@ -2533,7 +2533,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
             <ScheduleTable rows={visibleTableRows} completions={completions} assignees={assignees}
               adminUnlocked={adminUnlocked} memberNames={memberNames} onAssign={assignSchedule}
               year={year} month={month}
-              getChipStyle={getChipStyle}
+              getChipStyle={getChipStyle} gradeBtnColor={gradeBtnColor}
               onToggleDone={(zone, m) => { if (requireAdmin()) setCompletionPrompt({ zoneId: zone.id, zoneName: zone.name, grade: zone.grade, num: m.num, dateStr: format(m.date, 'yyyy-MM-dd'), isCompleted: completions.has(`${zone.id}_${m.num}`) }); }}
             />
           ) : (
@@ -3368,7 +3368,7 @@ const SCHED_COL_META = {
 const SCHED_DEFAULT_ORDER = ['date', 'dow', 'zone', 'num', 'float', 'fall', 'surface', 'particle', 'nitro', 'comp', 'assignee', 'status'];
 const PT_KEYS = ['float', 'fall', 'surface', 'particle', 'nitro', 'comp'];
 
-function ScheduleTable({ rows, completions, assignees = {}, adminUnlocked, memberNames = [], onAssign, year, month, getChipStyle, onToggleDone }) {
+function ScheduleTable({ rows, completions, assignees = {}, adminUnlocked, memberNames = [], onAssign, year, month, getChipStyle, gradeBtnColor, onToggleDone }) {
   const DOW = ['일', '월', '화', '수', '목', '금', '토'];
   const [colW, setColW] = useState(() => {
     try { const s = JSON.parse(localStorage.getItem('em-sched-table-cols')); if (s && typeof s === 'object') return s; } catch { /* ignore */ }
@@ -3417,7 +3417,7 @@ function ScheduleTable({ rows, completions, assignees = {}, adminUnlocked, membe
     const alignCls = meta.align === 'left' ? '' : 'text-center';
     if (key === 'date') return <td key={key} className={`${cellBase} font-semibold ${dowCls}`}>{ri === 0 ? g.ds : ''}</td>;
     if (key === 'dow') return <td key={key} className={`${cellBase} text-center font-semibold ${dowCls}`}>{ri === 0 ? DOW[dow] : ''}</td>;
-    if (key === 'zone') return <td key={key} className={`${cellBase} truncate`}><span className={`inline-block px-1 py-0.5 rounded ${done ? 'line-through opacity-60' : ''}`} style={getChipStyle(zone.category, zone.grade)}>{zone.name}[{zone.grade}]-{measurement.num}</span></td>;
+    if (key === 'zone') return <td key={key} className={`${cellBase} truncate`}><span className={`inline-block px-1 py-0.5 rounded ${done ? 'line-through opacity-60' : ''}`} style={getChipStyle(zone.category, zone.grade)}><GradeBadge color={gradeBtnColor?.(zone.grade)} grade={zone.grade} />{zone.name}</span></td>;
     if (key === 'num') { const total = totalCount(zone) || measurement.num; const numCls = measurement.isFirst ? 'text-green-600' : measurement.isLast ? 'text-red-600' : 'text-gray-700'; return <td key={key} className={`${cellBase} text-center font-bold ${numCls}`}>{measurement.num}/{total}회</td>; }
     if (key === 'assignee') {
       const who = assignees[`${zone.id}_${measurement.num}`] || '';
