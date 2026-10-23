@@ -2620,12 +2620,12 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
             </div>
             <div className="relative flex items-center justify-center gap-4">
               {/* 보기 설정 버튼 — 월 이동 ‹ 의 왼쪽에 붙여 두되(absolute), 년/월은 계속 정중앙에 있도록 흐름에서는 뺀다 */}
-              <div className="print:hidden absolute right-full mr-3 top-1/2 -translate-y-1/2 flex flex-col items-stretch gap-1">
+              <div className="print:hidden absolute right-full mr-3 top-1/2 -translate-y-1/2 flex flex-row items-center gap-1">
                 {viewMode === 'calendar' && (
                   <button
                     onClick={() => setNarrowWeekend(v => !v)}
                     title={narrowWeekend ? '주말(토·일) 칸이 평일의 절반 폭입니다 — 누르면 같은 폭으로' : '토·일 칸 폭을 절반으로 줄여 평일 칸을 넓게 봅니다'}
-                    className={`whitespace-nowrap px-2 py-1 text-xs font-medium rounded-lg border transition-colors ${
+                    className={`whitespace-nowrap px-1.5 py-1 text-[11px] font-medium rounded-lg border transition-colors ${
                       narrowWeekend ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100' : 'bg-white text-gray-400 border-gray-200 hover:bg-gray-50'
                     }`}
                   >↔ 주말폭</button>
@@ -2633,7 +2633,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                 <button
                   onClick={() => setShowDoneMarks(v => !v)}
                   title={showDoneMarks ? '완료된 일정의 취소선·흐림 표시를 끕니다' : '완료된 일정을 취소선·흐림으로 표시합니다'}
-                  className={`whitespace-nowrap px-2 py-1 text-xs font-medium rounded-lg border transition-colors ${
+                  className={`whitespace-nowrap px-1.5 py-1 text-[11px] font-medium rounded-lg border transition-colors ${
                     showDoneMarks ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-white text-gray-400 border-gray-200 hover:bg-gray-50'
                   }`}
                 >✓ 완료표시</button>
