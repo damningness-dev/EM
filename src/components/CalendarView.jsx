@@ -379,6 +379,13 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   const [printShowLegend, setPrintShowLegend] = useState(() => { // 인쇄에 하단 범례 표시
     try { return JSON.parse(localStorage.getItem('em-print-scale'))?.showLegend !== false; } catch { return true; }
   });
+  // 화면의 달력·표에서 완료 일정의 취소선·흐림을 보일지(꺼도 완료 처리 자체는 그대로). 인쇄 설정과는 별개.
+  const [showDoneMarks, setShowDoneMarks] = useState(() => {
+    try { return localStorage.getItem('em-show-done-marks') !== '0'; } catch { return true; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('em-show-done-marks', showDoneMarks ? '1' : '0'); } catch { /* ignore */ }
+  }, [showDoneMarks]);
   const [printShowDone, setPrintShowDone] = useState(() => { // 인쇄에 완료 표시(취소선·흐림·완료 배지) 표시
     try { return JSON.parse(localStorage.getItem('em-print-scale'))?.showDone !== false; } catch { return true; }
   });
@@ -407,6 +414,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     container.innerHTML = '';
     const clone = src.cloneNode(true);
     clone.style.transform = 'none';
+    clone.classList.remove('hide-done-marks'); // 화면의 완료표시 설정이 아니라 인쇄 설정을 따른다
     const styleTag = document.createElement('style');
     container.appendChild(styleTag);
     container.appendChild(clone);
@@ -933,6 +941,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     portal.className = 'print-portal';
     const clone = src.cloneNode(true);
     clone.style.transform = 'none';
+    clone.classList.remove('hide-done-marks'); // 화면의 완료표시 설정이 아니라 인쇄 설정을 따른다
     portal.appendChild(clone);
     document.body.appendChild(portal);
     document.body.classList.add('is-printing');
@@ -2424,6 +2433,15 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
               </span>
             </button>
           )}
+          <button
+            onClick={() => setShowDoneMarks(v => !v)}
+            title={showDoneMarks ? '완료된 일정의 취소선·흐림 표시를 끕니다' : '완료된 일정을 취소선·흐림으로 표시합니다'}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-xl border transition-colors ${
+              showDoneMarks ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-white text-gray-400 border-gray-200 hover:bg-gray-50'
+            }`}
+          >
+            ✓ 완료표시 {showDoneMarks ? '켜짐' : '꺼짐'}
+          </button>
           <div className="flex rounded-xl border border-gray-200 overflow-hidden bg-white text-sm">
             <button onClick={() => setViewMode('calendar')} className={`px-3 py-1.5 font-medium ${viewMode === 'calendar' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>📅 달력</button>
             <button onClick={() => setViewMode('table')} className={`px-3 py-1.5 font-medium ${viewMode === 'table' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>☰ 표</button>
@@ -2580,7 +2598,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
 
       <div className="flex gap-5">
         {/* Calendar */}
-        <div ref={printAreaRef} className="flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden min-w-0 print-area">
+        <div ref={printAreaRef} className={`flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden min-w-0 print-area ${showDoneMarks ? '' : 'hide-done-marks'}`}>
           {/* 년/월 표시 + 이전/다음 (달력 테두리 안, 인쇄 시에도 표시) + 우측에 모니터링/교정/AHU
               요약(클릭하면 각각 팝업)을 함께 배치해 별도 줄 없이 한 줄로 보여준다. 요약은
               인쇄 대상이 아니므로 print:hidden. */}

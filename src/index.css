@@ -226,3 +226,9 @@ body {
     display: block !important;
   }
 }
+
+/* 화면의 완료표시 끄기 — 완료 일정의 취소선·흐림·완료 배지/행 배경을 숨긴다(완료 처리 자체는 그대로).
+   인쇄용 복제본에는 이 클래스를 떼므로 인쇄는 인쇄 설정의 "완료 표시"를 따른다. */
+.hide-done-marks .cal-done { opacity: 1 !important; text-decoration: none !important; }
+.hide-done-marks .cal-done-row { background-color: transparent !important; }
+.hide-done-marks .cal-done-badge { visibility: hidden !important; }
