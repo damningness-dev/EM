@@ -2885,8 +2885,8 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                               <span className="shrink-0 flex items-center"><GradeBadge color={gradeBtnColor(zone.grade)} grade={zone.grade} /></span>
                               <span className="truncate min-w-0">{zone.name}</span>
                               <span className="cal-round shrink-0 ml-0.5">[{measurement.num}/{totalCount(zone) || measurement.num}]</span>
-                              {/* 포인트 미입력 표시(*)는 이름 뒤 오른쪽 끝에 둔다 */}
-                              {noPts && <span className="text-red-600 font-bold shrink-0 ml-0.5">*</span>}
+                              {/* 포인트 미입력 표시(***)는 이름 뒤 오른쪽 끝에 둔다 */}
+                              {noPts && <span className="text-red-600 font-bold shrink-0 ml-0.5">***</span>}
                             </span>
                             {measurement.isLast && <span className="w-1 shrink-0" style={{ backgroundColor: '#ef4444' }} />}
                           </div>
