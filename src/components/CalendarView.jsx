@@ -2440,26 +2440,6 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
               </span>
             </button>
           )}
-          {viewMode === 'calendar' && (
-            <button
-              onClick={() => setNarrowWeekend(v => !v)}
-              title={narrowWeekend ? '토·일 칸을 평일과 같은 폭으로 되돌립니다' : '토·일 칸 폭을 절반으로 줄여 평일 칸을 넓게 봅니다'}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-xl border transition-colors ${
-                narrowWeekend ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
-              }`}
-            >
-              ↔ 주말 {narrowWeekend ? '좁게' : '같은 폭'}
-            </button>
-          )}
-          <button
-            onClick={() => setShowDoneMarks(v => !v)}
-            title={showDoneMarks ? '완료된 일정의 취소선·흐림 표시를 끕니다' : '완료된 일정을 취소선·흐림으로 표시합니다'}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-xl border transition-colors ${
-              showDoneMarks ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-white text-gray-400 border-gray-200 hover:bg-gray-50'
-            }`}
-          >
-            ✓ 완료표시 {showDoneMarks ? '켜짐' : '꺼짐'}
-          </button>
           <div className="flex rounded-xl border border-gray-200 overflow-hidden bg-white text-sm">
             <button onClick={() => setViewMode('calendar')} className={`px-3 py-1.5 font-medium ${viewMode === 'calendar' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>📅 달력</button>
             <button onClick={() => setViewMode('table')} className={`px-3 py-1.5 font-medium ${viewMode === 'table' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'}`}>☰ 표</button>
@@ -2627,7 +2607,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
             <div className="print:hidden flex items-center gap-2 flex-wrap justify-start">
               <button type="button" onClick={() => setShowMonPopup(true)}
                 title="클릭하면 모니터링 현황 목록이 열립니다"
-                className="w-44 px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors text-left">
+                className="w-36 px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors text-left">
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="text-xs text-gray-600 whitespace-nowrap">모니터링 {monthDoneRows.length}/{monitorRows.length}</span>
                   <span className={`text-xs font-bold ${monCompleteRate === 100 ? 'text-green-600' : 'text-blue-600'}`}>{monCompleteRate}%</span>
@@ -2638,7 +2618,26 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                 </div>
               </button>
             </div>
-            <div className="flex items-center justify-center gap-4">
+            <div className="relative flex items-center justify-center gap-4">
+              {/* 보기 설정 버튼 — 월 이동 ‹ 의 왼쪽에 붙여 두되(absolute), 년/월은 계속 정중앙에 있도록 흐름에서는 뺀다 */}
+              <div className="print:hidden absolute right-full mr-3 top-1/2 -translate-y-1/2 flex flex-col items-stretch gap-1">
+                {viewMode === 'calendar' && (
+                  <button
+                    onClick={() => setNarrowWeekend(v => !v)}
+                    title={narrowWeekend ? '주말(토·일) 칸이 평일의 절반 폭입니다 — 누르면 같은 폭으로' : '토·일 칸 폭을 절반으로 줄여 평일 칸을 넓게 봅니다'}
+                    className={`whitespace-nowrap px-2 py-1 text-xs font-medium rounded-lg border transition-colors ${
+                      narrowWeekend ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100' : 'bg-white text-gray-400 border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >↔ 주말폭</button>
+                )}
+                <button
+                  onClick={() => setShowDoneMarks(v => !v)}
+                  title={showDoneMarks ? '완료된 일정의 취소선·흐림 표시를 끕니다' : '완료된 일정을 취소선·흐림으로 표시합니다'}
+                  className={`whitespace-nowrap px-2 py-1 text-xs font-medium rounded-lg border transition-colors ${
+                    showDoneMarks ? 'bg-green-50 text-green-700 border-green-200 hover:bg-green-100' : 'bg-white text-gray-400 border-gray-200 hover:bg-gray-50'
+                  }`}
+                >✓ 완료표시</button>
+              </div>
               <button onClick={prevMonth}
                 onDragEnter={() => armFlip(-1)} onDragOver={e => { if (chipDraggingRef.current) e.preventDefault(); }}
                 onDragLeave={clearFlip} onDrop={e => { e.preventDefault(); endChipDrag(); }}
@@ -2882,11 +2881,12 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                             {measurement.isFirst && <span className="w-1 shrink-0" style={{ backgroundColor: '#22c55e' }} />}
                             {/* 이름이 길면 이름만 …로 줄이고, 앞의 단계 버튼과 뒤의 -회차는 항상 보이게 한다 */}
                             <span className={`cal-chip-pad flex items-center min-w-0 flex-1 px-1 py-0.5 ${isDone ? 'cal-done line-through' : ''} ${(measurement.isFirst || measurement.isLast) ? 'font-semibold' : ''}`}>
-                              {noPts && <span className="text-red-600 font-bold shrink-0">*</span>}
                               {mine && <span className="font-bold shrink-0">👤 </span>}
                               <span className="shrink-0 flex items-center"><GradeBadge color={gradeBtnColor(zone.grade)} grade={zone.grade} /></span>
                               <span className="truncate min-w-0">{zone.name}</span>
                               <span className="cal-round shrink-0 ml-0.5">[{measurement.num}/{totalCount(zone) || measurement.num}]</span>
+                              {/* 포인트 미입력 표시(*)는 이름 뒤 오른쪽 끝에 둔다 */}
+                              {noPts && <span className="text-red-600 font-bold shrink-0 ml-0.5">*</span>}
                             </span>
                             {measurement.isLast && <span className="w-1 shrink-0" style={{ backgroundColor: '#ef4444' }} />}
                           </div>
