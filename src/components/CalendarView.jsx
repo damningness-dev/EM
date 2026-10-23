@@ -2875,7 +2875,16 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                             onClick={(e) => e.stopPropagation()}
                             className={`text-xs rounded overflow-hidden flex items-stretch min-w-0 ${isDone ? 'cal-done opacity-60 cursor-default' : 'cursor-grab active:cursor-grabbing'} ${mine ? 'ring-2 ring-indigo-500' : ''} ${flashTarget?.zoneId === zone.id && flashTarget?.num === measurement.num ? 'flash-highlight' : ''}`}
                             style={getChipStyle(zone.category, zone.grade)}
-                            onMouseEnter={(e) => { const r = e.currentTarget.getBoundingClientRect(); setHoverTip({ x: Math.max(8, Math.min(r.left, window.innerWidth - 300)), y: r.bottom + 6, top: r.top - 6, flip: r.bottom + 190 > window.innerHeight, zone, measurement, isDone, mine, noPts }); }}
+                            onMouseEnter={(e) => {
+                              // 툴팁이 같은 날(요일 칸)의 다른 일정을 가리지 않도록 위·아래가 아니라 날짜 칸의 옆에
+                              // 띄운다 — 오른쪽 공간이 모자라면 왼쪽에. 세로는 칩 높이에 맞추되 화면 안으로 보정한다.
+                              const cellR = (e.currentTarget.closest('.cal-day') || e.currentTarget).getBoundingClientRect();
+                              const r = e.currentTarget.getBoundingClientRect();
+                              const TIP_W = 288, TIP_H = 200, GAP = 6;
+                              const x = cellR.right + GAP + TIP_W <= window.innerWidth - 8 ? cellR.right + GAP : Math.max(8, cellR.left - GAP - TIP_W);
+                              const y = Math.max(8, Math.min(r.top, window.innerHeight - TIP_H - 8));
+                              setHoverTip({ x, y, flip: false, zone, measurement, isDone, mine, noPts });
+                            }}
                             onMouseLeave={() => setHoverTip(null)}
                           >
                             {measurement.isFirst && <span className="w-1 shrink-0" style={{ backgroundColor: '#22c55e' }} />}
