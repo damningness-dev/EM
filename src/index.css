@@ -232,3 +232,10 @@ body {
 .hide-done-marks .cal-done { opacity: 1 !important; text-decoration: none !important; }
 .hide-done-marks .cal-done-row { background-color: transparent !important; }
 .hide-done-marks .cal-done-badge { visibility: hidden !important; }
+
+/* 화면 달력의 주말(토·일) 칸 폭 줄이기 — 요일 머리글과 날짜 칸 모두 같은 열 폭을 쓴다.
+   주 시작 요일이 일요일이면 양 끝 열, 월요일이면 오른쪽 두 열이 주말이다. */
+.narrow-weekend-sun .cal-dow,
+.narrow-weekend-sun .cal-grid { grid-template-columns: minmax(0, 0.5fr) repeat(5, minmax(0, 1fr)) minmax(0, 0.5fr); }
+.narrow-weekend-mon .cal-dow,
+.narrow-weekend-mon .cal-grid { grid-template-columns: repeat(5, minmax(0, 1fr)) repeat(2, minmax(0, 0.5fr)); }

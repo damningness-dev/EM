@@ -386,6 +386,13 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   useEffect(() => {
     try { localStorage.setItem('em-show-done-marks', showDoneMarks ? '1' : '0'); } catch { /* ignore */ }
   }, [showDoneMarks]);
+  // 화면 달력에서 토·일 칸의 폭을 절반으로 줄여 평일 칸을 넓게 보기(인쇄에는 영향 없음 — 인쇄는 인쇄 설정의 가로 비율).
+  const [narrowWeekend, setNarrowWeekend] = useState(() => {
+    try { return localStorage.getItem('em-narrow-weekend') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('em-narrow-weekend', narrowWeekend ? '1' : '0'); } catch { /* ignore */ }
+  }, [narrowWeekend]);
   const [printShowDone, setPrintShowDone] = useState(() => { // 인쇄에 완료 표시(취소선·흐림·완료 배지) 표시
     try { return JSON.parse(localStorage.getItem('em-print-scale'))?.showDone !== false; } catch { return true; }
   });
@@ -414,7 +421,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     container.innerHTML = '';
     const clone = src.cloneNode(true);
     clone.style.transform = 'none';
-    clone.classList.remove('hide-done-marks'); // 화면의 완료표시 설정이 아니라 인쇄 설정을 따른다
+    clone.classList.remove('hide-done-marks', 'narrow-weekend-sun', 'narrow-weekend-mon'); // 화면 전용 표시 설정은 인쇄 복제본에서 뗀다(인쇄 설정을 따름)
     const styleTag = document.createElement('style');
     container.appendChild(styleTag);
     container.appendChild(clone);
@@ -941,7 +948,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     portal.className = 'print-portal';
     const clone = src.cloneNode(true);
     clone.style.transform = 'none';
-    clone.classList.remove('hide-done-marks'); // 화면의 완료표시 설정이 아니라 인쇄 설정을 따른다
+    clone.classList.remove('hide-done-marks', 'narrow-weekend-sun', 'narrow-weekend-mon'); // 화면 전용 표시 설정은 인쇄 복제본에서 뗀다(인쇄 설정을 따름)
     portal.appendChild(clone);
     document.body.appendChild(portal);
     document.body.classList.add('is-printing');
@@ -2433,6 +2440,17 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
               </span>
             </button>
           )}
+          {viewMode === 'calendar' && (
+            <button
+              onClick={() => setNarrowWeekend(v => !v)}
+              title={narrowWeekend ? '토·일 칸을 평일과 같은 폭으로 되돌립니다' : '토·일 칸 폭을 절반으로 줄여 평일 칸을 넓게 봅니다'}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-xl border transition-colors ${
+                narrowWeekend ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              ↔ 주말 {narrowWeekend ? '좁게' : '같은 폭'}
+            </button>
+          )}
           <button
             onClick={() => setShowDoneMarks(v => !v)}
             title={showDoneMarks ? '완료된 일정의 취소선·흐림 표시를 끕니다' : '완료된 일정을 취소선·흐림으로 표시합니다'}
@@ -2598,7 +2616,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
 
       <div className="flex gap-5">
         {/* Calendar */}
-        <div ref={printAreaRef} className={`flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden min-w-0 print-area ${showDoneMarks ? '' : 'hide-done-marks'}`}>
+        <div ref={printAreaRef} className={`flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden min-w-0 print-area ${showDoneMarks ? '' : 'hide-done-marks'} ${narrowWeekend ? (weekStart === 'mon' ? 'narrow-weekend-mon' : 'narrow-weekend-sun') : ''}`}>
           {/* 년/월 표시 + 이전/다음 (달력 테두리 안, 인쇄 시에도 표시) + 우측에 모니터링/교정/AHU
               요약(클릭하면 각각 팝업)을 함께 배치해 별도 줄 없이 한 줄로 보여준다. 요약은
               인쇄 대상이 아니므로 print:hidden. */}
