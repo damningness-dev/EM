@@ -3284,14 +3284,14 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                           key={`${occ.zone.id}-${occ.measurement.num}-${i}`}
                           onClick={() => { flashItem(occ); setShowMonPopup(false); }}
                           className={`text-[11px] px-1.5 py-0.5 rounded border flex items-center gap-1 transition-colors ${
-                            isDone ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
+                            isDone ? 'bg-green-100 border-green-500 text-green-800 hover:bg-green-200' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
                           } ${flashTarget?.zoneId === occ.zone.id && flashTarget?.num === occ.measurement.num ? 'flash-highlight' : ''}`}
                           title={`${g.zone.name}[${g.zone.grade}] · ${occ.ds}${isDone ? ' [완료]' : ''}${zonePtTip(g.zone)}`}
                         >
                           <span>{isDone ? '✓' : '○'}</span>
                           <span className="font-medium">{occ.monthIdx}/{occ.monthTotal}</span>
-                          <span className="text-gray-400">{occ.ds.slice(2).replace(/-/g, '/')}</span>
-                          <span className="text-gray-400">#{occ.measurement.num}/{totalCount(occ.zone)}</span>
+                          <span className={isDone ? 'text-green-700/80' : 'text-gray-400'}>{occ.ds.slice(2).replace(/-/g, '/')}</span>
+                          <span className={isDone ? 'text-green-700/80' : 'text-gray-400'}>#{occ.measurement.num}/{totalCount(occ.zone)}</span>
                           {occ.measurement.spanMonths > 1 && (
                             <span className="text-[9px] px-1 rounded bg-indigo-50 text-indigo-500 font-medium">
                               {occ.measurement.spanMonths === 3 ? '분기' : occ.measurement.spanMonths === 6 ? '반기' : occ.measurement.spanMonths === 12 ? '연' : `${occ.measurement.spanMonths}개월`}
