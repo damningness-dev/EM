@@ -2816,20 +2816,16 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                             setOvertimeTip({ x: Math.max(8, Math.min(r.left, window.innerWidth - 270)), y: r.bottom + 6, top: r.top - 6, flip: r.bottom + 160 > window.innerHeight, date: dateStr, ot });
                           }}
                           onMouseLeave={() => setOvertimeTip(null)}
-                          className={`cal-ot-btn print:hidden shrink-0 flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] leading-none transition-opacity ${
-                            ot ? (ot.leave ? 'bg-red-100 text-red-600 hover:bg-red-200' : 'bg-amber-100 text-amber-700 hover:bg-amber-200')
-                               : 'text-gray-400 hover:text-amber-600 hover:bg-amber-50 opacity-0 group-hover:opacity-100'
+                          className={`cal-ot-btn print:hidden shrink-0 flex ${ot ? 'flex-col items-start gap-px leading-none hover:brightness-95' : 'items-center gap-0.5 leading-none rounded px-1 py-0.5'} text-[9px] transition-opacity ${
+                            ot ? '' : 'text-gray-400 hover:text-amber-600 hover:bg-amber-50 opacity-0 group-hover:opacity-100'
                           }`}
                         >
                           {!ot && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>}
-                          {ot?.leave && <span className="font-semibold">{LEAVE_LABEL[ot.leave]}</span>}
-                          {/* 조출(위)과 연장(아래)을 두 줄로 쌓아 보여준다 */}
-                          {ot && (ot.early > 0 || ot.hours > 0) && (
-                            <span className="flex flex-col items-start gap-px font-semibold leading-[1.1]">
-                              {ot.early > 0 && <span>조출 {ot.early}h</span>}
-                              {ot.hours > 0 && <span>연장 {ot.hours}h</span>}
-                            </span>
-                          )}
+                          {/* 가로로 늘리지 않고 세로로 쌓고, 종류는 글자 대신 배지 색으로 구분한다:
+                              휴가(빨강) → 조출(하늘) → 연장(노랑). 시간은 "1h"처럼 숫자만 쓴다. */}
+                          {ot?.leave && <span className="rounded px-1 py-0.5 font-semibold bg-red-100 text-red-600">{LEAVE_LABEL[ot.leave]}</span>}
+                          {ot && ot.early > 0 && <span className="rounded px-1 py-0.5 font-semibold bg-sky-100 text-sky-700">{ot.early}h</span>}
+                          {ot && ot.hours > 0 && <span className="rounded px-1 py-0.5 font-semibold bg-amber-100 text-amber-700">{ot.hours}h</span>}
                         </button>
                       );
                       return isHol ? (
