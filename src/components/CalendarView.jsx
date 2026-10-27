@@ -271,15 +271,17 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     try { return JSON.parse(localStorage.getItem(OVERTIME_KEY)) || {}; } catch { return {}; }
   });
   const [overtimeTip, setOvertimeTip] = useState(null); // 연장·휴가 배지 호버 툴팁 { x, y, date, ot }
-  const [overtimeEdit, setOvertimeEdit] = useState(null); // { date, hours(연장), early(조출), memo, leave }
+  const [overtimeEdit, setOvertimeEdit] = useState(null); // { date, hours(연장), early(조출), memo(연장/특근 내용), earlyMemo(조출 내용), leave, workStart·workEnd(주말·공휴일 특근 'HH:MM') }
   const LEAVE_LABEL = { annual: '연차', am: '오전', pm: '오후' }; // 달력 배지·툴팁용 짧은 표기
 
-  function saveOvertime(date, hours, memo, leave, early) {
+  function saveOvertime(date, { hours = '', early = '', memo = '', earlyMemo = '', leave = '', workStart = '', workEnd = '' } = {}) {
     setOvertime(prev => {
       const next = { ...prev };
       const h = Math.round(parseFloat(hours)); // 연장 시간은 1시간 단위(소수 없음)
       const e = Math.round(parseFloat(early)); // 조출(일찍 출근) 시간도 1시간 단위
-      if (h > 0 || e > 0 || memo.trim() || leave) next[date] = { hours: h > 0 ? h : 0, early: e > 0 ? e : 0, memo: memo.trim(), leave: leave || '' };
+      if (h > 0 || e > 0 || memo.trim() || earlyMemo.trim() || leave || workStart || workEnd) {
+        next[date] = { hours: h > 0 ? h : 0, early: e > 0 ? e : 0, memo: memo.trim(), earlyMemo: earlyMemo.trim(), leave: leave || '', workStart: workStart || '', workEnd: workEnd || '' };
+      }
       else delete next[date];
       try { localStorage.setItem(OVERTIME_KEY, JSON.stringify(next)); } catch { /* 저장 실패는 무시 */ }
       return next;
@@ -1835,10 +1837,34 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
       {/* 연장기록 (이 PC에만 저장) */}
       {overtimeEdit && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/40" onClick={() => setOvertimeEdit(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-96 p-6" onClick={e => e.stopPropagation()}>
-            <h3 className="text-base font-bold text-gray-900 mb-1">조출 · 연장 · 휴가 기록</h3>
+          <div className="bg-white rounded-2xl shadow-2xl w-[34rem] max-w-[95vw] p-6" onClick={e => e.stopPropagation()}>
+            <h3 className={`text-base font-bold mb-1 ${overtimeEdit.special ? 'text-red-600' : 'text-gray-900'}`}>{overtimeEdit.special ? '특근 기록 (주말·공휴일)' : '조출 · 연장 · 휴가 기록'}</h3>
             <p className="text-sm text-gray-400 mb-1">{overtimeEdit.date}</p>
             <p className="text-[11px] text-amber-600 mb-4">이 PC에만 저장되며 공유·동기화·백업에 포함되지 않습니다.</p>
+            {overtimeEdit.special ? (
+              <div className="mb-5">
+                <label className="block text-xs text-gray-500 mb-1">몇 시부터 몇 시까지 했나요? (달력에 빨간 배지로 표시)</label>
+                <div className="flex items-center gap-2 mb-3">
+                  <input type="time" value={overtimeEdit.workStart}
+                    onChange={e => setOvertimeEdit(p => ({ ...p, workStart: e.target.value }))}
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400" />
+                  <span className="text-sm text-gray-500">부터</span>
+                  <input type="time" value={overtimeEdit.workEnd}
+                    onChange={e => setOvertimeEdit(p => ({ ...p, workEnd: e.target.value }))}
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400" />
+                  <span className="text-sm text-gray-500">까지</span>
+                </div>
+                <label className="block text-xs text-gray-500 mb-1">특근 내용</label>
+                <textarea
+                  value={overtimeEdit.memo}
+                  onChange={e => setOvertimeEdit(p => ({ ...p, memo: e.target.value }))}
+                  rows={4}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 resize-none"
+                  placeholder="특근 사유, 작업 내용 등을 기록하세요"
+                />
+              </div>
+            ) : (
+              <>
             <label className="block text-xs text-gray-500 mb-1">휴가</label>
             <div className="flex gap-1.5 mb-4">
               {[['', '없음'], ['annual', '연차'], ['am', '오전반차'], ['pm', '오후반차']].map(([v, label]) => (
@@ -1851,50 +1877,44 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                   }`}>{label}</button>
               ))}
             </div>
-            <div className="flex items-end gap-5 mb-4">
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">조출 시간 (달력에 표시)</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number" min="0" max="24" step="1"
-                    value={overtimeEdit.early}
-                    onChange={e => setOvertimeEdit(p => ({ ...p, early: e.target.value }))}
-                    className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-                    placeholder="0"
+            <div className="grid grid-cols-2 gap-4 mb-5">
+              {[
+                ['조출', 'early', 'earlyMemo', '조출 사유, 일찍 시작한 작업 등'],
+                ['연장', 'hours', 'memo', '연장 사유, 작업 내용, 휴가 메모 등'],
+              ].map(([label, hKey, mKey, ph]) => (
+                <div key={hKey}>
+                  <label className="block text-xs text-gray-500 mb-1">{label} 시간 (달력에 표시)</label>
+                  <div className="flex items-center gap-2 mb-2">
+                    <input
+                      type="number" min="0" max="24" step="1"
+                      value={overtimeEdit[hKey]}
+                      onChange={e => setOvertimeEdit(p => ({ ...p, [hKey]: e.target.value }))}
+                      className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      placeholder="0"
+                    />
+                    <span className="text-sm text-gray-500">시간</span>
+                  </div>
+                  <label className="block text-xs text-gray-500 mb-1">{label} 내용</label>
+                  <textarea
+                    value={overtimeEdit[mKey]}
+                    onChange={e => setOvertimeEdit(p => ({ ...p, [mKey]: e.target.value }))}
+                    rows={4}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
+                    placeholder={ph}
                   />
-                  <span className="text-sm text-gray-500">시간</span>
                 </div>
-              </div>
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">연장 시간 (달력에 표시)</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number" min="0" max="24" step="1"
-                    value={overtimeEdit.hours}
-                    onChange={e => setOvertimeEdit(p => ({ ...p, hours: e.target.value }))}
-                    className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-                    placeholder="0"
-                  />
-                  <span className="text-sm text-gray-500">시간</span>
-                </div>
-              </div>
+              ))}
             </div>
-            <label className="block text-xs text-gray-500 mb-1">내용</label>
-            <textarea
-              value={overtimeEdit.memo}
-              onChange={e => setOvertimeEdit(p => ({ ...p, memo: e.target.value }))}
-              rows={4}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 mb-5 resize-none"
-              placeholder="연장 사유, 작업 내용, 휴가 메모 등을 기록하세요"
-            />
+              </>
+            )}
             <div className="flex gap-2 justify-end">
               {overtime[overtimeEdit.date] && (
-                <button onClick={() => saveOvertime(overtimeEdit.date, '', '', '', '')}
+                <button onClick={() => saveOvertime(overtimeEdit.date)}
                   className="mr-auto px-4 py-2 text-sm text-red-500 bg-red-50 rounded-lg hover:bg-red-100">삭제</button>
               )}
               <button onClick={() => setOvertimeEdit(null)}
                 className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>
-              <button onClick={() => saveOvertime(overtimeEdit.date, overtimeEdit.hours, overtimeEdit.memo, overtimeEdit.leave, overtimeEdit.early)}
+              <button onClick={() => saveOvertime(overtimeEdit.date, overtimeEdit)}
                 className="px-4 py-2 text-sm text-white bg-amber-500 rounded-lg hover:bg-amber-600">저장</button>
             </div>
           </div>
@@ -2492,7 +2512,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                     </label>
                     <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer select-none" title="달력에 기록한 연장 시간·연차/오전/오후 배지 (이 PC에만 저장된 기록)">
                       <input type="checkbox" checked={printShowOt} onChange={e => setPrintShowOt(e.target.checked)} />
-                      근무시간 표시 (연장·휴가)
+                      근무시간 표시 (조출·연장·특근·휴가)
                     </label>
                     <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer select-none">
                       <input type="checkbox" checked={printShowLegend} onChange={e => setPrintShowLegend(e.target.checked)} />
@@ -2810,7 +2830,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                       const overtimeBtn = isOther ? null : (
                         <button
                           type="button"
-                          onClick={(e) => { e.stopPropagation(); setOvertimeTip(null); setOvertimeEdit({ date: dateStr, hours: ot?.hours ? String(ot.hours) : '', early: ot?.early ? String(ot.early) : '', memo: ot?.memo || '', leave: ot?.leave || '' }); }}
+                          onClick={(e) => { e.stopPropagation(); setOvertimeTip(null); setOvertimeEdit({ date: dateStr, hours: ot?.hours ? String(ot.hours) : '', early: ot?.early ? String(ot.early) : '', memo: ot?.memo || '', earlyMemo: ot?.earlyMemo || '', workStart: ot?.workStart || '', workEnd: ot?.workEnd || '', special: dow === 0 || dow === 6 || isHol, leave: ot?.leave || '' }); }}
                           onMouseEnter={(e) => {
                             const r = e.currentTarget.getBoundingClientRect();
                             setOvertimeTip({ x: Math.max(8, Math.min(r.left, window.innerWidth - 270)), y: r.bottom + 6, top: r.top - 6, flip: r.bottom + 160 > window.innerHeight, date: dateStr, ot });
@@ -2824,6 +2844,13 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                           {/* 가로로 늘리지 않고 세로로 쌓고, 종류는 글자 대신 배지 색으로 구분한다:
                               휴가(빨강) → 조출(하늘) → 연장(노랑). 시간은 "1h"처럼 숫자만 쓴다. */}
                           {ot?.leave && <span className="rounded px-1 py-0.5 font-semibold bg-red-100 text-red-600">{LEAVE_LABEL[ot.leave]}</span>}
+                          {/* 주말·공휴일 특근: 빨간 배지 + 시작~종료 시각 */}
+                          {ot && (ot.workStart || ot.workEnd) && (
+                            <>
+                              <span className="rounded px-1 py-0.5 font-bold bg-red-500 text-white">특근</span>
+                              <span className="rounded px-1 py-0.5 font-semibold bg-red-100 text-red-700">{ot.workStart || '?'}~{ot.workEnd || '?'}</span>
+                            </>
+                          )}
                           {ot && ot.early > 0 && <span className="rounded px-1 py-0.5 font-semibold bg-sky-100 text-sky-700">{ot.early}h</span>}
                           {ot && ot.hours > 0 && <span className="rounded px-1 py-0.5 font-semibold bg-amber-100 text-amber-700">{ot.hours}h</span>}
                         </button>
@@ -3334,21 +3361,34 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
           <div className="fixed z-[180] pointer-events-none w-64 bg-gray-900 text-gray-100 rounded-xl shadow-2xl border border-gray-700 overflow-hidden"
             style={{ left: overtimeTip.x, top: overtimeTip.flip ? overtimeTip.top : overtimeTip.y, transform: overtimeTip.flip ? 'translateY(-100%)' : undefined }}>
             <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between gap-2">
-              <span className="text-xs font-semibold">{ot ? '연장 · 휴가 기록' : '연장 · 휴가 기록하기'}</span>
+              <span className="text-xs font-semibold">{ot ? '조출 · 연장 · 휴가 기록' : '조출 · 연장 · 휴가 기록하기'}</span>
               <span className="text-[10px] text-gray-500">{date}</span>
             </div>
             <div className="px-3 py-2 text-xs">
               {ot ? (
                 <>
-                  <div className="flex flex-wrap gap-1">
-                    {ot.leave && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-red-500/20 text-red-300 border-red-400/40">{LEAVE_LABEL[ot.leave]}</span>}
-                    {ot.early > 0 && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-sky-500/20 text-sky-200 border-sky-400/40">조출 {ot.early}시간</span>}
-                    {ot.hours > 0 && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-amber-500/20 text-amber-200 border-amber-400/40">연장 {ot.hours}시간</span>}
-                  </div>
-                  {ot.memo && <p className="mt-1.5 text-gray-200 whitespace-pre-wrap break-words">{ot.memo}</p>}
+                  {ot.leave && <div className="mb-1.5"><span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-red-500/20 text-red-300 border-red-400/40">{LEAVE_LABEL[ot.leave]}</span></div>}
+                  {(ot.workStart || ot.workEnd) && (
+                    <div className="mb-1.5">
+                      <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-red-500/20 text-red-300 border-red-400/40">특근 {ot.workStart || '?'}~{ot.workEnd || '?'}</span>
+                      {ot.memo && <p className="mt-1 text-gray-200 whitespace-pre-wrap break-words">{ot.memo}</p>}
+                    </div>
+                  )}
+                  {(ot.early > 0 || ot.earlyMemo) && (
+                    <div className="mb-1.5">
+                      <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-sky-500/20 text-sky-200 border-sky-400/40">조출 {ot.early > 0 ? `${ot.early}시간` : ''}</span>
+                      {ot.earlyMemo && <p className="mt-1 text-gray-200 whitespace-pre-wrap break-words">{ot.earlyMemo}</p>}
+                    </div>
+                  )}
+                  {(ot.hours > 0 || (ot.memo && !(ot.workStart || ot.workEnd))) && (
+                    <div>
+                      <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-amber-500/20 text-amber-200 border-amber-400/40">연장 {ot.hours > 0 ? `${ot.hours}시간` : ''}</span>
+                      {ot.memo && !(ot.workStart || ot.workEnd) && <p className="mt-1 text-gray-200 whitespace-pre-wrap break-words">{ot.memo}</p>}
+                    </div>
+                  )}
                 </>
               ) : (
-                <p className="text-gray-300">눌러서 연장·연차·반차를 기록하세요.</p>
+                <p className="text-gray-300">눌러서 조출·연장·연차·반차를 기록하세요.</p>
               )}
               <p className="mt-1.5 text-[10px] text-gray-500">{ot ? '클릭하여 수정 · ' : ''}이 PC에만 저장됩니다</p>
             </div>
