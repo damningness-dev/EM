@@ -271,14 +271,15 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     try { return JSON.parse(localStorage.getItem(OVERTIME_KEY)) || {}; } catch { return {}; }
   });
   const [overtimeTip, setOvertimeTip] = useState(null); // 연장·휴가 배지 호버 툴팁 { x, y, date, ot }
-  const [overtimeEdit, setOvertimeEdit] = useState(null); // { date, hours, memo, leave }
+  const [overtimeEdit, setOvertimeEdit] = useState(null); // { date, hours(연장), early(조출), memo, leave }
   const LEAVE_LABEL = { annual: '연차', am: '오전', pm: '오후' }; // 달력 배지·툴팁용 짧은 표기
 
-  function saveOvertime(date, hours, memo, leave) {
+  function saveOvertime(date, hours, memo, leave, early) {
     setOvertime(prev => {
       const next = { ...prev };
       const h = Math.round(parseFloat(hours)); // 연장 시간은 1시간 단위(소수 없음)
-      if (h > 0 || memo.trim() || leave) next[date] = { hours: h > 0 ? h : 0, memo: memo.trim(), leave: leave || '' };
+      const e = Math.round(parseFloat(early)); // 조출(일찍 출근) 시간도 1시간 단위
+      if (h > 0 || e > 0 || memo.trim() || leave) next[date] = { hours: h > 0 ? h : 0, early: e > 0 ? e : 0, memo: memo.trim(), leave: leave || '' };
       else delete next[date];
       try { localStorage.setItem(OVERTIME_KEY, JSON.stringify(next)); } catch { /* 저장 실패는 무시 */ }
       return next;
@@ -1835,7 +1836,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
       {overtimeEdit && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/40" onClick={() => setOvertimeEdit(null)}>
           <div className="bg-white rounded-2xl shadow-2xl w-96 p-6" onClick={e => e.stopPropagation()}>
-            <h3 className="text-base font-bold text-gray-900 mb-1">연장 · 휴가 기록</h3>
+            <h3 className="text-base font-bold text-gray-900 mb-1">조출 · 연장 · 휴가 기록</h3>
             <p className="text-sm text-gray-400 mb-1">{overtimeEdit.date}</p>
             <p className="text-[11px] text-amber-600 mb-4">이 PC에만 저장되며 공유·동기화·백업에 포함되지 않습니다.</p>
             <label className="block text-xs text-gray-500 mb-1">휴가</label>
@@ -1850,16 +1851,33 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                   }`}>{label}</button>
               ))}
             </div>
-            <label className="block text-xs text-gray-500 mb-1">연장 시간 (달력에 표시됩니다)</label>
-            <div className="flex items-center gap-2 mb-4">
-              <input
-                type="number" min="0" max="24" step="1"
-                value={overtimeEdit.hours}
-                onChange={e => setOvertimeEdit(p => ({ ...p, hours: e.target.value }))}
-                className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
-                placeholder="0"
-              />
-              <span className="text-sm text-gray-500">시간</span>
+            <div className="flex items-end gap-5 mb-4">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">조출 시간 (달력에 표시)</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number" min="0" max="24" step="1"
+                    value={overtimeEdit.early}
+                    onChange={e => setOvertimeEdit(p => ({ ...p, early: e.target.value }))}
+                    className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    placeholder="0"
+                  />
+                  <span className="text-sm text-gray-500">시간</span>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">연장 시간 (달력에 표시)</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number" min="0" max="24" step="1"
+                    value={overtimeEdit.hours}
+                    onChange={e => setOvertimeEdit(p => ({ ...p, hours: e.target.value }))}
+                    className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    placeholder="0"
+                  />
+                  <span className="text-sm text-gray-500">시간</span>
+                </div>
+              </div>
             </div>
             <label className="block text-xs text-gray-500 mb-1">내용</label>
             <textarea
@@ -1871,12 +1889,12 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
             />
             <div className="flex gap-2 justify-end">
               {overtime[overtimeEdit.date] && (
-                <button onClick={() => saveOvertime(overtimeEdit.date, '', '', '')}
+                <button onClick={() => saveOvertime(overtimeEdit.date, '', '', '', '')}
                   className="mr-auto px-4 py-2 text-sm text-red-500 bg-red-50 rounded-lg hover:bg-red-100">삭제</button>
               )}
               <button onClick={() => setOvertimeEdit(null)}
                 className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>
-              <button onClick={() => saveOvertime(overtimeEdit.date, overtimeEdit.hours, overtimeEdit.memo, overtimeEdit.leave)}
+              <button onClick={() => saveOvertime(overtimeEdit.date, overtimeEdit.hours, overtimeEdit.memo, overtimeEdit.leave, overtimeEdit.early)}
                 className="px-4 py-2 text-sm text-white bg-amber-500 rounded-lg hover:bg-amber-600">저장</button>
             </div>
           </div>
@@ -2792,7 +2810,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                       const overtimeBtn = isOther ? null : (
                         <button
                           type="button"
-                          onClick={(e) => { e.stopPropagation(); setOvertimeTip(null); setOvertimeEdit({ date: dateStr, hours: ot?.hours ? String(ot.hours) : '', memo: ot?.memo || '', leave: ot?.leave || '' }); }}
+                          onClick={(e) => { e.stopPropagation(); setOvertimeTip(null); setOvertimeEdit({ date: dateStr, hours: ot?.hours ? String(ot.hours) : '', early: ot?.early ? String(ot.early) : '', memo: ot?.memo || '', leave: ot?.leave || '' }); }}
                           onMouseEnter={(e) => {
                             const r = e.currentTarget.getBoundingClientRect();
                             setOvertimeTip({ x: Math.max(8, Math.min(r.left, window.innerWidth - 270)), y: r.bottom + 6, top: r.top - 6, flip: r.bottom + 160 > window.innerHeight, date: dateStr, ot });
@@ -2805,7 +2823,13 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                         >
                           {!ot && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>}
                           {ot?.leave && <span className="font-semibold">{LEAVE_LABEL[ot.leave]}</span>}
-                          {ot && ot.hours > 0 && <span className="font-semibold">{ot.hours}h</span>}
+                          {/* 조출(위)과 연장(아래)을 두 줄로 쌓아 보여준다 */}
+                          {ot && (ot.early > 0 || ot.hours > 0) && (
+                            <span className="flex flex-col items-start gap-px font-semibold leading-[1.1]">
+                              {ot.early > 0 && <span>조출 {ot.early}h</span>}
+                              {ot.hours > 0 && <span>연장 {ot.hours}h</span>}
+                            </span>
+                          )}
                         </button>
                       );
                       return isHol ? (
@@ -2821,7 +2845,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                       ) : (
                         <div className="flex items-start justify-between gap-0.5 mb-0.5">
                           {/* 날짜·연장/휴가 배지는 자기 폭만큼 확보(shrink-0), 포인트 칩은 남은 폭을 쓰며 오른쪽 끝에 붙는다 */}
-                          <div className="flex items-center gap-0.5 shrink-0 h-6">
+                          <div className="flex items-center gap-0.5 shrink-0 min-h-6">
                             <div className={dateNumClass}>{day}</div>
                             {overtimeBtn}
                             {blockedBadge}
@@ -3322,6 +3346,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                 <>
                   <div className="flex flex-wrap gap-1">
                     {ot.leave && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-red-500/20 text-red-300 border-red-400/40">{LEAVE_LABEL[ot.leave]}</span>}
+                    {ot.early > 0 && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-sky-500/20 text-sky-200 border-sky-400/40">조출 {ot.early}시간</span>}
                     {ot.hours > 0 && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md border bg-amber-500/20 text-amber-200 border-amber-400/40">연장 {ot.hours}시간</span>}
                   </div>
                   {ot.memo && <p className="mt-1.5 text-gray-200 whitespace-pre-wrap break-words">{ot.memo}</p>}
