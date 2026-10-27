@@ -289,6 +289,13 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     setOvertimeEdit(null);
   }
 
+  // 이번에 보고 있는 달의 조출·연장 시간 합계(이 PC에 기록한 값 기준)
+  const otMonthPrefix = `${year}-${String(month).padStart(2, '0')}-`;
+  const otTotals = Object.entries(overtime).reduce((acc, [d, v]) => {
+    if (d.startsWith(otMonthPrefix)) { acc.early += v.early || 0; acc.hours += v.hours || 0; }
+    return acc;
+  }, { early: 0, hours: 0 });
+
   function recordChangeHistory(changes) {
     setChangeHistory(prev => {
       const next = [{ ts: new Date().toISOString(), changes, source: 'local' }, ...prev].slice(0, CHANGE_HISTORY_MAX);
@@ -2641,7 +2648,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
           {/* 3열 그리드로 배치해 왼쪽/오른쪽 칩 너비가 서로 달라도 가운데 열(년/월)이
               항상 행의 정중앙에 오도록 한다 — flex justify-between은 양쪽 내용 너비가
               다르면 가운데 글자가 가운데에서 밀려 보인다. */}
-          <div className="cal-monthbar grid grid-cols-3 items-center gap-3 px-4 py-3 border-b border-gray-100">
+          <div className="cal-monthbar grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 py-3 border-b border-gray-100">
             <div className="print:hidden flex items-center gap-2 flex-wrap justify-start">
               <button type="button" onClick={() => setShowMonPopup(true)}
                 title="클릭하면 모니터링 현황 목록이 열립니다"
@@ -2688,7 +2695,14 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                 title={chipDragging ? "잠시 올려두면 달이 넘어갑니다" : undefined}
                 className={`print:hidden p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors text-xl leading-none ${chipDragging ? "bg-blue-100 ring-2 ring-blue-400 text-blue-600 animate-pulse" : ""}`}>›</button>
             </div>
-            <div className="print:hidden flex items-center gap-2 flex-wrap justify-end">
+            <div className="print:hidden flex items-center gap-1.5 flex-wrap justify-end">
+              {/* 이번 달 조출·연장 합계 — 이 PC에 기록한 값 */}
+              <span title="이번 달 조출 시간 합계 (이 PC에만 저장된 기록)" className="px-2 py-1 rounded-full border border-sky-200 bg-sky-50 text-[11px] text-sky-700 whitespace-nowrap">
+                조출 <b className="font-bold">{otTotals.early}h</b>
+              </span>
+              <span title="이번 달 연장 시간 합계 (이 PC에만 저장된 기록)" className="px-2 py-1 rounded-full border border-amber-200 bg-amber-50 text-[11px] text-amber-700 whitespace-nowrap">
+                연장 <b className="font-bold">{otTotals.hours}h</b>
+              </span>
               <button type="button" onClick={() => setShowCalibPopup(true)}
                 className="flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full border border-gray-200 hover:bg-gray-50 transition-colors">
                 <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
