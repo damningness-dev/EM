@@ -2697,12 +2697,15 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
             </div>
             <div className="print:hidden flex items-center gap-1.5 flex-wrap justify-end">
               {/* 이번 달 조출·연장 합계 — 이 PC에 기록한 값 */}
-              <span title="이번 달 조출 시간 합계 (이 PC에만 저장된 기록)" className="px-2 py-1 rounded-full border border-sky-200 bg-sky-50 text-[11px] text-sky-700 whitespace-nowrap">
-                조출 <b className="font-bold">{otTotals.early}h</b>
-              </span>
-              <span title="이번 달 연장 시간 합계 (이 PC에만 저장된 기록)" className="px-2 py-1 rounded-full border border-amber-200 bg-amber-50 text-[11px] text-amber-700 whitespace-nowrap">
-                연장 <b className="font-bold">{otTotals.hours}h</b>
-              </span>
+              {/* mr-auto: 두 칩은 이 칸의 왼쪽에 붙이고 교정예정·AHU 칩은 오른쪽에 둔다(줄이 넘어가도 왼쪽 정렬) */}
+              <div className="mr-auto flex items-center gap-1.5">
+                <span title="이번 달 조출 시간 합계 (이 PC에만 저장된 기록)" className="px-2 py-1 rounded-full border border-sky-200 bg-sky-50 text-[11px] text-sky-700 whitespace-nowrap">
+                  조출 <b className="font-bold">{otTotals.early}h</b>
+                </span>
+                <span title="이번 달 연장 시간 합계 (이 PC에만 저장된 기록)" className="px-2 py-1 rounded-full border border-amber-200 bg-amber-50 text-[11px] text-amber-700 whitespace-nowrap">
+                  연장 <b className="font-bold">{otTotals.hours}h</b>
+                </span>
+              </div>
               <button type="button" onClick={() => setShowCalibPopup(true)}
                 className="flex items-center gap-1.5 pl-1 pr-2.5 py-1 rounded-full border border-gray-200 hover:bg-gray-50 transition-colors">
                 <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
