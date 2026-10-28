@@ -196,6 +196,8 @@ export function calcMeasurements(zone, holidayMap = {}, usedDates = null) {
 
   const overrides = zone.schedule_overrides || {};
   const weekdayRule = zone.monthly_weekday_rule || null;
+  // 마감일(zone.closed_at, 'yyyy-MM-dd'): 마감일까지의 지나간 측정은 그대로 두고, 그 뒤의 앞으로 일정은 만들지 않는다.
+  const closedAt = zone.closed_at || null;
   const measurements = [];
   // 같은 구역(또는 같은 구역명)의 측정이 같은 날에 겹치지 않도록 사용한 날짜를 추적.
   const used = usedDates || new Set();
@@ -270,6 +272,9 @@ export function calcMeasurements(zone, holidayMap = {}, usedDates = null) {
         scheduledDate = addDays(scheduledDate, 1);
         while (!isWorkingDay(scheduledDate, holidayMap, allowWeekend, allowHoliday)) scheduledDate = addDays(scheduledDate, 1);
       }
+      // 회차는 날짜순으로 이어지므로 마감일을 넘는 첫 회차부터는 전부 앞으로 일정 — 여기서 멈춘다
+      // (이 날짜를 사용한 것으로 표시하지도 않아, 같은 구역명의 다른 일정이 그 날을 쓸 수 있다).
+      if (closedAt && format(scheduledDate, 'yyyy-MM-dd') > closedAt) return measurements;
       used.add(format(scheduledDate, 'yyyy-MM-dd'));
       prevScheduled = scheduledDate;
 
@@ -304,6 +309,8 @@ export function calcMeasurements(zone, holidayMap = {}, usedDates = null) {
 // 앞당겨 보였다. 공휴일 맵을 넘기면 달력과 완전히 같은 날짜가 나온다.
 export function calcEndDate(zone, holidayMap = {}) {
   const ms = calcMeasurements(zone, holidayMap);
+  // 마감된 구역의 종료일은 실제로 남은 마지막 측정일(없으면 마감일)이다.
+  if (zone.closed_at) return ms.length ? ms[ms.length - 1].date : new Date(zone.closed_at + 'T00:00:00');
   if (ms.length) return ms[ms.length - 1].date;
   if (zone.grade === '유지관리' && zone.schedule_start) {
     return addYears(new Date(zone.schedule_start + 'T00:00:00'), 3);

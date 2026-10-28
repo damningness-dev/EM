@@ -65,9 +65,9 @@ const COL_DEFS = {
 };
 const DEFAULT_COL_ORDER = Object.keys(COL_DEFS);
 const POINT_FIELD = { float: 'points_float', fall: 'points_fall', surface: 'points_surface', particle: 'points_particle' };
-const STATUS_STYLE = { '예정': 'bg-gray-100 text-gray-500', '진행중': 'bg-blue-100 text-blue-600', '완료': 'bg-emerald-100 text-emerald-600' };
+const STATUS_STYLE = { '예정': 'bg-gray-100 text-gray-500', '진행중': 'bg-blue-100 text-blue-600', '완료': 'bg-emerald-100 text-emerald-600', '마감': 'bg-slate-200 text-slate-600' };
 const HANDLE_W = 32;
-const ACTION_W = 28;
+const ACTION_W = 44; // 그룹 행의 [마감] 버튼 + 서브행의 ✕ 가 함께 쓰는 폭
 
 function fmtDate(d) {
   return d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '—';
@@ -97,9 +97,9 @@ function ddayColor(n, sel) {
  *  - onSaved(updatedZones, updatedGroups): 저장 후 부모 데이터 갱신
  */
 export default function OrderGroupManager({ zones, groups, holidayDefs = [], onClose, onSaved, docked = false }) {
-  const [activeTab, setActiveTab] = useState('order'); // 'order' | 'cycle'
+  const [activeTab, setActiveTab] = useState('order'); // 'order' | 'cycle' | 'closed'
   const [modalGroups, setModalGroups] = useState(() =>
-    buildOrderedGroups(zones).map(g => ({
+    buildOrderedGroups(zones.filter(z => !z.closed_at)).map(g => ({
       ...g,
       zones: g.zones.map(z => ({ ...z }))
     }))
@@ -107,6 +107,11 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
   const [modalNamedGroups, setModalNamedGroups] = useState(() =>
     groups.map((g, i) => ({ ...g, zoneIds: [...(g.zoneIds || [])], sort_order: g.sort_order ?? i }))
   );
+  // 마감된 구역(구역명 단위) — 순서/그룹 목록에서는 빠지고 "마감 기록" 탭에 남는다.
+  const [closedGroups, setClosedGroups] = useState(() => buildOrderedGroups(zones.filter(z => z.closed_at)));
+  const [closeDlg, setCloseDlg] = useState(null); // { group, date, note }
+  const [closedBusy, setClosedBusy] = useState(false);
+  const [closedConfirm, setClosedConfirm] = useState(null); // { type: 'restore'|'delete', group }
   const [modalSelectedIdx, setModalSelectedIdx] = useState(null);
   const [expandedRows, setExpandedRows] = useState(new Set());
   const [folderFilter, setFolderFilter] = useState(null); // null = 전체, or namedGroup id
@@ -589,6 +594,77 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     }
   }
 
+  // ─── 마감 ───────────────────────────────────────────────────
+  // 구역명(그룹) 단위로 마감한다: 마감일까지의 지나간 측정은 그대로 남기고(달력·간트·구역별 현황 모두),
+  // 그 뒤의 앞으로 일정은 만들지 않는다(zone.closed_at — calcMeasurements가 처리). 마감한 구역은 이 목록에서
+  // 빠져 "마감 기록" 탭에 남고, 거기서 다시 열거나 완전히 지울 수 있다.
+  function notifyChanged() { try { window.electronAPI?.notifyDataChanged?.(); } catch { /* ignore */ } }
+  function openCloseDialog(group) {
+    const t = new Date();
+    const today = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+    setCloseDlg({ group, date: today, note: '' });
+  }
+  // 마감일 기준으로 지나간(보존) 회차와 앞으로(삭제) 회차 수
+  function closeCounts(group, date) {
+    let keep = 0, drop = 0;
+    group.zones.forEach(zone => {
+      const z = { ...zone, ...(localEdits[zone.id] || {}) };
+      if (!z.schedule_start) return;
+      let all = [];
+      try { all = calcMeasurements({ ...z, closed_at: undefined }, statHolidayMap); } catch { /* ignore */ }
+      all.forEach(m => { if (fmtDate(m.date) <= date) keep++; else drop++; });
+    });
+    return { keep, drop };
+  }
+  async function doClose() {
+    if (!closeDlg?.date) return;
+    const { group, date, note } = closeDlg;
+    setClosedBusy(true);
+    try {
+      const now = new Date().toISOString();
+      const saved = [];
+      for (const zone of group.zones) {
+        saved.push(await upsertZone({ ...zone, ...(localEdits[zone.id] || {}), closed_at: date, closed_note: note.trim(), closed_on: now }));
+      }
+      setModalGroups(prev => prev.filter(g => g.key !== group.key));
+      setClosedGroups(prev => [...prev, { ...group, zones: saved }]);
+      setLocalEdits(prev => { const next = { ...prev }; group.zones.forEach(z => { delete next[z.id]; }); return next; });
+      setModalSelectedIdx(null);
+      setCloseDlg(null);
+      notifyChanged();
+    } catch (e) {
+      setError('마감 실패: ' + e.message);
+    }
+    setClosedBusy(false);
+  }
+  async function doRestore(group) {
+    setClosedBusy(true);
+    try {
+      const saved = [];
+      for (const zone of group.zones) {
+        const { closed_at, closed_note, closed_on, ...rest } = zone; // eslint-disable-line no-unused-vars
+        saved.push(await upsertZone(rest));
+      }
+      setClosedGroups(prev => prev.filter(g => g.key !== group.key));
+      setModalGroups(prev => [...prev, { ...group, zones: saved }]);
+      notifyChanged();
+    } catch (e) {
+      setError('마감 취소 실패: ' + e.message);
+    }
+    setClosedBusy(false);
+  }
+  async function doDeleteClosed(group) {
+    setClosedBusy(true);
+    try {
+      for (const zone of group.zones) await deleteZone(zone.id);
+      setClosedGroups(prev => prev.filter(g => g.key !== group.key));
+      notifyChanged();
+    } catch (e) {
+      setError('삭제 실패: ' + e.message);
+    }
+    setClosedBusy(false);
+  }
+
   // ─── 구역(등급) 삭제 ────────────────────────────────────────
   async function handleDeleteZoneGrade(groupKey, zoneId) {
     try {
@@ -880,7 +956,8 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
     try { endDate = calcEndDate(z, statHolidayMap); } catch { /* ignore */ }
     const startDate = new Date(z.schedule_start + 'T00:00:00');
     let status;
-    if (todayMid < startDate) status = '예정';
+    if (z.closed_at) status = '마감';
+    else if (todayMid < startDate) status = '예정';
     else if (total > 0 && done >= total) status = '완료';
     else status = '진행중';
     const dday = endDate ? Math.ceil((endDate - todayMid) / 86400000) : null;
@@ -945,7 +1022,7 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
 
         {/* 탭 */}
         <div className="flex items-center gap-1 px-3 pt-2 bg-white border-b border-gray-200 shrink-0">
-          {[['order', '🗂 순서 / 그룹'], ['cycle', '⚙ 측정주기 설정']].map(([key, label]) => (
+          {[['order', '🗂 순서 / 그룹'], ['cycle', '⚙ 측정주기 설정'], ['closed', `📁 마감 기록${closedGroups.length ? ` (${closedGroups.length})` : ''}`]].map(([key, label]) => (
             <button key={key} onClick={() => setActiveTab(key)}
               className={`px-3 py-1.5 text-xs font-semibold rounded-t-lg border-b-2 transition-colors ${activeTab === key ? 'border-blue-600 text-blue-600 bg-blue-50/50' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
             >{label}</button>
@@ -1196,8 +1273,14 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
                             );
                             return <div key={key} className={base} style={wStyle} />;
                           })}
-                          {/* 삭제 (행 삭제는 없음, 서브행에서 등급 삭제) */}
-                          <div className="shrink-0" style={{ width: ACTION_W }} />
+                          {/* 마감 (행 삭제는 없음, 서브행에서 등급 삭제) */}
+                          <div className="shrink-0 flex items-center justify-center" style={{ width: ACTION_W }}>
+                            <button
+                              onClick={e => { e.stopPropagation(); openCloseDialog(group); }}
+                              className={`text-[10px] px-1 py-0.5 rounded border font-medium leading-none ${sel ? 'border-blue-300 text-blue-100 hover:bg-blue-500' : 'border-gray-200 text-gray-500 hover:bg-slate-100 hover:text-slate-700'}`}
+                              title="지난 일정은 그대로 두고, 마감일 이후의 앞으로 일정을 없앱니다 (마감 기록에 남음)"
+                            >마감</button>
+                          </div>
                         </div>
 
                         {/* 확장된 서브행 (등급별 인라인 편집) */}
@@ -1428,6 +1511,52 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
               </div>
             </div>
           </>
+        ) : activeTab === 'closed' ? (
+          /* ─── 마감 기록 탭 ─── */
+          <div className="flex flex-col flex-1 min-h-0">
+            <p className="px-4 pt-3 pb-2 text-[11px] text-gray-400 shrink-0 leading-relaxed">
+              마감한 일정의 기록입니다. 마감일까지의 지난 일정은 달력·간트차트·구역별 현황에 그대로 남아 있고, 마감일 이후의 앞으로 일정만 없어졌습니다.
+              잘못 마감했으면 "마감 취소"로 다시 열 수 있습니다.
+            </p>
+            <div className="flex-1 overflow-auto px-4 pb-4 space-y-2">
+              {closedGroups.length === 0 && <p className="text-sm text-gray-400 py-10 text-center">마감한 일정이 없습니다. 순서 / 그룹 탭의 각 구역 오른쪽 [마감] 버튼으로 마감하세요.</p>}
+              {closedGroups.map(g => {
+                const closedAt = g.zones[0]?.closed_at || '';
+                const note = g.zones.find(z => z.closed_note)?.closed_note || '';
+                const closedOn = g.zones.find(z => z.closed_on)?.closed_on || '';
+                return (
+                  <div key={g.key} className="border border-gray-200 rounded-lg px-3 py-2.5 bg-white">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold text-gray-800">{g.name}</span>
+                      <span className="text-[10px] px-1.5 py-px rounded bg-gray-100 text-gray-500">{g.category}</span>
+                      <span className="text-[11px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-medium">마감 {closedAt}</span>
+                      {closedOn && <span className="text-[10px] text-gray-300">기록 {closedOn.slice(0, 10)}</span>}
+                      <div className="ml-auto flex items-center gap-1.5">
+                        <button disabled={closedBusy} onClick={() => setClosedConfirm({ type: 'restore', group: g })}
+                          className="text-xs px-2 py-1 rounded border border-gray-200 text-blue-600 hover:bg-blue-50 disabled:opacity-50">마감 취소</button>
+                        <button disabled={closedBusy} onClick={() => setClosedConfirm({ type: 'delete', group: g })}
+                          className="text-xs px-2 py-1 rounded border border-gray-200 text-red-500 hover:bg-red-50 disabled:opacity-50">기록 삭제</button>
+                      </div>
+                    </div>
+                    {note && <p className="text-xs text-gray-500 mt-1 whitespace-pre-wrap">📝 {note}</p>}
+                    <div className="flex flex-wrap gap-1.5 mt-1.5">
+                      {g.zones.map(z => {
+                        let kept = 0;
+                        try { kept = calcMeasurements(z, statHolidayMap).length; } catch { /* ignore */ }
+                        const tot = totalCount(z);
+                        return (
+                          <span key={z.id} className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${GRADE_COLORS[z.grade] || 'bg-gray-100 text-gray-600'}`}
+                            title={`${z.grade}: 시작 ${z.schedule_start || '—'} · 마감일까지 ${kept}회 보존 / 계획 ${tot}회`}>
+                            {z.grade} {kept}/{tot}회
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         ) : (
           /* ─── 측정주기 설정 탭 ─── */
           <div className="flex flex-col flex-1 min-h-0">
@@ -1655,6 +1784,51 @@ export default function OrderGroupManager({ zones, groups, holidayDefs = [], onC
           </div>
         );
       })()}
+
+      {/* 마감 확인 */}
+      {closeDlg && (() => {
+        const { keep, drop } = closeCounts(closeDlg.group, closeDlg.date);
+        return (
+          <div className="fixed inset-0 z-[700] flex items-center justify-center bg-black/40" onClick={() => !closedBusy && setCloseDlg(null)} style={{ pointerEvents: 'auto' }}>
+            <div className="bg-white rounded-2xl shadow-2xl w-96 p-5" onClick={e => e.stopPropagation()}>
+              <h3 className="text-base font-bold text-gray-900 mb-0.5">일정 마감</h3>
+              <p className="text-sm text-gray-600 mb-3"><b>{closeDlg.group.name}</b> <span className="text-gray-400">({closeDlg.group.zones.map(z => z.grade).join('·')})</span></p>
+              <label className="block text-xs text-gray-500 mb-1">마감일</label>
+              <input type="date" value={closeDlg.date} onChange={e => setCloseDlg(d => ({ ...d, date: e.target.value }))}
+                className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm mb-2" />
+              <div className="text-xs rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 mb-3 leading-relaxed">
+                마감일({closeDlg.date || '—'})까지 <b className="text-emerald-600">{keep}회 보존</b> · 그 뒤 <b className="text-red-500">{drop}회 삭제</b>
+                <span className="text-gray-400"> (달력·간트에서 앞으로 일정이 사라집니다)</span>
+              </div>
+              <label className="block text-xs text-gray-500 mb-1">마감 사유·메모 (선택, 마감 기록에 남습니다)</label>
+              <textarea value={closeDlg.note} onChange={e => setCloseDlg(d => ({ ...d, note: e.target.value }))} rows={3}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none mb-4" placeholder="예: 설비 철거로 모니터링 종료" />
+              <div className="flex gap-2 justify-end">
+                <button disabled={closedBusy} onClick={() => setCloseDlg(null)} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>
+                <button disabled={closedBusy || !closeDlg.date} onClick={doClose} className="px-4 py-2 text-sm font-semibold text-white bg-slate-700 rounded-lg hover:bg-slate-800 disabled:opacity-50">{closedBusy ? '마감 중…' : '마감'}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+      {closedConfirm && (
+        <div className="fixed inset-0 z-[700] flex items-center justify-center bg-black/40" onClick={() => setClosedConfirm(null)} style={{ pointerEvents: 'auto' }}>
+          <div className="bg-white rounded-2xl shadow-2xl w-80 p-5" onClick={e => e.stopPropagation()}>
+            <p className="text-sm text-gray-800 mb-4">
+              {closedConfirm.type === 'restore'
+                ? <>“{closedConfirm.group.name}” 마감을 취소하고 다시 진행 일정으로 되돌릴까요? 마감으로 없어졌던 앞으로 일정이 다시 계산됩니다.</>
+                : <>“{closedConfirm.group.name}” 마감 기록을 완전히 삭제할까요? 지난 일정도 함께 사라지며 되돌릴 수 없습니다.</>}
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setClosedConfirm(null)} className="px-3 py-1.5 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>
+              <button onClick={() => { const c = closedConfirm; setClosedConfirm(null); (c.type === 'restore' ? doRestore : doDeleteClosed)(c.group); }}
+                className={`px-3 py-1.5 text-sm font-semibold text-white rounded-lg ${closedConfirm.type === 'restore' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-red-500 hover:bg-red-600'}`}>
+                {closedConfirm.type === 'restore' ? '마감 취소' : '삭제'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -152,6 +152,9 @@ export default function ZoneStatus({ year, onYearChange, onJumpToSchedule }) {
                 <span className={`text-xs transition-transform ${isExp ? 'rotate-90 text-blue-500' : 'text-gray-400'}`}>▶</span>
                 <span className="font-semibold text-gray-800">{group.name}</span>
                 <span className="text-xs text-gray-400">{group.category}</span>
+                {group.zones.length > 0 && group.zones.every(z => z.closed_at) && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-medium" title="마감된 일정 — 마감일까지의 지난 일정만 남아 있습니다">마감 {group.zones[0].closed_at}</span>
+                )}
                 {current && (
                   <span className="text-[11px] text-gray-400 whitespace-nowrap">
                     시작 {current.zone.schedule_start} · 종료 {fmt(current.plan.endDate)} · {current.plan.done}/{current.plan.total}회
@@ -179,6 +182,7 @@ export default function ZoneStatus({ year, onYearChange, onJumpToSchedule }) {
                       <div key={zone.id} className="px-4 py-3">
                         <div className="flex items-center gap-2 mb-2 flex-wrap">
                           <span className={`text-[11px] px-2 py-0.5 rounded font-bold ${GRADE_COLORS[zone.grade] || 'bg-gray-100 text-gray-600'}`}>{zone.grade}</span>
+                          {zone.closed_at && <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-medium">마감 {zone.closed_at}</span>}
                           {zone.schedule_start ? (
                             <>
                               <span className="text-xs text-gray-500">시작 {zone.schedule_start} · 종료 {fmt(plan.endDate)}</span>
