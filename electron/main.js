@@ -2228,12 +2228,12 @@ function registerHandlers() {
       }
     }
     const all = Array.isArray(data.teamRecords) ? data.teamRecords : [];
-    const mine = new Map(all.filter(r => r.username === me.username).map(r => [r.id, r]));
+    const mine = new Map(all.filter(r => r.username === me.username && !r.byAdmin).map(r => [r.id, r])); // 관리자가 대신 입력한 기록(byAdmin)은 건드리지 않는다
     const sig = (r) => JSON.stringify([r.teamId, ...FIELDS.map(f => r[f] ?? null)]);
     const now = new Date().toISOString();
     let changed = false;
     for (const id of mine.keys()) if (!want.has(id)) { recordDeletion(data, 'teamRecords', id); changed = true; }
-    const out = all.filter(r => r.username !== me.username);
+    const out = all.filter(r => r.username !== me.username || r.byAdmin);
     for (const [id, e] of want) {
       const old = mine.get(id);
       if (old && sig(old) === sig(e)) { out.push(old); continue; }
@@ -2248,16 +2248,51 @@ function registerHandlers() {
     // 화면의 팀 공유 상태 표시용: 팀이 없으면 이유, 있으면 내가 공유 중인 건수.
     return { ok: true, changed, reason: team ? '' : 'no-team', team: team ? team.name : '', count: want.size, share };
   });
-  // 내 팀의 다른 팀원들이 공유한 기록.
+  // 내 팀의 다른 팀원들이 공유한 기록 + 관리자가 나를 대신해 입력한 기록(byAdmin). 관리자 계정은 팀과
+  // 상관없이 모든 팀의 기록을 본다(대신 입력·수정하려면 볼 수 있어야 하므로).
   ipcMain.handle('teamRecords:forMe', () => {
     const data = loadData();
     const me = (data.memberAccounts || []).find(m => m.id === currentMemberId);
-    const team = me?.teamId ? (data.teams || []).find(t => t.id === me.teamId) : null;
-    if (!me || !team) return { team: null, records: [] };
+    const teams = data.teams || [];
+    const team = me?.teamId ? teams.find(t => t.id === me.teamId) : null;
+    if (!me) return { team: null, records: [], isAdmin: false };
+    const teamName = (id) => teams.find(t => t.id === id)?.name || '';
+    const all = data.teamRecords || [];
+    const visible = me.isAdmin
+      ? all.filter(r => r.username !== me.username || r.byAdmin)
+      : (team ? all.filter(r => r.teamId === team.id && (r.username !== me.username || r.byAdmin)) : []);
     return {
-      team: { id: team.id, name: team.name, share: team.share || {} },
-      records: (data.teamRecords || []).filter(r => r.teamId === team.id && r.username !== me.username),
+      team: team ? { id: team.id, name: team.name, share: team.share || {} } : null,
+      records: visible.map(r => ({ ...r, teamName: teamName(r.teamId) })),
+      isAdmin: !!me.isAdmin,
     };
+  });
+  // 관리자가 다른 계정의 휴가를 대신 입력·삭제한다(leave가 비면 삭제). 그 계정이 속한 팀에 올라가
+  // 같은 팀원에게 보이고, 본인 PC의 자동 공유(publish)는 이 기록을 지우지 않는다.
+  ipcMain.handle('teamRecords:adminSet', (_e, { username, date, leave } = {}) => {
+    const data = loadData();
+    const admin = (data.memberAccounts || []).find(m => m.id === currentMemberId);
+    if (!admin?.isAdmin) return { ok: false, error: '관리자만 다른 사람의 휴가를 입력할 수 있습니다' };
+    const target = (data.memberAccounts || []).find(m => m.username === username);
+    if (!target) return { ok: false, error: '존재하지 않는 계정입니다' };
+    if (!target.teamId || !(data.teams || []).some(t => t.id === target.teamId)) {
+      return { ok: false, error: '팀에 속하지 않은 계정입니다 — 권한 설정 > 팀 설정에서 먼저 팀 인원으로 추가하세요' };
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return { ok: false, error: '날짜가 올바르지 않습니다' };
+    const id = `${username}|${date}|admin`;
+    const list = Array.isArray(data.teamRecords) ? data.teamRecords : [];
+    const rest = list.filter(r => r.id !== id);
+    if (!['annual', 'am', 'pm'].includes(leave)) {
+      if (rest.length !== list.length) { recordDeletion(data, 'teamRecords', id); data.teamRecords = rest; saveData(data); }
+      return { ok: true, removed: true };
+    }
+    const now = new Date().toISOString();
+    const tomb = data.deletions?.teamRecords?.[id];
+    const stamp = tomb && tomb >= now ? new Date(Date.parse(tomb) + 1).toISOString() : now;
+    rest.push({ id, username, teamId: target.teamId, date, leave, byAdmin: true, enteredBy: admin.username, updatedAt: stamp });
+    data.teamRecords = rest;
+    saveData(data);
+    return { ok: true };
   });
 
   ipcMain.handle('members:getAll', () => {

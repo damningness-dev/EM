@@ -308,6 +308,10 @@ export async function saveTeams(list) {
 export async function publishTeamRecords(records) {
   return api.invoke('teamRecords:publish', records);
 }
+// 관리자가 다른 계정의 휴가를 대신 입력·삭제한다(leave가 '' 이면 삭제).
+export async function adminSetTeamRecord({ username, date, leave }) {
+  return api.invoke('teamRecords:adminSet', { username, date, leave });
+}
 // 내 팀의 다른 팀원들이 공유한 기록 { team, records }.
 export async function fetchTeamRecords() {
   return api.invoke('teamRecords:forMe');

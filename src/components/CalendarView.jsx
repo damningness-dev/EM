@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef, useImperativeHandle, forwardRef, Fragment } from 'react';
 import { fetchCalibration, fetchZones, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchScheduleAssignees, setScheduleAssignee, fetchMembers, fetchTempSchedules, addTempSchedule, deleteTempSchedule, updateTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload, exportScheduleExcelTable, printDoc } from '../lib/api';
-import { publishTeamRecords, fetchTeamRecords, setCurrentMemberOnMain, syncAfterChange } from '../lib/api';
+import { publishTeamRecords, fetchTeamRecords, adminSetTeamRecord, fetchTeams, setCurrentMemberOnMain, syncAfterChange } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
@@ -339,6 +339,24 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     return () => { off1?.(); off2?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentMember?.id]);
+  // 관리자가 다른 사람의 휴가를 대신 입력하기 위한 계정·팀 목록(기록 창을 열 때 관리자에게만 불러온다)
+  const [adminTargets, setAdminTargets] = useState({ members: [], teams: [] });
+  function loadAdminTargets() {
+    if (!currentMember?.isAdmin) return;
+    Promise.all([fetchMembers(), fetchTeams()])
+      .then(([members, teams]) => setAdminTargets({ members: members || [], teams: teams || [] }))
+      .catch(() => {});
+  }
+  // 대신 입력한 휴가(byAdmin) — 대상 계정·날짜의 현재 값
+  const adminLeaveOf = (username, date) => (teamInfo.records || []).find(r => r.byAdmin && r.username === username && r.date === date)?.leave || '';
+  async function saveAdminLeave(date, username, leave) {
+    const r = await adminSetTeamRecord({ username, date, leave: leave || '' });
+    if (!r?.ok) { showError(r?.error || '저장하지 못했습니다'); return; }
+    setOvertimeEdit(null);
+    try { await syncAfterChange(); } catch { /* 공유 설정이 없으면 이 PC에만 반영 */ }
+    loadTeamInfo();
+  }
+
   // 날짜별 팀원 기록 — 한 사람 한 날짜 한 줄
   const teamByDate = useMemo(() => {
     const map = {};
@@ -1903,13 +1921,50 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
       {overtimeEdit && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/40" onClick={() => setOvertimeEdit(null)}>
           <div className="bg-white rounded-2xl shadow-2xl w-[34rem] max-w-[95vw] p-6" onClick={e => e.stopPropagation()}>
-            <h3 className={`text-base font-bold mb-1 ${overtimeEdit.special ? 'text-red-600' : 'text-gray-900'}`}>{overtimeEdit.special ? '특근 기록 (주말·공휴일)' : '조출 · 연장 · 휴가 기록'}</h3>
+            <h3 className={`text-base font-bold mb-1 ${overtimeEdit.special ? 'text-red-600' : 'text-gray-900'}`}>{overtimeEdit.target ? `${overtimeEdit.target} 휴가 입력 (관리자)` : overtimeEdit.special ? '특근 기록 (주말·공휴일)' : '조출 · 연장 · 휴가 기록'}</h3>
             <p className="text-sm text-gray-400 mb-1">{overtimeEdit.date}</p>
             <p className="text-[11px] text-amber-600 mb-4">
               {currentMember && teamInfo.team
                 ? `이 PC에 저장됩니다. 팀(${teamInfo.team.name}) 설정에 따라 ${['leave:휴가', 'early:조출', 'overtime:연장', 'special:특근', 'memo:내용'].filter(x => teamInfo.team.share?.[x.split(':')[0]]).map(x => x.split(':')[1]).join('·') || '없음'}만 같은 팀원에게 공유됩니다.`
                 : '이 PC에만 저장되며 공유·동기화·백업에 포함되지 않습니다.'}
             </p>
+            {currentMember?.isAdmin && (
+              <label className="flex items-center gap-2 text-xs text-gray-600 mb-3">
+                👑 입력 대상
+                <select value={overtimeEdit.target || ''}
+                  onChange={e => { const v = e.target.value; setOvertimeEdit(p => ({ ...p, target: v, tLeave: v ? adminLeaveOf(v, p.date) : '' })); }}
+                  className="border border-gray-200 rounded px-2 py-1 text-xs bg-white">
+                  <option value="">본인 ({currentMember.username})</option>
+                  {adminTargets.members.filter(m => m.username !== currentMember.username).map(m => {
+                    const tn = adminTargets.teams.find(t => t.id === m.teamId)?.name;
+                    return <option key={m.id} value={m.username} disabled={!tn}>{m.username}{tn ? ` · ${tn}` : ' (팀 없음)'}</option>;
+                  })}
+                </select>
+                <span className="text-[11px] text-gray-400">다른 사람을 고르면 그 사람의 휴가를 대신 입력합니다</span>
+              </label>
+            )}
+            {overtimeEdit.target ? (
+              <>
+                <label className="block text-xs text-gray-500 mb-1">휴가</label>
+                <div className="flex gap-1.5 mb-3">
+                  {[['', '없음'], ['annual', '연차'], ['am', '오전반차'], ['pm', '오후반차']].map(([v, label]) => (
+                    <button key={v || 'none'} type="button" onClick={() => setOvertimeEdit(p => ({ ...p, tLeave: v }))}
+                      className={`flex-1 py-1.5 text-xs rounded-lg border transition-colors ${overtimeEdit.tLeave === v ? 'bg-red-500 text-white border-red-500 font-semibold' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>{label}</button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-gray-400 mb-5">관리자가 대신 입력한 휴가는 {overtimeEdit.target}님의 팀원에게 공유되며, 본인 PC의 자동 공유가 지우지 않습니다.</p>
+                <div className="flex gap-2 justify-end">
+                  {adminLeaveOf(overtimeEdit.target, overtimeEdit.date) && (
+                    <button onClick={() => saveAdminLeave(overtimeEdit.date, overtimeEdit.target, '')}
+                      className="mr-auto px-4 py-2 text-sm text-red-500 bg-red-50 rounded-lg hover:bg-red-100">삭제</button>
+                  )}
+                  <button onClick={() => setOvertimeEdit(null)} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>
+                  <button onClick={() => saveAdminLeave(overtimeEdit.date, overtimeEdit.target, overtimeEdit.tLeave)}
+                    className="px-4 py-2 text-sm text-white bg-red-500 rounded-lg hover:bg-red-600">저장</button>
+                </div>
+              </>
+            ) : (
+              <>
             {overtimeEdit.special ? (
               <div className="mb-5">
                 <label className="block text-xs text-gray-500 mb-1">몇 시부터 몇 시까지 했나요? (달력에 빨간 배지로 표시)</label>
@@ -1986,6 +2041,8 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
               <button onClick={() => saveOvertime(overtimeEdit.date, overtimeEdit)}
                 className="px-4 py-2 text-sm text-white bg-amber-500 rounded-lg hover:bg-amber-600">저장</button>
             </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -2938,7 +2995,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                       const overtimeBtn = isOther ? null : (
                         <button
                           type="button"
-                          onClick={(e) => { e.stopPropagation(); setOvertimeTip(null); setOvertimeEdit({ date: dateStr, hours: ot?.hours ? String(ot.hours) : '', early: ot?.early ? String(ot.early) : '', memo: ot?.memo || '', earlyMemo: ot?.earlyMemo || '', workStart: ot?.workStart || '', workEnd: ot?.workEnd || '', special: dow === 0 || dow === 6 || isHol, leave: ot?.leave || '' }); }}
+                          onClick={(e) => { e.stopPropagation(); setOvertimeTip(null); loadAdminTargets(); setOvertimeEdit({ date: dateStr, target: '', tLeave: '', hours: ot?.hours ? String(ot.hours) : '', early: ot?.early ? String(ot.early) : '', memo: ot?.memo || '', earlyMemo: ot?.earlyMemo || '', workStart: ot?.workStart || '', workEnd: ot?.workEnd || '', special: dow === 0 || dow === 6 || isHol, leave: ot?.leave || '' }); }}
                           onMouseEnter={(e) => {
                             const r = e.currentTarget.getBoundingClientRect();
                             setOvertimeTip({ x: Math.max(8, Math.min(r.left, window.innerWidth - 270)), y: r.bottom + 6, top: r.top - 6, flip: r.bottom + 160 > window.innerHeight, date: dateStr, ot, team: tm });
@@ -3513,7 +3570,9 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                   <p className="text-[10px] text-gray-400 mb-1">👥 팀원</p>
                   {team.map(r => (
                     <div key={r.id} className="mb-1">
-                      <p className="text-gray-100"><b className="font-semibold">{r.username}</b> <span className="text-gray-300">{teamLine(r)}</span></p>
+                      <p className="text-gray-100"><b className="font-semibold">{r.username}</b> <span className="text-gray-300">{teamLine(r)}</span>
+                        {r.teamName && <span className="ml-1 text-[10px] text-gray-500">· {r.teamName}</span>}
+                        {r.byAdmin && <span className="ml-1 text-[10px] text-amber-400">(관리자 입력{r.enteredBy ? ` · ${r.enteredBy}` : ''})</span>}</p>
                       {r.earlyMemo && <p className="text-[11px] text-gray-400 whitespace-pre-wrap break-words">조출: {r.earlyMemo}</p>}
                       {r.memo && <p className="text-[11px] text-gray-400 whitespace-pre-wrap break-words">{r.memo}</p>}
                     </div>
