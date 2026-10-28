@@ -2740,7 +2740,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                 return (
                   <span title={lines.join('\n')}
                     className={`whitespace-nowrap px-2 py-1 rounded-full border text-[11px] cursor-help ${bad ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-indigo-50 text-indigo-700 border-indigo-200'}`}>
-                    👥 {teamInfo.team ? `${teamInfo.team.name} · 팀원 ${teamInfo.records.length}건` : '팀 없음'}
+                    👥 {teamInfo.team ? teamInfo.records.length : '팀 없음'}
                   </span>
                 );
               })()}
@@ -2926,23 +2926,34 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                         ? <span className="text-[9px] leading-none text-purple-600 bg-purple-100 px-1 py-0.5 rounded shrink-0">비움</span>
                         : null;
                       const ot = !isOther ? overtime[dateStr] : null;
+                      // 같은 팀 팀원이 공유한 기록 — 일정 칸이 아니라 내 연차·연장 배지와 같은 자리에 합쳐 보여주고,
+                      // 이름은 마우스를 올렸을 때 툴팁에만 나온다.
+                      const tm = isOther ? [] : (teamByDate[dateStr] || []);
+                      const hasAny = !!ot || tm.length > 0;
+                      const leaveCnt = { annual: 0, am: 0, pm: 0 };
+                      if (ot?.leave) leaveCnt[ot.leave] = (leaveCnt[ot.leave] || 0) + 1;
+                      tm.forEach(r => { if (r.leave) leaveCnt[r.leave] = (leaveCnt[r.leave] || 0) + 1; });
+                      const tmSpecial = tm.some(r => r.workStart || r.workEnd);
+                      const tmWorkCnt = tm.filter(r => r.early > 0 || r.hours > 0).length;
                       const overtimeBtn = isOther ? null : (
                         <button
                           type="button"
                           onClick={(e) => { e.stopPropagation(); setOvertimeTip(null); setOvertimeEdit({ date: dateStr, hours: ot?.hours ? String(ot.hours) : '', early: ot?.early ? String(ot.early) : '', memo: ot?.memo || '', earlyMemo: ot?.earlyMemo || '', workStart: ot?.workStart || '', workEnd: ot?.workEnd || '', special: dow === 0 || dow === 6 || isHol, leave: ot?.leave || '' }); }}
                           onMouseEnter={(e) => {
                             const r = e.currentTarget.getBoundingClientRect();
-                            setOvertimeTip({ x: Math.max(8, Math.min(r.left, window.innerWidth - 270)), y: r.bottom + 6, top: r.top - 6, flip: r.bottom + 160 > window.innerHeight, date: dateStr, ot });
+                            setOvertimeTip({ x: Math.max(8, Math.min(r.left, window.innerWidth - 270)), y: r.bottom + 6, top: r.top - 6, flip: r.bottom + 160 > window.innerHeight, date: dateStr, ot, team: tm });
                           }}
                           onMouseLeave={() => setOvertimeTip(null)}
-                          className={`cal-ot-btn print:hidden shrink-0 flex ${ot ? 'flex-col items-start gap-px leading-none hover:brightness-95' : 'items-center gap-0.5 leading-none rounded px-1 py-0.5'} text-[9px] transition-opacity ${
-                            ot ? '' : 'text-gray-400 hover:text-amber-600 hover:bg-amber-50 opacity-0 group-hover:opacity-100'
+                          className={`cal-ot-btn print:hidden shrink-0 flex ${hasAny ? 'flex-col items-start gap-px leading-none hover:brightness-95' : 'items-center gap-0.5 leading-none rounded px-1 py-0.5'} text-[9px] transition-opacity ${
+                            hasAny ? '' : 'text-gray-400 hover:text-amber-600 hover:bg-amber-50 opacity-0 group-hover:opacity-100'
                           }`}
                         >
-                          {!ot && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>}
+                          {!hasAny && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>}
                           {/* 가로로 늘리지 않고 세로로 쌓고, 종류는 글자 대신 배지 색으로 구분한다:
                               휴가(빨강) → 조출(하늘) → 연장(노랑). 시간은 "1h"처럼 숫자만 쓴다. */}
-                          {ot?.leave && <span className="rounded px-1 py-0.5 font-semibold bg-red-100 text-red-600">{LEAVE_LABEL[ot.leave]}</span>}
+                          {['annual', 'am', 'pm'].filter(k => leaveCnt[k] > 0).map(k => (
+                            <span key={k} className="rounded px-1 py-0.5 font-semibold bg-red-100 text-red-600">{LEAVE_LABEL[k]}{leaveCnt[k] > 1 ? leaveCnt[k] : ''}</span>
+                          ))}
                           {/* 주말·공휴일 특근: 빨간 배지 + 시작~종료 시각 */}
                           {ot && (ot.workStart || ot.workEnd) && (
                             <>
@@ -2950,8 +2961,10 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                               <span className="rounded px-1 py-0.5 font-semibold bg-red-100 text-red-700">{ot.workStart || '?'}~{ot.workEnd || '?'}</span>
                             </>
                           )}
+                          {!(ot && (ot.workStart || ot.workEnd)) && tmSpecial && <span className="rounded px-1 py-0.5 font-bold bg-red-500 text-white">특근</span>}
                           {ot && ot.early > 0 && <span className="rounded px-1 py-0.5 font-semibold bg-sky-100 text-sky-700">{ot.early}h</span>}
                           {ot && ot.hours > 0 && <span className="rounded px-1 py-0.5 font-semibold bg-amber-100 text-amber-700">{ot.hours}h</span>}
+                          {tmWorkCnt > 0 && <span className="rounded px-1 py-0.5 font-semibold bg-slate-100 text-slate-600" title="">👥{tmWorkCnt}</span>}
                         </button>
                       );
                       return isHol ? (
@@ -2978,23 +2991,6 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                     })()}
 
                     <div className={`cal-events flex flex-col gap-0.5 ${isOther ? 'opacity-50' : ''}`}>
-                      {/* 같은 팀 팀원이 공유한 휴가·근무 기록 — 이름 + 종류(팀 설정에서 허용한 것만 옴) */}
-                      {(teamByDate[dateStr] || []).map(r => {
-                        const parts = [
-                          r.leave && ({ annual: '연차', am: '오전반차', pm: '오후반차' }[r.leave] || r.leave),
-                          r.early > 0 && `조출 ${r.early}h`,
-                          r.hours > 0 && `연장 ${r.hours}h`,
-                          (r.workStart || r.workEnd) && `특근 ${r.workStart || '?'}~${r.workEnd || '?'}`,
-                        ].filter(Boolean);
-                        const red = !!(r.leave || r.workStart || r.workEnd);
-                        const tip = [`${r.username} · ${parts.join(' · ')}`, r.earlyMemo && `조출: ${r.earlyMemo}`, r.memo && `내용: ${r.memo}`].filter(Boolean).join('\n');
-                        return (
-                          <div key={`tm-${r.id}`} onClick={(e) => e.stopPropagation()} title={tip}
-                            className={`cal-ot-btn print:hidden text-[10px] leading-tight px-1 py-0.5 rounded truncate border ${red ? 'bg-red-50 text-red-600 border-red-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
-                            <b>{r.username}</b> {parts.join(' · ')}
-                          </div>
-                        );
-                      })}
                       {calibEvts.length > 0 && (
                         <div
                           className="text-xs px-1 py-0.5 rounded truncate"
@@ -3472,7 +3468,13 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
       )}
 
       {overtimeTip && (() => {
-        const { ot, date } = overtimeTip;
+        const { ot, date, team = [] } = overtimeTip;
+        const teamLine = (r) => [
+          r.leave && ({ annual: '연차', am: '오전반차', pm: '오후반차' }[r.leave] || r.leave),
+          r.early > 0 && `조출 ${r.early}시간`,
+          r.hours > 0 && `연장 ${r.hours}시간`,
+          (r.workStart || r.workEnd) && `특근 ${r.workStart || '?'}~${r.workEnd || '?'}`,
+        ].filter(Boolean).join(' · ');
         return (
           <div className="fixed z-[180] pointer-events-none w-64 bg-gray-900 text-gray-100 rounded-xl shadow-2xl border border-gray-700 overflow-hidden"
             style={{ left: overtimeTip.x, top: overtimeTip.flip ? overtimeTip.top : overtimeTip.y, transform: overtimeTip.flip ? 'translateY(-100%)' : undefined }}>
@@ -3506,7 +3508,19 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
               ) : (
                 <p className="text-gray-300">눌러서 조출·연장·연차·반차를 기록하세요.</p>
               )}
-              <p className="mt-1.5 text-[10px] text-gray-500">{ot ? '클릭하여 수정 · ' : ''}이 PC에만 저장됩니다</p>
+              {team.length > 0 && (
+                <div className={`${ot ? 'mt-2 pt-2 border-t border-gray-700' : 'mt-1.5'}`}>
+                  <p className="text-[10px] text-gray-400 mb-1">👥 팀원</p>
+                  {team.map(r => (
+                    <div key={r.id} className="mb-1">
+                      <p className="text-gray-100"><b className="font-semibold">{r.username}</b> <span className="text-gray-300">{teamLine(r)}</span></p>
+                      {r.earlyMemo && <p className="text-[11px] text-gray-400 whitespace-pre-wrap break-words">조출: {r.earlyMemo}</p>}
+                      {r.memo && <p className="text-[11px] text-gray-400 whitespace-pre-wrap break-words">{r.memo}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="mt-1.5 text-[10px] text-gray-500">{ot ? '클릭하여 수정 · ' : ''}내 기록은 이 PC에만 저장됩니다</p>
             </div>
           </div>
         );
