@@ -398,6 +398,8 @@ function loadData() {
     if (!data.annualPlanAhus) data.annualPlanAhus = [...DEFAULT_AHUS];
     if (!data.memberAccounts) data.memberAccounts = [];
     data.memberAccounts = dedupeMemberAccountsByUsername(data.memberAccounts);
+    if (!Array.isArray(data.teams)) data.teams = [];             // 팀 목록(공유 항목 설정 포함)
+    if (!Array.isArray(data.teamRecords)) data.teamRecords = []; // 팀원에게 공유된 휴가·근무 기록
     if (!data.scheduleAssignees) data.scheduleAssignees = {};
     if (!data.usagePoints) data.usagePoints = [];
     if (!data.usagePointCategories) data.usagePointCategories = { ...DEFAULT_USAGE_POINT_CATEGORIES };
@@ -928,7 +930,9 @@ function explainGistError(err) {
 // (월간모니터링·구역별현황·간트차트·연간계획·교정관리·주간근무 등)는 "기준 PC"
 // (sync-config의 role='admin')의 내용이 공유 기준이 되고, 일반 PC가 올릴 때는
 // 건드리지 않는다.
-const COLLAB_KEYS = ['usagePoints', 'sops', 'sopTags', 'memberAccounts'];
+// 팀 설정(teams)과 팀 공유 기록(teamRecords)도 여러 PC가 함께 쓰는 항목이다 — 각 팀원 PC가 자기 기록을
+// 올리고 서로의 것을 내려받는다.
+const COLLAB_KEYS = ['usagePoints', 'sops', 'sopTags', 'memberAccounts', 'teams', 'teamRecords'];
 
 // 일반 PC가 올릴 내용을 만든다 — 원격(기준 PC가 올린 내용)을 그대로 두고,
 // 함께 쓰는 항목만 이 PC 내용을 합쳐 넣는다. 이렇게 해야 일반 PC가 사용점을
@@ -2164,9 +2168,96 @@ function registerHandlers() {
   // 계정으로 로그인하면 그 자체로 관리자 권한(편집 권한)도 함께 열린다 — 로그인과
   // 관리자 권한이 하나로 합쳐진 것이다. 로그인은 필수가 아니며, 로그인하지 않으면
   // "권한 설정"에서 정한 게스트 메뉴(guestAllowedTabs)가 보인다.
+  // ── 팀 — 팀별로 공유할 기록 종류를 정하고, 팀원의 휴가·근무 기록을 서로 보여준다 ──
+  // 기록 원본은 각자 PC에만 있고(localStorage), 팀이 허용한 종류만 teamRecords로 올라간다.
+  function removeTeamRecordsOf(data, username) {
+    data.teamRecords = (data.teamRecords || []).filter(r => {
+      if (r.username !== username) return true;
+      recordDeletion(data, 'teamRecords', r.id);
+      return false;
+    });
+  }
+  const TEAM_SHARE_KEYS = ['leave', 'early', 'overtime', 'special', 'memo'];
+  ipcMain.handle('teams:getAll', () => loadData().teams || []);
+  ipcMain.handle('teams:set', (_e, list) => {
+    const data = loadData();
+    const prev = Array.isArray(data.teams) ? data.teams : [];
+    const now = new Date().toISOString();
+    const next = (Array.isArray(list) ? list : []).map(t => {
+      const share = {};
+      TEAM_SHARE_KEYS.forEach(k => { share[k] = !!t?.share?.[k]; });
+      const item = { id: t?.id || newId(), name: String(t?.name || '').trim() || '이름 없는 팀', share };
+      const old = prev.find(p => p.id === item.id);
+      const same = old && old.name === item.name && TEAM_SHARE_KEYS.every(k => !!old.share?.[k] === share[k]);
+      return { ...item, updatedAt: same ? (old.updatedAt || now) : now };
+    });
+    const ids = new Set(next.map(t => t.id));
+    prev.filter(p => !ids.has(p.id)).forEach(p => recordDeletion(data, 'teams', p.id));
+    // 지운 팀에 속했던 계정은 팀 없음으로, 그 팀의 공유 기록은 거둔다.
+    (data.memberAccounts || []).forEach(m => { if (m.teamId && !ids.has(m.teamId)) { m.teamId = ''; m.updatedAt = now; } });
+    data.teamRecords = (data.teamRecords || []).filter(r => {
+      if (ids.has(r.teamId)) return true;
+      recordDeletion(data, 'teamRecords', r.id);
+      return false;
+    });
+    data.teams = next;
+    saveData(data);
+    return { ok: true, teams: next };
+  });
+  // 로그인한 계정이 자기 기록 전체(날짜 → 기록)를 알려주면, 소속 팀이 허용한 종류만 골라
+  // teamRecords에 반영한다(바뀐 것만 갱신, 더는 공유하지 않는 것은 거둠). 팀이 없으면 모두 거둔다.
+  ipcMain.handle('teamRecords:publish', (_e, records = {}) => {
+    const data = loadData();
+    const me = (data.memberAccounts || []).find(m => m.id === currentMemberId);
+    if (!me) return { ok: false, changed: false };
+    const team = me.teamId ? (data.teams || []).find(t => t.id === me.teamId) : null;
+    const share = team?.share || {};
+    const FIELDS = ['leave', 'early', 'hours', 'workStart', 'workEnd', 'memo', 'earlyMemo'];
+    const want = new Map();
+    if (team) {
+      for (const [date, rec] of Object.entries(records || {})) {
+        if (!rec || typeof rec !== 'object') continue;
+        const e = {};
+        if (share.leave && rec.leave) e.leave = rec.leave;
+        if (share.early && rec.early > 0) e.early = rec.early;
+        if (share.overtime && rec.hours > 0) e.hours = rec.hours;
+        if (share.special && (rec.workStart || rec.workEnd)) { e.workStart = rec.workStart || ''; e.workEnd = rec.workEnd || ''; }
+        if (Object.keys(e).length === 0) continue; // 공유할 종류가 하나도 없는 날은 올리지 않는다
+        if (share.memo) { if (rec.memo) e.memo = rec.memo; if (rec.earlyMemo) e.earlyMemo = rec.earlyMemo; }
+        want.set(`${me.username}|${date}`, { id: `${me.username}|${date}`, username: me.username, teamId: team.id, date, ...e });
+      }
+    }
+    const all = Array.isArray(data.teamRecords) ? data.teamRecords : [];
+    const mine = new Map(all.filter(r => r.username === me.username).map(r => [r.id, r]));
+    const sig = (r) => JSON.stringify([r.teamId, ...FIELDS.map(f => r[f] ?? null)]);
+    const now = new Date().toISOString();
+    let changed = false;
+    for (const id of mine.keys()) if (!want.has(id)) { recordDeletion(data, 'teamRecords', id); changed = true; }
+    const out = all.filter(r => r.username !== me.username);
+    for (const [id, e] of want) {
+      const old = mine.get(id);
+      if (old && sig(old) === sig(e)) { out.push(old); continue; }
+      out.push({ ...e, updatedAt: now });
+      changed = true;
+    }
+    if (changed) { data.teamRecords = out; saveData(data); }
+    return { ok: true, changed };
+  });
+  // 내 팀의 다른 팀원들이 공유한 기록.
+  ipcMain.handle('teamRecords:forMe', () => {
+    const data = loadData();
+    const me = (data.memberAccounts || []).find(m => m.id === currentMemberId);
+    const team = me?.teamId ? (data.teams || []).find(t => t.id === me.teamId) : null;
+    if (!me || !team) return { team: null, records: [] };
+    return {
+      team: { id: team.id, name: team.name, share: team.share || {} },
+      records: (data.teamRecords || []).filter(r => r.teamId === team.id && r.username !== me.username),
+    };
+  });
+
   ipcMain.handle('members:getAll', () => {
     const data = loadData();
-    return (data.memberAccounts || []).map(m => ({ id: m.id, username: m.username, allowedTabs: m.allowedTabs || [], hasToken: !!m.token, isAdmin: !!m.isAdmin }));
+    return (data.memberAccounts || []).map(m => ({ id: m.id, username: m.username, allowedTabs: m.allowedTabs || [], hasToken: !!m.token, isAdmin: !!m.isAdmin, teamId: m.teamId || '' }));
   });
   ipcMain.handle('members:upsert', (_e, member = {}) => {
     const data = loadData();
@@ -2190,6 +2281,15 @@ function registerHandlers() {
       data.memberAccounts[idx].username = username;
       data.memberAccounts[idx].allowedTabs = allowedTabs;
       data.memberAccounts[idx].isAdmin = willBeAdmin;
+      // 팀 — 지정이 오면 반영하고, 팀이 바뀌면 이 계정이 이전 팀에 공유해 둔 기록은 거둔다(새 팀 기준으로
+      // 이 계정의 PC가 다음에 다시 올린다).
+      if (member.teamId !== undefined) {
+        const newTeam = member.teamId || '';
+        if ((data.memberAccounts[idx].teamId || '') !== newTeam) {
+          data.memberAccounts[idx].teamId = newTeam;
+          removeTeamRecordsOf(data, username);
+        }
+      }
       if (member.password) {
         data.memberAccounts[idx].passwordHash = hashPassword(member.password);
         // 비밀번호만 따로 "언제 바뀌었는지"를 남긴다(mergeMemberAccounts 참고) —
@@ -2216,7 +2316,7 @@ function registerHandlers() {
     if (!member.password) return { ok: false, error: '비밀번호를 입력하세요' };
     const id = newId();
     const now = new Date().toISOString();
-    const newMember = { id, username, passwordHash: hashPassword(member.password), allowedTabs, isAdmin: !!member.isAdmin, updatedAt: now, passwordUpdatedAt: now };
+    const newMember = { id, username, passwordHash: hashPassword(member.password), allowedTabs, isAdmin: !!member.isAdmin, teamId: member.teamId || '', updatedAt: now, passwordUpdatedAt: now };
     if (member.token) newMember.token = obfuscateToken(String(member.token).trim());
     data.memberAccounts.push(newMember);
     saveData(data);
@@ -2230,6 +2330,7 @@ function registerHandlers() {
     }
     data.memberAccounts = (data.memberAccounts || []).filter(m => m.id !== id);
     recordDeletion(data, 'memberAccounts', id);
+    if (target?.username) removeTeamRecordsOf(data, target.username);
     saveData(data);
     return { ok: true };
   });

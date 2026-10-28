@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { fetchMembers, upsertMember, deleteMember, fetchGuestAccess, saveGuestAccess, syncAfterChange, syncWarningText } from '../lib/api';
+import { fetchMembers, upsertMember, deleteMember, fetchGuestAccess, saveGuestAccess, fetchTeams, saveTeams, syncAfterChange, syncWarningText } from '../lib/api';
 
 // 관리자 전용 권한 설정 화면 — (1) 로그인하지 않았을 때 보이는 메뉴를 제한하고,
 // (2) 로그인 계정(멤버)을 만들어 계정마다 사이드바에 보일 탭 메뉴와 관리자 권한
@@ -9,7 +9,8 @@ export default function MemberManager({ menu, onClose }) {
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState(null); // null이면 새 계정 추가 폼 숨김, 'new'면 추가 폼
-  const [form, setForm] = useState({ username: '', password: '', allowedTabs: [], token: '', isAdmin: false });
+  const [form, setForm] = useState({ username: '', password: '', allowedTabs: [], token: '', isAdmin: false, teamId: '' });
+  const [teams, setTeams] = useState([]); // [{ id, name, share }]
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null); // { type: 'remove'|'clearToken', id }
@@ -18,17 +19,18 @@ export default function MemberManager({ menu, onClose }) {
   function reload() {
     setLoading(true);
     fetchMembers().then(m => { setMembers(m || []); setLoading(false); }).catch(() => setLoading(false));
+    fetchTeams().then(t => setTeams(t || [])).catch(() => {});
   }
   useEffect(() => { reload(); }, []);
 
   function startAdd() {
     setEditingId('new');
-    setForm({ username: '', password: '', allowedTabs: menu.map(m => m.id), token: '', isAdmin: false });
+    setForm({ username: '', password: '', allowedTabs: menu.map(m => m.id), token: '', isAdmin: false, teamId: '' });
     setError('');
   }
   function startEdit(m) {
     setEditingId(m.id);
-    setForm({ username: m.username, password: '', allowedTabs: [...(m.allowedTabs || [])], token: '', isAdmin: !!m.isAdmin });
+    setForm({ username: m.username, password: '', allowedTabs: [...(m.allowedTabs || [])], token: '', isAdmin: !!m.isAdmin, teamId: m.teamId || '' });
     setError('');
   }
   function toggleTab(tabId) {
@@ -44,7 +46,7 @@ export default function MemberManager({ menu, onClose }) {
     if (editingId === 'new' && !form.password) { setError('비밀번호를 입력하세요.'); return; }
     setBusy(true);
     try {
-      const payload = { username: form.username.trim(), allowedTabs: form.allowedTabs, isAdmin: form.isAdmin };
+      const payload = { username: form.username.trim(), allowedTabs: form.allowedTabs, isAdmin: form.isAdmin, teamId: form.teamId || '' };
       if (form.password) payload.password = form.password;
       if (form.token) payload.token = form.token;
       if (editingId !== 'new') payload.id = editingId;
@@ -99,6 +101,8 @@ export default function MemberManager({ menu, onClose }) {
           )}
           <GuestAccessSection menu={menu} />
 
+          <TeamSection teams={teams} onSaved={(list) => { setTeams(list); reload(); }} setSyncWarning={setSyncWarning} />
+
           <p className="text-sm font-semibold text-gray-700 mb-1">👥 계정별 권한</p>
           <p className="text-xs text-gray-400 mb-3">
             계정을 만들어 사용자이름·비밀번호와 허용할 탭 메뉴를 지정하세요. 로그인한 계정은
@@ -120,7 +124,7 @@ export default function MemberManager({ menu, onClose }) {
               {members.map(m => (
                 <div key={m.id} className="border border-gray-200 rounded-lg">
                   {editingId === m.id ? (
-                    <MemberForm menu={menu} form={form} setForm={setForm} onToggleTab={toggleTab}
+                    <MemberForm teams={teams} menu={menu} form={form} setForm={setForm} onToggleTab={toggleTab}
                       onSave={save} onCancel={() => setEditingId(null)} busy={busy} error={error} isNew={false}
                       hasToken={m.hasToken} onClearToken={() => clearToken(m.id)} />
                   ) : (
@@ -130,6 +134,9 @@ export default function MemberManager({ menu, onClose }) {
                           {m.isAdmin ? '👑' : '👤'} {m.username}
                           {m.isAdmin && <span className="ml-1.5 text-[10px] font-normal text-amber-600">관리자</span>}
                           {m.hasToken && <span className="ml-1.5 text-[10px] font-normal text-green-600" title="GitHub 토큰이 등록되어 있습니다">🔑 토큰</span>}
+                          {m.teamId && teams.find(t => t.id === m.teamId) && (
+                            <span className="ml-1.5 text-[10px] font-normal text-indigo-600">🏷 {teams.find(t => t.id === m.teamId).name}</span>
+                          )}
                         </p>
                         <p className="text-[11px] text-gray-400 mt-0.5">
                           {(m.allowedTabs || []).length === 0 ? '허용된 메뉴 없음'
@@ -146,7 +153,7 @@ export default function MemberManager({ menu, onClose }) {
               ))}
               {editingId === 'new' && (
                 <div className="border border-blue-200 rounded-lg">
-                  <MemberForm menu={menu} form={form} setForm={setForm} onToggleTab={toggleTab}
+                  <MemberForm teams={teams} menu={menu} form={form} setForm={setForm} onToggleTab={toggleTab}
                     onSave={save} onCancel={() => setEditingId(null)} busy={busy} error={error} isNew />
                 </div>
               )}
@@ -173,6 +180,92 @@ export default function MemberManager({ menu, onClose }) {
             </div>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// 팀 설정 — 팀을 만들고, 팀별로 팀원끼리 공유할 기록 종류(휴가·조출·연장·특근·내용)를 체크한다.
+// 계정의 소속 팀은 아래 "계정별 권한"의 각 계정 수정 화면에서 고른다. 기록 원본은 각자 PC에만
+// 있고, 여기서 체크한 종류만 같은 팀원에게 공유된다(내용(메모)은 기본으로 공유하지 않음).
+const TEAM_SHARE_OPTIONS = [
+  ['leave', '휴가(연차·반차)'], ['early', '조출'], ['overtime', '연장'], ['special', '특근'], ['memo', '내용(메모) 포함'],
+];
+function TeamSection({ teams, onSaved, setSyncWarning }) {
+  const [draft, setDraft] = useState(null); // null이면 보기 상태, 배열이면 편집 중
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const list = draft || teams;
+
+  function startEdit() { setDraft(teams.map(t => ({ ...t, share: { ...t.share } }))); setErr(''); }
+  function addTeam() {
+    const base = draft || teams.map(t => ({ ...t, share: { ...t.share } }));
+    setDraft([...base, { id: '', name: '', share: { leave: true, early: false, overtime: false, special: false, memo: false } }]);
+  }
+  function patch(i, fn) { setDraft(d => d.map((t, k) => k === i ? fn(t) : t)); }
+
+  async function save() {
+    if (draft.some(t => !t.name.trim())) { setErr('팀 이름을 입력하세요.'); return; }
+    if (new Set(draft.map(t => t.name.trim())).size !== draft.length) { setErr('같은 이름의 팀이 있습니다.'); return; }
+    setBusy(true); setErr('');
+    try {
+      const r = await saveTeams(draft.map(t => ({ ...t, name: t.name.trim() })));
+      if (!r?.ok) { setErr(r?.error || '저장 실패'); return; }
+      setDraft(null);
+      onSaved(r.teams);
+      const s = await syncAfterChange();
+      setSyncWarning(s.shared ? '' : syncWarningText(s));
+    } catch (e) { setErr('오류: ' + e.message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div className="border border-gray-200 rounded-lg p-3 mb-5">
+      <div className="flex items-center justify-between mb-1">
+        <p className="text-sm font-semibold text-gray-700">🏷 팀 설정</p>
+        {!draft && <button onClick={startEdit} className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-50 rounded">{teams.length ? '수정' : '팀 만들기'}</button>}
+      </div>
+      <p className="text-[11px] text-gray-400 mb-2">
+        같은 팀 계정끼리 달력에서 서로의 휴가·근무 기록을 볼 수 있습니다. 팀별로 어떤 내역을 공유할지 체크하세요.
+        팀 지정은 아래 계정의 수정 화면에서 합니다.
+      </p>
+      {list.length === 0 && <p className="text-xs text-gray-400 py-2">만든 팀이 없습니다.</p>}
+      <div className="space-y-2">
+        {list.map((t, i) => (
+          <div key={t.id || `new${i}`} className="border border-gray-100 rounded-lg p-2.5 bg-gray-50/50">
+            {draft ? (
+              <div className="flex items-center gap-2 mb-1.5">
+                <input value={t.name} onChange={e => patch(i, x => ({ ...x, name: e.target.value }))} placeholder="팀 이름"
+                  className="flex-1 border border-gray-200 rounded px-2 py-1 text-sm bg-white" />
+                <button onClick={() => setDraft(d => d.filter((_, k) => k !== i))} className="text-xs text-red-500 hover:underline shrink-0">삭제</button>
+              </div>
+            ) : (
+              <p className="text-sm font-medium text-gray-800 mb-1">🏷 {t.name}</p>
+            )}
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              {TEAM_SHARE_OPTIONS.map(([k, label]) => (
+                <label key={k} className={`flex items-center gap-1 text-xs select-none ${draft ? 'cursor-pointer text-gray-700' : 'text-gray-500'}`}>
+                  <input type="checkbox" disabled={!draft} checked={!!t.share?.[k]}
+                    onChange={e => patch(i, x => ({ ...x, share: { ...x.share, [k]: e.target.checked } }))} />
+                  {label}
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      {draft && (
+        <div className="mt-2 space-y-2">
+          <button onClick={addTeam} className="w-full py-1.5 border border-dashed border-gray-300 rounded text-xs text-gray-500 hover:border-blue-300 hover:text-blue-600">+ 팀 추가</button>
+          {err && <p className="text-xs text-red-500">{err}</p>}
+          <div className="flex gap-2">
+            <button onClick={save} disabled={busy} className="flex-1 py-1.5 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700 disabled:opacity-50">{busy ? '저장 중…' : '저장'}</button>
+            <button onClick={() => { setDraft(null); setErr(''); }} className="px-3 py-1.5 border border-gray-200 rounded text-xs text-gray-600 hover:bg-gray-50">취소</button>
+          </div>
+        </div>
+      )}
+      {!draft && teams.length > 0 && (
+        <button onClick={addTeam} className="mt-2 text-xs text-gray-500 hover:text-blue-600">+ 팀 추가</button>
       )}
     </div>
   );
@@ -247,7 +340,7 @@ function GuestAccessSection({ menu }) {
   );
 }
 
-function MemberForm({ menu, form, setForm, onToggleTab, onSave, onCancel, busy, error, isNew, hasToken, onClearToken }) {
+function MemberForm({ teams, menu, form, setForm, onToggleTab, onSave, onCancel, busy, error, isNew, hasToken, onClearToken }) {
   return (
     <div className="p-3 space-y-2.5">
       <div className="flex gap-2">
@@ -260,6 +353,15 @@ function MemberForm({ menu, form, setForm, onToggleTab, onSave, onCancel, busy, 
       <label className="flex items-center gap-1.5 text-xs text-amber-700 cursor-pointer select-none">
         <input type="checkbox" checked={form.isAdmin} onChange={e => setForm(f => ({ ...f, isAdmin: e.target.checked }))} />
         👑 관리자 권한 (이 계정으로 로그인하면 편집 권한도 함께 열립니다)
+      </label>
+      <label className="flex items-center gap-2 text-xs text-gray-600">
+        🏷 팀
+        <select value={form.teamId || ''} onChange={e => setForm(f => ({ ...f, teamId: e.target.value }))}
+          className="border border-gray-200 rounded px-2 py-1 text-xs bg-white">
+          <option value="">팀 없음</option>
+          {(teams || []).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+        <span className="text-[11px] text-gray-400">같은 팀끼리 휴가·근무 기록을 공유합니다</span>
       </label>
       <div>
         <label className="text-[11px] text-gray-500">

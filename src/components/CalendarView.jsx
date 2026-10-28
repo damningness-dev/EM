@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef, useImperativeHandle, forwardRef, Fragment } from 'react';
 import { fetchCalibration, fetchZones, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchScheduleAssignees, setScheduleAssignee, fetchMembers, fetchTempSchedules, addTempSchedule, deleteTempSchedule, updateTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload, exportScheduleExcelTable, printDoc } from '../lib/api';
+import { publishTeamRecords, fetchTeamRecords, syncAfterChange } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
@@ -264,7 +265,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   }); // [{ ts, changes:[msg,...] }] 저장할 때마다 누적되는 일정변경 알람 내역 (이 PC에 보관)
   const [showChangeHistory, setShowChangeHistory] = useState(false);
 
-  // 연장·휴가 기록 — 이 PC에만 보관(공유 데이터/동기화/백업 대상 아님). { 'yyyy-MM-dd': { hours, memo, leave } }
+  // 연장·휴가 기록 — 원본은 이 PC에만 보관(백업 대상 아님). 소속 팀이 허용한 종류만 팀원에게 공유된다(publishToTeam). { 'yyyy-MM-dd': { hours, memo, leave } }
   // leave: '' | 'annual'(연차) | 'am'(오전반차) | 'pm'(오후반차)
   const OVERTIME_KEY = 'em-overtime';
   const [overtime, setOvertime] = useState(() => {
@@ -275,19 +276,54 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   const LEAVE_LABEL = { annual: '연차', am: '오전', pm: '오후' }; // 달력 배지·툴팁용 짧은 표기
 
   function saveOvertime(date, { hours = '', early = '', memo = '', earlyMemo = '', leave = '', workStart = '', workEnd = '' } = {}) {
-    setOvertime(prev => {
-      const next = { ...prev };
-      const h = Math.round(parseFloat(hours)); // 연장 시간은 1시간 단위(소수 없음)
-      const e = Math.round(parseFloat(early)); // 조출(일찍 출근) 시간도 1시간 단위
-      if (h > 0 || e > 0 || memo.trim() || earlyMemo.trim() || leave || workStart || workEnd) {
-        next[date] = { hours: h > 0 ? h : 0, early: e > 0 ? e : 0, memo: memo.trim(), earlyMemo: earlyMemo.trim(), leave: leave || '', workStart: workStart || '', workEnd: workEnd || '' };
-      }
-      else delete next[date];
-      try { localStorage.setItem(OVERTIME_KEY, JSON.stringify(next)); } catch { /* 저장 실패는 무시 */ }
-      return next;
-    });
+    const next = { ...overtime };
+    const h = Math.round(parseFloat(hours)); // 연장 시간은 1시간 단위(소수 없음)
+    const e = Math.round(parseFloat(early)); // 조출(일찍 출근) 시간도 1시간 단위
+    if (h > 0 || e > 0 || memo.trim() || earlyMemo.trim() || leave || workStart || workEnd) {
+      next[date] = { hours: h > 0 ? h : 0, early: e > 0 ? e : 0, memo: memo.trim(), earlyMemo: earlyMemo.trim(), leave: leave || '', workStart: workStart || '', workEnd: workEnd || '' };
+    } else {
+      delete next[date];
+    }
+    setOvertime(next);
+    try { localStorage.setItem(OVERTIME_KEY, JSON.stringify(next)); } catch { /* 저장 실패는 무시 */ }
     setOvertimeEdit(null);
+    publishToTeam(next);
   }
+
+  // 팀 공유 — 로그인한 계정이 팀에 속해 있으면, 소속 팀이 허용한 종류의 기록만 공유 데이터에 올린다.
+  // 기록 원본(내용 포함)은 계속 이 PC에만 있고, 팀 설정에서 체크한 종류만 같은 팀원에게 보인다.
+  const [teamInfo, setTeamInfo] = useState({ team: null, records: [] });
+  function loadTeamInfo() {
+    if (!currentMember) { setTeamInfo({ team: null, records: [] }); return; }
+    fetchTeamRecords().then(r => setTeamInfo(r || { team: null, records: [] })).catch(() => {});
+  }
+  function publishToTeam(map) {
+    if (!currentMember) return;
+    publishTeamRecords(map).then(async (r) => {
+      if (r?.changed) { try { await syncAfterChange(); } catch { /* 공유 설정이 없으면 이 PC에만 반영 */ } }
+      loadTeamInfo();
+    }).catch(() => {});
+  }
+  // 로그인 직후·화면 진입 시 현재 기록을 한 번 맞춰 올리고(팀·공유 설정이 바뀐 경우 반영), 팀원 기록을 불러온다.
+  useEffect(() => {
+    if (!currentMember) return;
+    publishToTeam(overtime);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMember?.id]);
+  // 다른 PC의 변경을 내려받으면(동기화) 팀원 기록도 다시 불러온다.
+  useEffect(() => {
+    const off1 = window.electronAPI?.onDataChanged?.(() => loadTeamInfo());
+    const off2 = window.electronAPI?.onSyncStatus?.((st) => { if (st && (st.type === 'updated' || st.type === 'idle')) loadTeamInfo(); });
+    return () => { off1?.(); off2?.(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMember?.id]);
+  // 날짜별 팀원 기록 — 한 사람 한 날짜 한 줄
+  const teamByDate = useMemo(() => {
+    const map = {};
+    if (!currentMember) return map; // 로그아웃 상태에서는 팀원 기록을 보여주지 않는다
+    (teamInfo.records || []).forEach(r => { (map[r.date] = map[r.date] || []).push(r); });
+    return map;
+  }, [teamInfo, currentMember]);
 
   // 이번에 보고 있는 달의 조출·연장 시간 합계(이 PC에 기록한 값 기준)
   const otMonthPrefix = `${year}-${String(month).padStart(2, '0')}-`;
@@ -1847,7 +1883,11 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
           <div className="bg-white rounded-2xl shadow-2xl w-[34rem] max-w-[95vw] p-6" onClick={e => e.stopPropagation()}>
             <h3 className={`text-base font-bold mb-1 ${overtimeEdit.special ? 'text-red-600' : 'text-gray-900'}`}>{overtimeEdit.special ? '특근 기록 (주말·공휴일)' : '조출 · 연장 · 휴가 기록'}</h3>
             <p className="text-sm text-gray-400 mb-1">{overtimeEdit.date}</p>
-            <p className="text-[11px] text-amber-600 mb-4">이 PC에만 저장되며 공유·동기화·백업에 포함되지 않습니다.</p>
+            <p className="text-[11px] text-amber-600 mb-4">
+              {currentMember && teamInfo.team
+                ? `이 PC에 저장됩니다. 팀(${teamInfo.team.name}) 설정에 따라 ${['leave:휴가', 'early:조출', 'overtime:연장', 'special:특근', 'memo:내용'].filter(x => teamInfo.team.share?.[x.split(':')[0]]).map(x => x.split(':')[1]).join('·') || '없음'}만 같은 팀원에게 공유됩니다.`
+                : '이 PC에만 저장되며 공유·동기화·백업에 포함되지 않습니다.'}
+            </p>
             {overtimeEdit.special ? (
               <div className="mb-5">
                 <label className="block text-xs text-gray-500 mb-1">몇 시부터 몇 시까지 했나요? (달력에 빨간 배지로 표시)</label>
@@ -2896,6 +2936,23 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                     })()}
 
                     <div className={`cal-events flex flex-col gap-0.5 ${isOther ? 'opacity-50' : ''}`}>
+                      {/* 같은 팀 팀원이 공유한 휴가·근무 기록 — 이름 + 종류(팀 설정에서 허용한 것만 옴) */}
+                      {(teamByDate[dateStr] || []).map(r => {
+                        const parts = [
+                          r.leave && ({ annual: '연차', am: '오전반차', pm: '오후반차' }[r.leave] || r.leave),
+                          r.early > 0 && `조출 ${r.early}h`,
+                          r.hours > 0 && `연장 ${r.hours}h`,
+                          (r.workStart || r.workEnd) && `특근 ${r.workStart || '?'}~${r.workEnd || '?'}`,
+                        ].filter(Boolean);
+                        const red = !!(r.leave || r.workStart || r.workEnd);
+                        const tip = [`${r.username} · ${parts.join(' · ')}`, r.earlyMemo && `조출: ${r.earlyMemo}`, r.memo && `내용: ${r.memo}`].filter(Boolean).join('\n');
+                        return (
+                          <div key={`tm-${r.id}`} onClick={(e) => e.stopPropagation()} title={tip}
+                            className={`cal-ot-btn print:hidden text-[10px] leading-tight px-1 py-0.5 rounded truncate border ${red ? 'bg-red-50 text-red-600 border-red-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                            <b>{r.username}</b> {parts.join(' · ')}
+                          </div>
+                        );
+                      })}
                       {calibEvts.length > 0 && (
                         <div
                           className="text-xs px-1 py-0.5 rounded truncate"

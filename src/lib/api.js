@@ -295,6 +295,24 @@ export async function setCurrentMemberOnMain(memberId) {
 export async function memberChangePassword(id, oldPassword, newPassword) {
   return api.invoke('members:changePassword', { id, oldPassword, newPassword });
 }
+// ─── 팀 — 팀별 공유 항목 설정 + 팀원 휴가·근무 기록 공유 ─────────────────────────────
+
+export async function fetchTeams() {
+  return api.invoke('teams:getAll');
+}
+// list: [{ id?, name, share: { leave, early, overtime, special, memo } }] — 전체 목록을 통째로 저장한다.
+export async function saveTeams(list) {
+  return api.invoke('teams:set', list);
+}
+// 이 계정이 기록한 전체(날짜 → 기록)를 알려, 소속 팀이 허용한 종류만 공유 데이터에 반영한다.
+export async function publishTeamRecords(records) {
+  return api.invoke('teamRecords:publish', records);
+}
+// 내 팀의 다른 팀원들이 공유한 기록 { team, records }.
+export async function fetchTeamRecords() {
+  return api.invoke('teamRecords:forMe');
+}
+
 // 로그인하지 않았을 때 보이는 메뉴 제한 — null이면 제한 없음(전체 메뉴).
 export async function fetchGuestAccess() {
   return api.invoke('guestAccess:get');
