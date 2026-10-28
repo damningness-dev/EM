@@ -9,7 +9,7 @@ export default function MemberManager({ menu, onClose }) {
   const [members, setMembers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState(null); // null이면 새 계정 추가 폼 숨김, 'new'면 추가 폼
-  const [form, setForm] = useState({ username: '', password: '', allowedTabs: [], token: '', isAdmin: false, teamId: '' });
+  const [form, setForm] = useState({ username: '', password: '', allowedTabs: [], token: '', isAdmin: false });
   const [teams, setTeams] = useState([]); // [{ id, name, share }]
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -25,12 +25,12 @@ export default function MemberManager({ menu, onClose }) {
 
   function startAdd() {
     setEditingId('new');
-    setForm({ username: '', password: '', allowedTabs: menu.map(m => m.id), token: '', isAdmin: false, teamId: '' });
+    setForm({ username: '', password: '', allowedTabs: menu.map(m => m.id), token: '', isAdmin: false });
     setError('');
   }
   function startEdit(m) {
     setEditingId(m.id);
-    setForm({ username: m.username, password: '', allowedTabs: [...(m.allowedTabs || [])], token: '', isAdmin: !!m.isAdmin, teamId: m.teamId || '' });
+    setForm({ username: m.username, password: '', allowedTabs: [...(m.allowedTabs || [])], token: '', isAdmin: !!m.isAdmin });
     setError('');
   }
   function toggleTab(tabId) {
@@ -46,7 +46,7 @@ export default function MemberManager({ menu, onClose }) {
     if (editingId === 'new' && !form.password) { setError('비밀번호를 입력하세요.'); return; }
     setBusy(true);
     try {
-      const payload = { username: form.username.trim(), allowedTabs: form.allowedTabs, isAdmin: form.isAdmin, teamId: form.teamId || '' };
+      const payload = { username: form.username.trim(), allowedTabs: form.allowedTabs, isAdmin: form.isAdmin };
       if (form.password) payload.password = form.password;
       if (form.token) payload.token = form.token;
       if (editingId !== 'new') payload.id = editingId;
@@ -101,7 +101,7 @@ export default function MemberManager({ menu, onClose }) {
           )}
           <GuestAccessSection menu={menu} />
 
-          <TeamSection teams={teams} onSaved={(list) => { setTeams(list); reload(); }} setSyncWarning={setSyncWarning} />
+          <TeamSection teams={teams} members={members} onSaved={(list) => { setTeams(list); reload(); }} setSyncWarning={setSyncWarning} />
 
           <p className="text-sm font-semibold text-gray-700 mb-1">👥 계정별 권한</p>
           <p className="text-xs text-gray-400 mb-3">
@@ -124,7 +124,7 @@ export default function MemberManager({ menu, onClose }) {
               {members.map(m => (
                 <div key={m.id} className="border border-gray-200 rounded-lg">
                   {editingId === m.id ? (
-                    <MemberForm teams={teams} menu={menu} form={form} setForm={setForm} onToggleTab={toggleTab}
+                    <MemberForm menu={menu} form={form} setForm={setForm} onToggleTab={toggleTab}
                       onSave={save} onCancel={() => setEditingId(null)} busy={busy} error={error} isNew={false}
                       hasToken={m.hasToken} onClearToken={() => clearToken(m.id)} />
                   ) : (
@@ -134,9 +134,6 @@ export default function MemberManager({ menu, onClose }) {
                           {m.isAdmin ? '👑' : '👤'} {m.username}
                           {m.isAdmin && <span className="ml-1.5 text-[10px] font-normal text-amber-600">관리자</span>}
                           {m.hasToken && <span className="ml-1.5 text-[10px] font-normal text-green-600" title="GitHub 토큰이 등록되어 있습니다">🔑 토큰</span>}
-                          {m.teamId && teams.find(t => t.id === m.teamId) && (
-                            <span className="ml-1.5 text-[10px] font-normal text-indigo-600">🏷 {teams.find(t => t.id === m.teamId).name}</span>
-                          )}
                         </p>
                         <p className="text-[11px] text-gray-400 mt-0.5">
                           {(m.allowedTabs || []).length === 0 ? '허용된 메뉴 없음'
@@ -153,7 +150,7 @@ export default function MemberManager({ menu, onClose }) {
               ))}
               {editingId === 'new' && (
                 <div className="border border-blue-200 rounded-lg">
-                  <MemberForm teams={teams} menu={menu} form={form} setForm={setForm} onToggleTab={toggleTab}
+                  <MemberForm menu={menu} form={form} setForm={setForm} onToggleTab={toggleTab}
                     onSave={save} onCancel={() => setEditingId(null)} busy={busy} error={error} isNew />
                 </div>
               )}
@@ -185,32 +182,49 @@ export default function MemberManager({ menu, onClose }) {
   );
 }
 
-// 팀 설정 — 팀을 만들고, 팀별로 팀원끼리 공유할 기록 종류(휴가·조출·연장·특근·내용)를 체크한다.
-// 계정의 소속 팀은 아래 "계정별 권한"의 각 계정 수정 화면에서 고른다. 기록 원본은 각자 PC에만
-// 있고, 여기서 체크한 종류만 같은 팀원에게 공유된다(내용(메모)은 기본으로 공유하지 않음).
+// 팀 설정 — 팀을 만들고, 팀별로 인원을 추가하고, 팀원끼리 공유할 기록 종류(휴가·조출·연장·특근·내용)를
+// 체크한다. 한 계정은 한 팀에만 속한다(다른 팀 인원을 추가하면 그 팀에서 옮겨 온다). 기록 원본은 각자
+// PC에만 있고, 여기서 체크한 종류만 같은 팀원에게 공유된다(내용(메모)은 기본으로 공유하지 않음).
 const TEAM_SHARE_OPTIONS = [
   ['leave', '휴가(연차·반차)'], ['early', '조출'], ['overtime', '연장'], ['special', '특근'], ['memo', '내용(메모) 포함'],
 ];
-function TeamSection({ teams, onSaved, setSyncWarning }) {
-  const [draft, setDraft] = useState(null); // null이면 보기 상태, 배열이면 편집 중
+function TeamSection({ teams, members, onSaved, setSyncWarning }) {
+  const [draft, setDraft] = useState(null); // null이면 보기 상태, 배열이면 편집 중 [{ id, name, share, memberIds }]
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const list = draft || teams;
+  const nameOf = (id) => members.find(m => m.id === id)?.username || '(삭제된 계정)';
+  const viewList = teams.map(t => ({ ...t, memberIds: members.filter(m => m.teamId === t.id).map(m => m.id) }));
+  const list = draft || viewList;
 
-  function startEdit() { setDraft(teams.map(t => ({ ...t, share: { ...t.share } }))); setErr(''); }
+  function startEdit() { setDraft(viewList.map(t => ({ ...t, share: { ...t.share }, memberIds: [...t.memberIds] }))); setErr(''); }
   function addTeam() {
-    const base = draft || teams.map(t => ({ ...t, share: { ...t.share } }));
-    setDraft([...base, { id: '', name: '', share: { leave: true, early: false, overtime: false, special: false, memo: false } }]);
+    const base = draft || viewList.map(t => ({ ...t, share: { ...t.share }, memberIds: [...t.memberIds] }));
+    setDraft([...base, { id: '', name: '', share: { leave: true, early: false, overtime: false, special: false, memo: false }, memberIds: [] }]);
   }
   function patch(i, fn) { setDraft(d => d.map((t, k) => k === i ? fn(t) : t)); }
+  // 인원 추가 — 다른 팀에 있던 계정이면 그 팀에서 빼고 이 팀으로 옮긴다.
+  function addMember(i, memberId) {
+    if (!memberId) return;
+    setDraft(d => d.map((t, k) => k === i
+      ? { ...t, memberIds: [...t.memberIds.filter(x => x !== memberId), memberId] }
+      : { ...t, memberIds: t.memberIds.filter(x => x !== memberId) }));
+  }
+  const teamOfInDraft = (memberId) => draft?.findIndex(t => t.memberIds.includes(memberId));
 
   async function save() {
     if (draft.some(t => !t.name.trim())) { setErr('팀 이름을 입력하세요.'); return; }
     if (new Set(draft.map(t => t.name.trim())).size !== draft.length) { setErr('같은 이름의 팀이 있습니다.'); return; }
     setBusy(true); setErr('');
     try {
-      const r = await saveTeams(draft.map(t => ({ ...t, name: t.name.trim() })));
+      const r = await saveTeams(draft.map(t => ({ id: t.id, name: t.name.trim(), share: t.share })));
       if (!r?.ok) { setErr(r?.error || '저장 실패'); return; }
+      // 저장된 팀은 입력한 순서 그대로 돌아온다(새 팀은 이때 id가 생긴다) — 계정별 소속 팀을 맞춘다.
+      const want = new Map(); // memberId → teamId
+      draft.forEach((t, i) => t.memberIds.forEach(id => want.set(id, r.teams[i].id)));
+      for (const m of members) {
+        const target = want.get(m.id) || '';
+        if ((m.teamId || '') !== target) await upsertMember({ id: m.id, teamId: target });
+      }
       setDraft(null);
       onSaved(r.teams);
       const s = await syncAfterChange();
@@ -226,8 +240,8 @@ function TeamSection({ teams, onSaved, setSyncWarning }) {
         {!draft && <button onClick={startEdit} className="text-xs px-2 py-1 text-blue-600 hover:bg-blue-50 rounded">{teams.length ? '수정' : '팀 만들기'}</button>}
       </div>
       <p className="text-[11px] text-gray-400 mb-2">
-        같은 팀 계정끼리 달력에서 서로의 휴가·근무 기록을 볼 수 있습니다. 팀별로 어떤 내역을 공유할지 체크하세요.
-        팀 지정은 아래 계정의 수정 화면에서 합니다.
+        팀을 만들어 인원을 추가하세요. 같은 팀 계정끼리 달력에서 서로의 휴가·근무 기록을 볼 수 있고,
+        팀별로 어떤 내역을 공유할지 체크할 수 있습니다.
       </p>
       {list.length === 0 && <p className="text-xs text-gray-400 py-2">만든 팀이 없습니다.</p>}
       <div className="space-y-2">
@@ -237,12 +251,39 @@ function TeamSection({ teams, onSaved, setSyncWarning }) {
               <div className="flex items-center gap-2 mb-1.5">
                 <input value={t.name} onChange={e => patch(i, x => ({ ...x, name: e.target.value }))} placeholder="팀 이름"
                   className="flex-1 border border-gray-200 rounded px-2 py-1 text-sm bg-white" />
-                <button onClick={() => setDraft(d => d.filter((_, k) => k !== i))} className="text-xs text-red-500 hover:underline shrink-0">삭제</button>
+                <button onClick={() => setDraft(d => d.filter((_, k) => k !== i))} className="text-xs text-red-500 hover:underline shrink-0">팀 삭제</button>
               </div>
             ) : (
               <p className="text-sm font-medium text-gray-800 mb-1">🏷 {t.name}</p>
             )}
+
+            {/* 팀원 */}
+            <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+              <span className="text-[11px] text-gray-500 mr-0.5">팀원</span>
+              {t.memberIds.length === 0 && <span className="text-[11px] text-gray-300">없음</span>}
+              {t.memberIds.map(id => (
+                <span key={id} className="inline-flex items-center gap-1 text-xs bg-indigo-50 text-indigo-700 border border-indigo-100 rounded-full pl-2 pr-1.5 py-0.5">
+                  {nameOf(id)}
+                  {draft && (
+                    <button type="button" title="팀에서 빼기" onClick={() => patch(i, x => ({ ...x, memberIds: x.memberIds.filter(v => v !== id) }))}
+                      className="text-indigo-400 hover:text-red-500 leading-none">✕</button>
+                  )}
+                </span>
+              ))}
+              {draft && (
+                <select value="" onChange={e => addMember(i, e.target.value)}
+                  className="text-xs border border-dashed border-gray-300 rounded px-1.5 py-0.5 bg-white text-gray-500">
+                  <option value="">+ 인원 추가</option>
+                  {members.filter(m => !t.memberIds.includes(m.id)).map(m => {
+                    const other = teamOfInDraft(m.id);
+                    return <option key={m.id} value={m.id}>{m.username}{other >= 0 ? ` (현재 ${draft[other].name || '다른 팀'})` : ''}</option>;
+                  })}
+                </select>
+              )}
+            </div>
+
             <div className="flex flex-wrap gap-x-3 gap-y-1">
+              <span className="text-[11px] text-gray-500">공유 내역</span>
               {TEAM_SHARE_OPTIONS.map(([k, label]) => (
                 <label key={k} className={`flex items-center gap-1 text-xs select-none ${draft ? 'cursor-pointer text-gray-700' : 'text-gray-500'}`}>
                   <input type="checkbox" disabled={!draft} checked={!!t.share?.[k]}
@@ -340,7 +381,7 @@ function GuestAccessSection({ menu }) {
   );
 }
 
-function MemberForm({ teams, menu, form, setForm, onToggleTab, onSave, onCancel, busy, error, isNew, hasToken, onClearToken }) {
+function MemberForm({ menu, form, setForm, onToggleTab, onSave, onCancel, busy, error, isNew, hasToken, onClearToken }) {
   return (
     <div className="p-3 space-y-2.5">
       <div className="flex gap-2">
@@ -353,15 +394,6 @@ function MemberForm({ teams, menu, form, setForm, onToggleTab, onSave, onCancel,
       <label className="flex items-center gap-1.5 text-xs text-amber-700 cursor-pointer select-none">
         <input type="checkbox" checked={form.isAdmin} onChange={e => setForm(f => ({ ...f, isAdmin: e.target.checked }))} />
         👑 관리자 권한 (이 계정으로 로그인하면 편집 권한도 함께 열립니다)
-      </label>
-      <label className="flex items-center gap-2 text-xs text-gray-600">
-        🏷 팀
-        <select value={form.teamId || ''} onChange={e => setForm(f => ({ ...f, teamId: e.target.value }))}
-          className="border border-gray-200 rounded px-2 py-1 text-xs bg-white">
-          <option value="">팀 없음</option>
-          {(teams || []).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-        </select>
-        <span className="text-[11px] text-gray-400">같은 팀끼리 휴가·근무 기록을 공유합니다</span>
       </label>
       <div>
         <label className="text-[11px] text-gray-500">
