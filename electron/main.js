@@ -2209,7 +2209,7 @@ function registerHandlers() {
   ipcMain.handle('teamRecords:publish', (_e, records = {}) => {
     const data = loadData();
     const me = (data.memberAccounts || []).find(m => m.id === currentMemberId);
-    if (!me) return { ok: false, changed: false };
+    if (!me) return { ok: false, changed: false, reason: 'no-login' };
     const team = me.teamId ? (data.teams || []).find(t => t.id === me.teamId) : null;
     const share = team?.share || {};
     const FIELDS = ['leave', 'early', 'hours', 'workStart', 'workEnd', 'memo', 'earlyMemo'];
@@ -2237,11 +2237,16 @@ function registerHandlers() {
     for (const [id, e] of want) {
       const old = mine.get(id);
       if (old && sig(old) === sig(e)) { out.push(old); continue; }
-      out.push({ ...e, updatedAt: now });
+      // 이 항목을 지웠다는 기록(묘비)이 이 PC 시계보다 늦은 시각이면(PC마다 시계가 조금씩 다름) 방금 올리는
+      // 항목이 "지운 뒤 다시 만든 것"으로 인정받지 못하고 병합 때 사라질 수 있다 — 묘비보다 뒤로 맞춘다.
+      const tomb = data.deletions?.teamRecords?.[id];
+      const stamp = tomb && tomb >= now ? new Date(Date.parse(tomb) + 1).toISOString() : now;
+      out.push({ ...e, updatedAt: stamp });
       changed = true;
     }
     if (changed) { data.teamRecords = out; saveData(data); }
-    return { ok: true, changed };
+    // 화면의 팀 공유 상태 표시용: 팀이 없으면 이유, 있으면 내가 공유 중인 건수.
+    return { ok: true, changed, reason: team ? '' : 'no-team', team: team ? team.name : '', count: want.size, share };
   });
   // 내 팀의 다른 팀원들이 공유한 기록.
   ipcMain.handle('teamRecords:forMe', () => {

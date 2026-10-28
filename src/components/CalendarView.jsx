@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef, useImperativeHandle, forwardRef, Fragment } from 'react';
 import { fetchCalibration, fetchZones, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchScheduleAssignees, setScheduleAssignee, fetchMembers, fetchTempSchedules, addTempSchedule, deleteTempSchedule, updateTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload, exportScheduleExcelTable, printDoc } from '../lib/api';
-import { publishTeamRecords, fetchTeamRecords, syncAfterChange } from '../lib/api';
+import { publishTeamRecords, fetchTeamRecords, setCurrentMemberOnMain, syncAfterChange } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
@@ -297,17 +297,39 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     if (!currentMember) { setTeamInfo({ team: null, records: [] }); return; }
     fetchTeamRecords().then(r => setTeamInfo(r || { team: null, records: [] })).catch(() => {});
   }
+  // 마지막 공유 결과 — 화면의 "👥 팀" 칩에 보여줘서 공유가 안 될 때 이유(팀 없음·토큰 없음 등)를 알 수 있게 한다.
+  const [teamStatus, setTeamStatus] = useState(null); // { reason, team, count, sync: 'ok'|'no-token'|'upload-failed'|null, at }
   function publishToTeam(map) {
     if (!currentMember) return;
-    publishTeamRecords(map).then(async (r) => {
-      if (r?.changed) { try { await syncAfterChange(); } catch { /* 공유 설정이 없으면 이 PC에만 반영 */ } }
-      loadTeamInfo();
-    }).catch(() => {});
+    // 이 계정이 로그인했다는 것을 main이 확실히 알고 난 뒤에 올린다(로그인 직후에는 부모의 알림이 자식 화면의
+    // 효과보다 늦게 가서, 알리기 전에 먼저 올리면 "로그인 안 됨"으로 무시되는 경우가 있었다).
+    setCurrentMemberOnMain(currentMember.id).catch(() => {})
+      .then(() => publishTeamRecords(map))
+      .then(async (r) => {
+        let sync = null;
+        if (r?.changed) {
+          try { const s = await syncAfterChange(); sync = s.shared ? 'ok' : s.reason; } catch { sync = 'upload-failed'; }
+        }
+        setTeamStatus(prev => ({ reason: r?.reason || '', team: r?.team || '', count: r?.count || 0, sync: sync || prev?.sync || null, at: Date.now() }));
+        loadTeamInfo();
+      }).catch(() => {});
   }
+  // 저장하지 않아도 주기적으로 맞춰 올린다(처음 로그인 직후 실패했거나 다른 계기로 못 올린 경우 대비).
+  const overtimeRef = useRef(overtime);
+  useEffect(() => { overtimeRef.current = overtime; }, [overtime]);
+  useEffect(() => {
+    if (!currentMember) return;
+    const t = setInterval(() => publishToTeam(overtimeRef.current), 120000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMember?.id]);
   // 로그인 직후·화면 진입 시 현재 기록을 한 번 맞춰 올리고(팀·공유 설정이 바뀐 경우 반영), 팀원 기록을 불러온다.
   useEffect(() => {
     if (!currentMember) return;
-    publishToTeam(overtime);
+    // 화면에 들어올 때 공유 데이터를 한 번 더 받아와(다음 자동 동기화를 기다리지 않고) 팀원 기록을 최신으로 맞춘다.
+    // 받아오기가 끝난 뒤에 올린다 — 동시에 돌리면 받아온 내용이 방금 올린 기록을 덮어쓸 수 있다.
+    const pulled = window.electronAPI?.invoke?.('sync:pull');
+    Promise.resolve(pulled).catch(() => {}).then(() => publishToTeam(overtime));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentMember?.id]);
   // 다른 PC의 변경을 내려받으면(동기화) 팀원 기록도 다시 불러온다.
@@ -2702,6 +2724,26 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                     style={{ width: `${monCompleteRate}%` }} />
                 </div>
               </button>
+              {currentMember && (() => {
+                const bad = !teamInfo.team || teamStatus?.sync === 'no-token' || teamStatus?.sync === 'upload-failed';
+                const names = [['leave', '휴가'], ['early', '조출'], ['overtime', '연장'], ['special', '특근'], ['memo', '내용']]
+                  .filter(([k]) => teamInfo.team?.share?.[k]).map(([, l]) => l).join('·');
+                const lines = !teamInfo.team
+                  ? ['소속 팀이 없어 기록이 공유되지 않습니다.', '권한 설정 > 팀 설정에서 이 계정을 팀 인원으로 추가하세요.']
+                  : [
+                      `팀: ${teamInfo.team.name} (공유 내역: ${names || '없음'})`,
+                      `내가 공유 중인 기록: ${teamStatus?.count ?? 0}건`,
+                      `다른 팀원이 공유한 기록: ${teamInfo.records.length}건`,
+                      teamStatus?.sync === 'no-token' ? '⚠ 이 PC에 GitHub 토큰이 없어 공유 업로드가 안 됩니다.'
+                        : teamStatus?.sync === 'upload-failed' ? '⚠ 공유 업로드에 실패했습니다(잠시 후 자동 재시도).' : '',
+                    ].filter(Boolean);
+                return (
+                  <span title={lines.join('\n')}
+                    className={`whitespace-nowrap px-2 py-1 rounded-full border text-[11px] cursor-help ${bad ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-indigo-50 text-indigo-700 border-indigo-200'}`}>
+                    👥 {teamInfo.team ? `${teamInfo.team.name} · 팀원 ${teamInfo.records.length}건` : '팀 없음'}
+                  </span>
+                );
+              })()}
             </div>
             <div className="relative flex items-center justify-center gap-4">
               {/* 보기 설정 버튼 — 월 이동 ‹ 의 왼쪽에 붙여 두되(absolute), 년/월은 계속 정중앙에 있도록 흐름에서는 뺀다 */}
