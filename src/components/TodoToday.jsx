@@ -136,6 +136,27 @@ function todoOccursOn(todo, dateStr, holidayMap = {}) {
   return false;
 }
 
+// 완료 전까지 매일 리마인드(todo.dailyRemind) — 지나간 회차 중 아직 완료하지 않은 가장 최근 회차(occDay)를
+// 돌려준다(없으면 null). 반복 없음은 마감기한(없으면 시작일)이 지났는데 한 번도 완료하지 않았을 때,
+// 반복 할일은 가장 최근에 지나간 회차가 미완료일 때 해당한다. 매일 반복은 어차피 매일 나오므로 제외.
+function carriedOccDay(todo, todayStr, holidayMap = {}) {
+  if (!todo.dailyRemind || !todo.date) return null;
+  const repeat = todo.repeat || 'none';
+  if (repeat === 'daily') return null;
+  const done = todo.completedDates || [];
+  if (repeat === 'none') {
+    const occ = todo.due || todo.date;
+    return occ < todayStr && done.length === 0 ? occ : null;
+  }
+  for (let back = 1; back <= 120; back++) {
+    const d = addDaysStr(todayStr, -back);
+    if (d < todo.date) break;
+    if (!todoOccursOn(todo, d, holidayMap)) continue;
+    return done.includes(d) ? null : d;
+  }
+  return null;
+}
+
 function repeatText(todo) {
   const r = todo.repeat || 'none';
   if (r === 'none') return todo.due ? '마감까지 매일' : '';
@@ -503,6 +524,7 @@ export default function TodoToday({ currentMember }) {
     // 일정 반복
     repeat: 'none', interval: 1, weekDays: [new Date().getDay()], monthlyMode: 'day', monthlyDay: new Date().getDate(), nth: 1, dow: new Date().getDay(),
     holidayShift: 'none',
+    dailyRemind: false,
     // 알람
     alarmEnabled: false, alarmMode: 'atTime', alarmTime: '09:00', alarmMinBefore: 30, alarmDayBefore: 1, alarmBase: 'each',
   };
@@ -615,6 +637,7 @@ export default function TodoToday({ currentMember }) {
       monthlyDay: Math.max(1, Math.min(31, parseInt(f.monthlyDay) || 1)),
       nth: f.nth || 1, dow: f.dow ?? 0,
       holidayShift: f.repeat && f.repeat !== 'none' ? (f.holidayShift || 'none') : 'none',
+      dailyRemind: !!f.dailyRemind, // 완료 전까지 매일 리마인드
       alarm,
       alarmEnabled: alarm.enabled, time: alarm.enabled ? alarm.time : '', // 구형 호환
       note: f.note || '',
@@ -652,6 +675,7 @@ export default function TodoToday({ currentMember }) {
       monthlyMode: t.monthlyMode || 'day', monthlyDay: t.monthlyDay || new Date(t.date + 'T00:00:00').getDate() || 1,
       nth: t.nth || 1, dow: t.dow ?? (t.date ? new Date(t.date + 'T00:00:00').getDay() : 0),
       holidayShift: t.holidayShift || 'none',
+      dailyRemind: !!t.dailyRemind,
       alarmEnabled: !!(a && a.enabled), alarmMode: a?.mode || 'atTime', alarmTime: a?.time || '09:00',
       alarmMinBefore: a?.minBefore ?? 30, alarmDayBefore: a?.dayBefore ?? 1, alarmBase: a?.base || 'each',
     });
@@ -899,6 +923,11 @@ export default function TodoToday({ currentMember }) {
                 </label>
               </>
             )}
+            <label className="basis-full flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer select-none"
+              title="일정 날짜가 지나도 완료 처리하기 전까지 오늘의 할일에 계속 올라오고, 알람을 켜 두었으면 매일 알람 시각에 다시 울립니다">
+              <input type="checkbox" checked={!!todoForm.dailyRemind} onChange={e => setTodoForm(f => ({ ...f, dailyRemind: e.target.checked }))} />
+              📌 완료 전까지 매일 리마인드 <span className="text-[11px] text-gray-400">(알람을 켜면 매일 알람도 울림)</span>
+            </label>
           </div>
           <input
             className="w-full border border-gray-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -929,8 +958,22 @@ export default function TodoToday({ currentMember }) {
             .sort((a, b) => (a.time || '99:99').localeCompare(b.time || '99:99'));
           return { ds, d, items };
         }).filter(g => g.items.length > 0);
+        // 완료 전까지 매일 리마인드: 지나간 미완료 회차를 오늘 그룹에 이월해서 보여준다(원래 날짜 기준으로 완료 처리)
+        const today = todayStr();
+        if (todoRangeSet.includes(today)) {
+          const carried = visibleTodos.map(t => { const occ = carriedOccDay(t, today, holidays); return occ ? { ...t, __occ: occ } : null; }).filter(Boolean);
+          if (carried.length > 0) {
+            let tg = groups.find(x => x.ds === today);
+            if (!tg) {
+              tg = { ds: today, d: todoDates.find(d => fmtDate(d) === today), items: [] };
+              groups.push(tg);
+              groups.sort((a, b) => a.ds.localeCompare(b.ds));
+            }
+            tg.items = [...carried, ...tg.items];
+          }
+        }
         const totalCnt = groups.reduce((s, g) => s + g.items.length, 0);
-        const doneCnt = groups.reduce((s, g) => s + g.items.filter(t => (t.completedDates || []).includes(g.ds)).length, 0);
+        const doneCnt = groups.reduce((s, g) => s + g.items.filter(t => (t.completedDates || []).includes(t.__occ || g.ds)).length, 0);
         return (
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-100 bg-gray-50">
@@ -952,11 +995,12 @@ export default function TodoToday({ currentMember }) {
                   );
                 })()}
                 {g.items.map(t => {
-                  const done = (t.completedDates || []).includes(g.ds);
+                  const occ = t.__occ || g.ds; // 이월된 미완료 회차면 원래 날짜가 완료 처리 기준
+                  const done = (t.completedDates || []).includes(occ);
                   const dd = t.due ? dueDday(t.due) : null;
                   return (
-                    <div key={`${t.id}_${g.ds}`}
-                      onDoubleClick={() => handleToggleTodo(t.id, g.ds)}
+                    <div key={`${t.id}_${occ}_${g.ds}`}
+                      onDoubleClick={() => handleToggleTodo(t.id, occ)}
                       className={`flex items-center px-5 py-2.5 gap-3 cursor-pointer select-none border-b border-gray-50 ${done ? 'bg-green-50/40' : 'hover:bg-blue-50/40'}`}
                       title="더블클릭으로 완료/취소">
                       <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 text-xs ${done ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
@@ -967,6 +1011,11 @@ export default function TodoToday({ currentMember }) {
                         {t.note && <p className="text-xs text-gray-400 truncate">{t.note}</p>}
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
+                        {t.__occ && !done && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded font-semibold bg-red-100 text-red-600" title="지난 일정을 아직 완료하지 않아 오늘로 이월되었습니다">
+                            ↩ {t.__occ.slice(5).replace('-', '/')} 미완료
+                          </span>
+                        )}
                         {t.due && !done && (
                           <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${dd < 0 ? 'bg-red-100 text-red-600' : dd === 0 ? 'bg-red-100 text-red-600' : dd <= 3 ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-500'}`}>
                             {dd < 0 ? `기한초과 ${-dd}일` : dd === 0 ? '오늘마감' : `D-${dd}`}

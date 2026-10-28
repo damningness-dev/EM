@@ -1153,6 +1153,27 @@ function todoOccursOn(todo, dateStr, holidayMap = {}) {
   return false;
 }
 
+// 완료 전까지 매일 리마인드(todo.dailyRemind) — 지나간 회차 중 아직 완료하지 않은 가장 최근 회차(occDay)를
+// 돌려준다(없으면 null). 반복 없음은 마감기한(없으면 시작일)이 지났는데 한 번도 완료하지 않았을 때,
+// 반복 할일은 가장 최근에 지나간 회차가 미완료일 때 해당한다. 매일 반복은 어차피 매일 나오므로 제외.
+function carriedOccDay(todo, todayStr, holidayMap = {}) {
+  if (!todo.dailyRemind || !todo.date) return null;
+  const repeat = todo.repeat || 'none';
+  if (repeat === 'daily') return null;
+  const done = todo.completedDates || [];
+  if (repeat === 'none') {
+    const occ = todo.due || todo.date;
+    return occ < todayStr && done.length === 0 ? occ : null;
+  }
+  for (let back = 1; back <= 120; back++) {
+    const d = addDaysStr(todayStr, -back);
+    if (d < todo.date) break;
+    if (!todoOccursOn(todo, d, holidayMap)) continue;
+    return done.includes(d) ? null : d;
+  }
+  return null;
+}
+
 // 알람 체크 시점 기준 ±1년 범위 공휴일맵을 매 분 다시 만든다(공휴일 정의가 많지 않아 비용 무시 가능).
 function currentHolidayMap() {
   try {
@@ -1214,6 +1235,21 @@ function todoAlarmDueNow(todo, now, currentUsername, holidayMap) {
     }
     return { key, occDay };
   }
+  // 완료 전까지 매일 리마인드 — 지나간 미완료 회차를 매일 알람 시각에 다시 울린다(같은 날 안에서는 리마인드 주기 적용).
+  if (todo.dailyRemind) {
+    const carried = carriedOccDay(todo, todayStr, holidayMap);
+    if (carried) {
+      const fireHM = mode === 'minBefore' ? minusMinutes(a.time, a.minBefore || 0) : a.time;
+      if (nowHM >= fireHM) {
+        const key = `${todo.id}_${carried}_carry_${todayStr}`;
+        const lastFired = firedAlarms.get(key);
+        const intervalMin = getReminderIntervalMin();
+        if (lastFired == null || (intervalMin && now.getTime() - lastFired >= intervalMin * 60000)) {
+          return { key, occDay: carried, carried: true };
+        }
+      }
+    }
+  }
   return null;
 }
 
@@ -1257,7 +1293,7 @@ function showNextAlarm() {
   if (currentAlarmWin && !currentAlarmWin.isDestroyed()) return; // 앞 알람 확인 대기
   const next = alarmQueue.shift();
   if (!next) { currentAlarmKey = null; return; }
-  const { todo, key: alarmKey, occDay, reminder, firedHM } = next;
+  const { todo, key: alarmKey, occDay, reminder, firedHM, carried } = next;
   currentAlarmKey = alarmKey;
   try {
     const wa = screen.getPrimaryDisplay().workAreaSize;
@@ -1302,7 +1338,7 @@ function showNextAlarm() {
       <div class="h">⏰ 할일 알람 ${reminder
         ? `· ${esc(firedHM || '')}<span class="r">리마인드${todo.time ? ` (원래 ${esc(todo.time)})` : ''}</span>`
         : (todo.time ? '· ' + esc(todo.time) : '')}${remain > 0 ? `<span class="q">대기 ${remain}건</span>` : ''}</div>
-      <div class="t">${esc(todo.title)}</div>
+      <div class="t">${esc(todo.title)}${carried && occDay ? ` <span class="r">미완료 (${esc(occDay.slice(5).replace('-', '/'))} 일정)</span>` : ''}</div>
       ${todo.note ? `<div class="n">${esc(todo.note)}</div>` : ''}
       <div class="btns">
         <button class="btn-ok" onclick="window.close()">확인</button>
@@ -1449,7 +1485,7 @@ function checkAlarms() {
   // 1) 데스크톱 팝업 창 (항상 위) — 한 번에 하나씩, 확인 전까지 유지 + 대기열.
   // 서로 다른 할일 알람은 각각 따로 확인할 수 있도록 모두 대기열에 넣는다.
   // (같은 알람이 리마인드로 다시 울린 경우는 enqueueAlarm에서 걸러진다)
-  due.forEach(({ todo, fire }) => enqueueAlarm(todo, fire.key, fire.occDay, { reminder: reminderKeys.has(fire.key), firedHM: hm(now) }));
+  due.forEach(({ todo, fire }) => enqueueAlarm(todo, fire.key, fire.occDay, { reminder: reminderKeys.has(fire.key), firedHM: hm(now), carried: !!fire.carried }));
   const t = due[due.length - 1].todo; // 아래 깜빡임·토스트에 쓸 대표 항목
   // 2) 작업표시줄 깜빡임
   try { if (mainWin && !mainWin.isDestroyed()) mainWin.flashFrame(true); } catch { /* ignore */ }
