@@ -341,6 +341,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   }, [currentMember?.id]);
   // 관리자가 다른 사람의 휴가를 대신 입력하기 위한 계정·팀 목록(기록 창을 열 때 관리자에게만 불러온다)
   const [adminTargets, setAdminTargets] = useState({ members: [], teams: [] });
+  const [adminEdits, setAdminEdits] = useState({}); // 대신 입력한 휴가 수정 중인 값 { 기록 id: leave }
   function loadAdminTargets() {
     if (!currentMember?.isAdmin) return;
     Promise.all([fetchMembers(), fetchTeams()])
@@ -361,7 +362,13 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   const teamByDate = useMemo(() => {
     const map = {};
     if (!currentMember) return map; // 로그아웃 상태에서는 팀원 기록을 보여주지 않는다
-    (teamInfo.records || []).forEach(r => { (map[r.date] = map[r.date] || []).push(r); });
+    const recs = teamInfo.records || [];
+    // 같은 사람이 본인도 같은 휴가를 기록해 두었으면, 관리자가 대신 입력한 같은 휴가는 중복이라 한 번만 보여준다.
+    const ownKey = new Set(recs.filter(r => !r.byAdmin && r.leave).map(r => `${r.username}|${r.date}|${r.leave}`));
+    recs.forEach(r => {
+      if (r.byAdmin && r.leave && ownKey.has(`${r.username}|${r.date}|${r.leave}`)) return;
+      (map[r.date] = map[r.date] || []).push(r);
+    });
     return map;
   }, [teamInfo, currentMember]);
 
@@ -1943,6 +1950,32 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                 <span className="text-[11px] text-gray-400">다른 사람을 고르면 그 사람의 휴가를 대신 입력합니다</span>
               </label>
             )}
+            {currentMember?.isAdmin && !overtimeEdit.target && (() => {
+              const mine = (teamInfo.records || []).filter(r => r.byAdmin && r.date === overtimeEdit.date);
+              if (mine.length === 0) return null;
+              return (
+                <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50/60 p-2.5">
+                  <p className="text-xs font-semibold text-amber-800 mb-1.5">👑 이 날짜에 대신 입력한 휴가 — 수정·삭제</p>
+                  {mine.map(r => {
+                    const cur = adminEdits[r.id] ?? r.leave;
+                    return (
+                      <div key={r.id} className="flex items-center gap-2 mb-1 text-xs">
+                        <span className="w-20 truncate font-medium text-gray-700" title={`${r.username}${r.teamName ? ` · ${r.teamName}` : ''}`}>{r.username}</span>
+                        <select value={cur} onChange={e => setAdminEdits(p => ({ ...p, [r.id]: e.target.value }))}
+                          className="border border-gray-200 rounded px-1.5 py-1 bg-white">
+                          <option value="annual">연차</option><option value="am">오전반차</option><option value="pm">오후반차</option>
+                        </select>
+                        <button disabled={cur === r.leave} onClick={() => saveAdminLeave(r.date, r.username, cur)}
+                          className="px-2 py-1 rounded bg-red-500 text-white disabled:opacity-30 hover:bg-red-600">수정</button>
+                        <button onClick={() => saveAdminLeave(r.date, r.username, '')}
+                          className="px-2 py-1 rounded bg-white border border-red-200 text-red-500 hover:bg-red-50">삭제</button>
+                      </div>
+                    );
+                  })}
+                  <p className="text-[10px] text-gray-400 mt-1">본인이 직접 기록한 휴가는 본인만 수정·삭제할 수 있습니다.</p>
+                </div>
+              );
+            })()}
             {overtimeEdit.target ? (
               <>
                 <label className="block text-xs text-gray-500 mb-1">휴가</label>
