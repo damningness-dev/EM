@@ -2940,9 +2940,13 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                     catPts.nonComb.s+=s; catPts.nonComb.f+=f; catPts.nonComb.l+=l; catPts.nonComb.p+=p;
                   }
                 });
-                const tempPtsTotal = tempEvts.reduce((t,e)=>t+(e.points_surface||0)+(e.points_float||0)+(e.points_fall||0)+(e.points_particle||0), 0);
+                // 임시일정의 포인트도 따로 "임" 칩을 만들지 않고 부유균·낙하균·표면균·부유입자 합계에 그대로 합친다.
+                tempEvts.forEach(e => {
+                  catPts.nonComb.s += e.points_surface || 0; catPts.nonComb.f += e.points_float || 0;
+                  catPts.nonComb.l += e.points_fall || 0; catPts.nonComb.p += e.points_particle || 0;
+                });
                 const combTotal = Object.values(catPts.combined).reduce((a,b)=>a+b,0);
-                const hasPts = catPts.nonComb.s+catPts.nonComb.f+catPts.nonComb.l+catPts.nonComb.p+combTotal+tempPtsTotal > 0;
+                const hasPts = catPts.nonComb.s+catPts.nonComb.f+catPts.nonComb.l+catPts.nonComb.p+combTotal > 0;
                 const nextCellData = grid[idx + 1];
                 const belowCellData = grid[idx + 7];
                 const boundaryRight = (isOther && nextCellData && !nextCellData.isOther)
@@ -2991,7 +2995,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                       const majorChipCls = { '질소가스': 'bg-purple-100 text-purple-700', '압축공기': 'bg-yellow-100 text-yellow-700', '용수': 'bg-teal-100 text-teal-700' };
                       // 포인트 칩은 두 행: 1행 부·낙·표·입자(+임시), 2행 질소·압축(·용수). 2행 칩이 있으면 1행이 비어도 자리를 유지해 항상 2번째 행에 둔다.
                       const combEntries = Object.entries(catPts.combined).filter(([, v]) => v > 0);
-                      const row1Has = catPts.nonComb.f + catPts.nonComb.l + catPts.nonComb.s + catPts.nonComb.p + tempPtsTotal > 0;
+                      const row1Has = catPts.nonComb.f + catPts.nonComb.l + catPts.nonComb.s + catPts.nonComb.p > 0;
                       const ptsChips = hasPts ? (
                         <div className={`flex flex-col items-end gap-0.5 ${isOther ? 'opacity-50' : ''}`}>
                           {(row1Has || combEntries.length > 0) && (
@@ -3000,7 +3004,6 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                               {catPts.nonComb.l > 0 && <span className="cal-pt-chip text-[9px] leading-none bg-orange-50 text-orange-700 px-0.5 py-0.5 rounded">낙{catPts.nonComb.l}</span>}
                               {catPts.nonComb.s > 0 && <span className="cal-pt-chip text-[9px] leading-none bg-green-50 text-green-700 px-0.5 py-0.5 rounded">표{catPts.nonComb.s}</span>}
                               {catPts.nonComb.p > 0 && <span className="cal-pt-chip text-[9px] leading-none bg-pink-50 text-pink-700 px-0.5 py-0.5 rounded">입자{catPts.nonComb.p}</span>}
-                              {tempPtsTotal > 0 && <span className="cal-pt-chip text-[9px] leading-none bg-gray-100 text-gray-500 px-0.5 py-0.5 rounded">임{tempPtsTotal}</span>}
                             </div>
                           )}
                           {combEntries.length > 0 && (
@@ -3236,7 +3239,8 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
           {/* Selected day events */}
           {selectedDay && (
             <div className="bg-white rounded-xl border border-gray-200 flex flex-col flex-1 min-h-0">
-              <div className={`px-4 py-3 ${hdBg} text-white shrink-0 flex items-start justify-between gap-2`}>
+              <div className={`px-4 py-3 ${hdBg} text-white shrink-0`}>
+              <div className="flex items-start justify-between gap-2">
                 <div>
                   <p className={`text-xs ${hdSub}`}>{selectedDay.slice(0,4)}년 {MONTH_KR[parseInt(selectedDay.slice(5,7)) - 1]} · {DOW_LABELS[selDow]}요일</p>
                   <p className="text-lg font-bold">{parseInt(selectedDay.slice(8,10))}일 일정</p>
@@ -3264,6 +3268,40 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                     </label>
                   )}
                 </div>
+              </div>
+              {/* 이 날 측정 포인트 합계 — 달력 칸의 포인트 칩과 같은 기준(부유균·낙하균·표면균·부유입자, 질소·압축은 대분류별) */}
+              {(() => {
+                const sum = { f: 0, l: 0, s: 0, p: 0 }, comb = {};
+                selectedScheduleEvents.forEach(({ zone }) => {
+                  if (isCombinedCat(zone.category, scheduleConfig)) {
+                    const major = getMajorCat(zone.category, scheduleConfig);
+                    comb[major] = (comb[major] || 0) + (zone.points_float || 0);
+                  } else {
+                    sum.f += zone.points_float || 0; sum.l += zone.points_fall || 0; sum.s += zone.points_surface || 0; sum.p += zone.points_particle || 0;
+                  }
+                });
+                // 임시일정 포인트도 유형별 합계에 합친다(별도 "임시" 칩 없음)
+                (tempByDate[selectedDay] || []).forEach(e => {
+                  sum.f += e.points_float || 0; sum.l += e.points_fall || 0; sum.s += e.points_surface || 0; sum.p += e.points_particle || 0;
+                });
+                const total = sum.f + sum.l + sum.s + sum.p + Object.values(comb).reduce((a, b) => a + b, 0);
+                if (total <= 0) return null;
+                const chip = 'text-[11px] font-semibold leading-none px-1.5 py-1 rounded';
+                const majorName = { '질소가스': '질소', '압축공기': '압축' };
+                const majorCls = { '질소가스': 'bg-purple-100 text-purple-700', '압축공기': 'bg-yellow-100 text-yellow-700', '용수': 'bg-teal-100 text-teal-700' };
+                return (
+                  <div className="flex flex-wrap items-center gap-1 mt-2 pt-2 border-t border-white/15">
+                    <span className={`text-[10px] mr-0.5 ${hdSub}`}>포인트 합계</span>
+                    {sum.f > 0 && <span className={`${chip} bg-blue-50 text-blue-700`}>부유균 {sum.f}</span>}
+                    {sum.l > 0 && <span className={`${chip} bg-orange-50 text-orange-700`}>낙하균 {sum.l}</span>}
+                    {sum.s > 0 && <span className={`${chip} bg-green-50 text-green-700`}>표면균 {sum.s}</span>}
+                    {sum.p > 0 && <span className={`${chip} bg-pink-50 text-pink-700`}>부유입자 {sum.p}</span>}
+                    {Object.entries(comb).filter(([, v]) => v > 0).map(([m, v]) => (
+                      <span key={m} className={`${chip} ${majorCls[m] || 'bg-purple-100 text-purple-700'}`}>{majorName[m] || m} {v}</span>
+                    ))}
+                  </div>
+                );
+              })()}
               </div>
               <div className="flex-1 overflow-y-auto min-h-0">
 
