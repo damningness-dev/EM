@@ -3292,23 +3292,26 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                 const majorCls = { '질소가스': 'bg-purple-100 text-purple-700', '압축공기': 'bg-yellow-100 text-yellow-700', '용수': 'bg-teal-100 text-teal-700' };
                 const combList = Object.entries(comb).filter(([, v]) => v > 0);
                 return (
-                  <div className="mt-2 pt-2 border-t border-white/15 space-y-1">
-                    {(sum.f + sum.l + sum.s + sum.p) > 0 && (
-                      <div className="flex flex-nowrap items-center justify-start gap-1">
-                        <span className={`text-[10px] mr-0.5 shrink-0 ${hdSub}`}>합계</span>
-                        {sum.f > 0 && <span className={`${chip} bg-blue-50 text-blue-700`}>부{sum.f}</span>}
-                        {sum.l > 0 && <span className={`${chip} bg-orange-50 text-orange-700`}>낙{sum.l}</span>}
-                        {sum.s > 0 && <span className={`${chip} bg-green-50 text-green-700`}>표{sum.s}</span>}
-                        {sum.p > 0 && <span className={`${chip} bg-pink-50 text-pink-700`}>입자{sum.p}</span>}
-                      </div>
-                    )}
-                    {combList.length > 0 && (
-                      <div className="flex flex-wrap items-center justify-start gap-1">
-                        {combList.map(([m, v]) => (
-                          <span key={m} className={`${chip} ${majorCls[m] || 'bg-purple-100 text-purple-700'}`}>{majorName[m] || m} {v}</span>
-                        ))}
-                      </div>
-                    )}
+                  <div className="mt-2 pt-2 border-t border-white/15 flex items-start gap-1.5">
+                    {/* "합계" 라벨을 왼쪽에 두고, 칩들(부·낙·표·입자 / 질소·압축)은 같은 왼쪽선에서 시작하게 한다 */}
+                    <span className={`text-[10px] shrink-0 leading-[18px] ${hdSub}`}>합계</span>
+                    <div className="space-y-1 min-w-0">
+                      {(sum.f + sum.l + sum.s + sum.p) > 0 && (
+                        <div className="flex flex-nowrap items-center justify-start gap-1">
+                          {sum.f > 0 && <span className={`${chip} bg-blue-50 text-blue-700`}>부{sum.f}</span>}
+                          {sum.l > 0 && <span className={`${chip} bg-orange-50 text-orange-700`}>낙{sum.l}</span>}
+                          {sum.s > 0 && <span className={`${chip} bg-green-50 text-green-700`}>표{sum.s}</span>}
+                          {sum.p > 0 && <span className={`${chip} bg-pink-50 text-pink-700`}>입자{sum.p}</span>}
+                        </div>
+                      )}
+                      {combList.length > 0 && (
+                        <div className="flex flex-wrap items-center justify-start gap-1">
+                          {combList.map(([m, v]) => (
+                            <span key={m} className={`${chip} ${majorCls[m] || 'bg-purple-100 text-purple-700'}`}>{majorName[m] || m} {v}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })()}
