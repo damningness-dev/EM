@@ -3286,19 +3286,29 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                 });
                 const total = sum.f + sum.l + sum.s + sum.p + Object.values(comb).reduce((a, b) => a + b, 0);
                 if (total <= 0) return null;
-                const chip = 'text-[11px] font-semibold leading-none px-1.5 py-1 rounded';
+                // 달력 칸과 같은 모양: 1행 부·낙·표·입자(한 줄, 줄바꿈 없음), 2행 질소·압축 — 모두 왼쪽 정렬
+                const chip = 'text-[10px] font-semibold leading-none px-1 py-0.5 rounded whitespace-nowrap';
                 const majorName = { '질소가스': '질소', '압축공기': '압축' };
                 const majorCls = { '질소가스': 'bg-purple-100 text-purple-700', '압축공기': 'bg-yellow-100 text-yellow-700', '용수': 'bg-teal-100 text-teal-700' };
+                const combList = Object.entries(comb).filter(([, v]) => v > 0);
                 return (
-                  <div className="flex flex-wrap items-center gap-1 mt-2 pt-2 border-t border-white/15">
-                    <span className={`text-[10px] mr-0.5 ${hdSub}`}>포인트 합계</span>
-                    {sum.f > 0 && <span className={`${chip} bg-blue-50 text-blue-700`}>부유균 {sum.f}</span>}
-                    {sum.l > 0 && <span className={`${chip} bg-orange-50 text-orange-700`}>낙하균 {sum.l}</span>}
-                    {sum.s > 0 && <span className={`${chip} bg-green-50 text-green-700`}>표면균 {sum.s}</span>}
-                    {sum.p > 0 && <span className={`${chip} bg-pink-50 text-pink-700`}>부유입자 {sum.p}</span>}
-                    {Object.entries(comb).filter(([, v]) => v > 0).map(([m, v]) => (
-                      <span key={m} className={`${chip} ${majorCls[m] || 'bg-purple-100 text-purple-700'}`}>{majorName[m] || m} {v}</span>
-                    ))}
+                  <div className="mt-2 pt-2 border-t border-white/15 space-y-1">
+                    {(sum.f + sum.l + sum.s + sum.p) > 0 && (
+                      <div className="flex flex-nowrap items-center justify-start gap-1">
+                        <span className={`text-[10px] mr-0.5 shrink-0 ${hdSub}`}>합계</span>
+                        {sum.f > 0 && <span className={`${chip} bg-blue-50 text-blue-700`}>부{sum.f}</span>}
+                        {sum.l > 0 && <span className={`${chip} bg-orange-50 text-orange-700`}>낙{sum.l}</span>}
+                        {sum.s > 0 && <span className={`${chip} bg-green-50 text-green-700`}>표{sum.s}</span>}
+                        {sum.p > 0 && <span className={`${chip} bg-pink-50 text-pink-700`}>입자{sum.p}</span>}
+                      </div>
+                    )}
+                    {combList.length > 0 && (
+                      <div className="flex flex-wrap items-center justify-start gap-1">
+                        {combList.map(([m, v]) => (
+                          <span key={m} className={`${chip} ${majorCls[m] || 'bg-purple-100 text-purple-700'}`}>{majorName[m] || m} {v}</span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })()}
