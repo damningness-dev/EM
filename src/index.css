@@ -239,3 +239,6 @@ body {
 .narrow-weekend-sun .cal-grid { grid-template-columns: minmax(0, 0.5fr) repeat(5, minmax(0, 1fr)) minmax(0, 0.5fr); }
 .narrow-weekend-mon .cal-dow,
 .narrow-weekend-mon .cal-grid { grid-template-columns: repeat(5, minmax(0, 1fr)) repeat(2, minmax(0, 0.5fr)); }
+
+/* 인쇄에는 화면에서 선택한 날짜의 강조 테두리(링)가 나오지 않게 한다. */
+.print-portal .cal-day { box-shadow: none !important; }
