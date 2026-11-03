@@ -3379,11 +3379,11 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                           >{t.name}</p>
                         )}
                         {(t.points_surface || t.points_float || t.points_fall || t.points_particle) ? (
-                          <div className="flex gap-1 mt-1 flex-wrap">
-                            {t.points_float > 0 && <span className="text-[10px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">부유균 {t.points_float}pt</span>}
-                            {t.points_fall > 0 && <span className="text-[10px] bg-orange-50 text-orange-600 px-1 py-0.5 rounded">낙하균 {t.points_fall}pt</span>}
-                            {t.points_surface > 0 && <span className="text-[10px] bg-green-50 text-green-600 px-1 py-0.5 rounded">표면균 {t.points_surface}pt</span>}
-                            {t.points_particle > 0 && <span className="text-[10px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded">부유입자 {t.points_particle}pt</span>}
+                          <div className="flex gap-1 mt-1 flex-nowrap justify-start">
+                            {t.points_float > 0 && <span className="text-[10px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded whitespace-nowrap">부{t.points_float}</span>}
+                            {t.points_fall > 0 && <span className="text-[10px] bg-orange-50 text-orange-600 px-1 py-0.5 rounded whitespace-nowrap">낙{t.points_fall}</span>}
+                            {t.points_surface > 0 && <span className="text-[10px] bg-green-50 text-green-600 px-1 py-0.5 rounded whitespace-nowrap">표{t.points_surface}</span>}
+                            {t.points_particle > 0 && <span className="text-[10px] bg-purple-50 text-purple-600 px-1 py-0.5 rounded whitespace-nowrap">입자{t.points_particle}</span>}
                           </div>
                         ) : null}
                       </div>
@@ -3458,17 +3458,17 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                             <p className="text-xs font-bold text-red-600 mt-0.5">포인트 입력 필요</p>
                           )}
                           {(zone.points_surface || zone.points_float || zone.points_fall || zone.points_particle) ? (
-                            <div className="flex gap-1 mt-1 flex-wrap">
+                            <div className="flex gap-1 mt-1 flex-nowrap justify-start">
                               {isCombinedCat(zone.category, scheduleConfig) ? (
                                 <span className="text-[10px] bg-purple-100 text-purple-700 px-1 py-0.5 rounded font-medium">
-                                  {getMajorCat(zone.category, scheduleConfig)} {zone.points_float || 0}pt
+                                  {({ '질소가스': '질소', '압축공기': '압축' }[getMajorCat(zone.category, scheduleConfig)]) || getMajorCat(zone.category, scheduleConfig)} {zone.points_float || 0}
                                 </span>
                               ) : (
                                 <>
-                                  {zone.points_float > 0 && <span className="text-[10px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded">부유균 {zone.points_float}pt</span>}
-                                  {zone.points_fall > 0 && <span className="text-[10px] bg-orange-50 text-orange-600 px-1 py-0.5 rounded">낙하균 {zone.points_fall}pt</span>}
-                                  {zone.points_surface > 0 && <span className="text-[10px] bg-green-50 text-green-600 px-1 py-0.5 rounded">표면균 {zone.points_surface}pt</span>}
-                                  {zone.points_particle > 0 && <span className="text-[10px] bg-pink-50 text-pink-600 px-1 py-0.5 rounded">부유입자 {zone.points_particle}pt</span>}
+                                  {zone.points_float > 0 && <span className="text-[10px] bg-blue-50 text-blue-600 px-1 py-0.5 rounded whitespace-nowrap">부{zone.points_float}</span>}
+                                  {zone.points_fall > 0 && <span className="text-[10px] bg-orange-50 text-orange-600 px-1 py-0.5 rounded whitespace-nowrap">낙{zone.points_fall}</span>}
+                                  {zone.points_surface > 0 && <span className="text-[10px] bg-green-50 text-green-600 px-1 py-0.5 rounded whitespace-nowrap">표{zone.points_surface}</span>}
+                                  {zone.points_particle > 0 && <span className="text-[10px] bg-pink-50 text-pink-600 px-1 py-0.5 rounded whitespace-nowrap">입자{zone.points_particle}</span>}
                                 </>
                               )}
                             </div>
