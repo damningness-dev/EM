@@ -345,6 +345,10 @@ export async function syncGetConfig() {
 export async function syncSetConfig(patch) {
   return api.invoke('sync:setConfig', patch);
 }
+// 토큰으로 이 GitHub 계정의 공유 데이터 Gist 후보를 찾는다(처음 설치 설정용).
+export async function syncFindGist(token) {
+  return api.invoke('sync:findGist', { token });
+}
 export async function syncUpload() {
   return api.invoke('sync:upload');
 }

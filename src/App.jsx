@@ -13,11 +13,12 @@ import UpdateNotifier from './components/UpdateNotifier';
 import ErrorBoundary from './components/ErrorBoundary';
 import SyncChangeNotifier from './components/SyncChangeNotifier';
 import SyncControl from './components/SyncControl';
+import FirstRunSetup from './components/FirstRunSetup';
 import BackupControl from './components/BackupControl';
 import Login from './components/Login';
 import MemberManager from './components/MemberManager';
 import ChangePasswordModal from './components/ChangePasswordModal';
-import { seedInitialData, fetchScheduleConfig, getAutoStart, setAutoStart, adminIsUnlocked, setCurrentMemberOnMain, fetchGuestAccess, memberChangePassword, fetchMembers, syncAfterChange, syncWarningText } from './lib/api';
+import { syncGetConfig, seedInitialData, fetchScheduleConfig, getAutoStart, setAutoStart, adminIsUnlocked, setCurrentMemberOnMain, fetchGuestAccess, memberChangePassword, fetchMembers, syncAfterChange, syncWarningText } from './lib/api';
 import { setScheduleConfig } from './lib/schedule';
 import { INITIAL_CALIBRATION, MONITORING_ZONES } from './data/initialData';
 
@@ -87,6 +88,16 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem('em-current-member')) || null; } catch { return null; }
   });
   const [showLogin, setShowLogin] = useState(false);
+  // 처음 설치한 PC(공유 설정 없음)에서 토큰을 입력해 공유 계정을 불러오는 설정 창
+  const [showFirstRun, setShowFirstRun] = useState(false);
+  const [setupNotice, setSetupNotice] = useState('');
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    let skipped = false;
+    try { skipped = localStorage.getItem('em-first-run-skipped') === '1'; } catch { /* ignore */ }
+    if (skipped) return;
+    syncGetConfig().then(c => { if (c && !c.gistId) setShowFirstRun(true); }).catch(() => {});
+  }, []);
   const [showMemberManager, setShowMemberManager] = useState(false);
 
   // 로그인하지 않았을 때 보이는 메뉴 제한(관리자가 "권한 설정"에서 지정) — null이면
@@ -280,6 +291,20 @@ export default function App() {
       </aside>
 
       {showLogin && <Login onClose={() => setShowLogin(false)} onLoggedIn={handleLoggedIn} />}
+      {showFirstRun && (
+        <FirstRunSetup
+          onSkip={() => { try { localStorage.setItem('em-first-run-skipped', '1'); } catch { /* ignore */ } setShowFirstRun(false); }}
+          onDone={(count) => {
+            setShowFirstRun(false);
+            setSetupNotice(`공유 계정 ${count}개를 불러왔습니다. 로그인하세요.`);
+            setShowLogin(true);
+            setTimeout(() => setSetupNotice(''), 8000);
+          }}
+        />
+      )}
+      {setupNotice && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[600] px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-medium shadow-xl">✅ {setupNotice}</div>
+      )}
 
       {showMemberManager && adminUnlocked && (
         <MemberManager menu={MENU} onClose={() => { setShowMemberManager(false); reloadGuestAccess(); refreshCurrentMember(); }} />

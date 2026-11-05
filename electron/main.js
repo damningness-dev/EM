@@ -1706,6 +1706,27 @@ function registerHandlers() {
     restartSyncTimer();
     return { ok: true };
   });
+  // 처음 설치한 PC 설정용 — 토큰(저장하지 않음)의 GitHub 계정에서 공유 데이터(em-data.json)가 들어 있는
+  // Gist를 찾아 후보를 돌려준다(최근 수정순). Gist ID를 몰라도 토큰만으로 연결할 수 있게 한다.
+  ipcMain.handle('sync:findGist', async (_e, { token } = {}) => {
+    const t = String(token || '').trim();
+    if (!t) return { ok: false, error: '토큰을 입력하세요' };
+    try {
+      const found = [];
+      for (let page = 1; page <= 3; page++) {
+        const r = await ghRequest('GET', `https://api.github.com/gists?per_page=100&page=${page}`, { token: t });
+        const list = Array.isArray(r.json) ? r.json : [];
+        for (const g of list) {
+          if (g?.files && g.files[GIST_FILE]) found.push({ id: g.id, updatedAt: g.updated_at || '', description: g.description || '' });
+        }
+        if (list.length < 100) break;
+      }
+      found.sort((x, y) => String(y.updatedAt).localeCompare(String(x.updatedAt)));
+      return { ok: true, candidates: found };
+    } catch (e) {
+      return { ok: false, error: explainGistError(e) };
+    }
+  });
   ipcMain.handle('sync:upload', () => syncUpload());
   // 새 공유를 처음 만들 때만 — 실수로 PC마다 각자 Gist가 생기지 않도록 분리했다.
   ipcMain.handle('sync:createGist', () => syncUpload({ allowCreate: true }));
