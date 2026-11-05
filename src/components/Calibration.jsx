@@ -487,16 +487,17 @@ export default function Calibration({ adminUnlocked, jumpTarget, onJumpTargetCon
       </div>
 
       <div className="flex flex-wrap gap-3 items-center">
-        <input type="text" placeholder="관리번호, S/N, 장비명 검색..." value={search} onChange={e => setSearch(e.target.value)} className="flex-1 min-w-48 px-3 py-2 border border-gray-200 rounded-lg text-sm" />
+        {/* 필터 버튼: 전체 → 임박 → 만료 순. 선택하면 버튼 바탕이 그 글씨색(파랑/주황/빨강)으로 채워진다 */}
         <div className="flex gap-2">
           {[
-            { key: 'all', label: `전체 (${enriched.length})` },
-            { key: 'expired', label: `만료 (${expiredCount})`, color: 'text-red-600' },
-            { key: 'urgent', label: `임박 (${urgentCount})`, color: 'text-orange-500' },
-          ].map(({ key, label, color }) => (
-            <button key={key} onClick={() => setFilter(key)} className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${filter === key ? 'bg-blue-600 text-white border-blue-600' : `border-gray-200 ${color || 'text-gray-600'} hover:bg-gray-50`}`}>{label}</button>
+            { key: 'all', label: `전체 (${enriched.length})`, text: 'text-gray-600', active: 'bg-blue-600 text-white border-blue-600' },
+            { key: 'urgent', label: `임박 (${urgentCount})`, text: 'text-orange-500', active: 'bg-orange-500 text-white border-orange-500' },
+            { key: 'expired', label: `만료 (${expiredCount})`, text: 'text-red-600', active: 'bg-red-600 text-white border-red-600' },
+          ].map(({ key, label, text, active }) => (
+            <button key={key} onClick={() => setFilter(key)} className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${filter === key ? active : `border-gray-200 ${text} hover:bg-gray-50`}`}>{label}</button>
           ))}
         </div>
+        <input type="text" placeholder="관리번호, S/N, 장비명 검색..." value={search} onChange={e => setSearch(e.target.value)} className="flex-1 min-w-48 px-3 py-2 border border-gray-200 rounded-lg text-sm" />
       </div>
 
       <p className="text-xs text-gray-400">

@@ -3244,6 +3244,28 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                 <div>
                   <p className={`text-xs ${hdSub}`}>{selectedDay.slice(0,4)}년 {MONTH_KR[parseInt(selectedDay.slice(5,7)) - 1]} · {DOW_LABELS[selDow]}요일</p>
                   <p className="text-lg font-bold">{parseInt(selectedDay.slice(8,10))}일 일정</p>
+                  {/* 이 날 누가 휴가인지 — 내 휴가 + 같은 팀(관리자는 전체)에 공유된 연차·반차 */}
+                  {(() => {
+                    const LB = { annual: '연차', am: '오전반차', pm: '오후반차' };
+                    const rows = [];
+                    const seen = new Set();
+                    const add = (name, leave) => { const k = `${name}|${leave}`; if (!leave || seen.has(k)) return; seen.add(k); rows.push({ name, leave }); };
+                    if (currentMember && overtime[selectedDay]?.leave) add(currentMember.username, overtime[selectedDay].leave);
+                    (teamByDate[selectedDay] || []).forEach(r => add(r.username, r.leave));
+                    if (rows.length === 0) return null;
+                    return (
+                      <div className="flex flex-wrap items-center gap-1 mt-1">
+                        {['annual', 'am', 'pm'].map(k => {
+                          const names = rows.filter(r => r.leave === k).map(r => r.name);
+                          return names.length > 0 ? (
+                            <span key={k} className="inline-flex items-center h-[18px] px-1.5 rounded bg-red-100 text-red-600 text-[10px] font-semibold whitespace-nowrap">
+                              {LB[k]} {names.join(', ')}
+                            </span>
+                          ) : null;
+                        })}
+                      </div>
+                    );
+                  })()}
                   {isSelHol && (
                     <p className={`text-xs mt-0.5 ${hdSub}`}>🎌 {holidays[selectedDay]}</p>
                   )}
@@ -3287,14 +3309,14 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                 const total = sum.f + sum.l + sum.s + sum.p + Object.values(comb).reduce((a, b) => a + b, 0);
                 if (total <= 0) return null;
                 // 달력 칸과 같은 모양: 1행 부·낙·표·입자(한 줄, 줄바꿈 없음), 2행 질소·압축 — 모두 왼쪽 정렬
-                const chip = 'text-[10px] font-semibold leading-none px-1 py-0.5 rounded whitespace-nowrap';
+                const chip = 'inline-flex items-center h-[18px] text-[10px] font-semibold leading-none px-1.5 rounded whitespace-nowrap';
                 const majorName = { '질소가스': '질소', '압축공기': '압축' };
                 const majorCls = { '질소가스': 'bg-purple-100 text-purple-700', '압축공기': 'bg-yellow-100 text-yellow-700', '용수': 'bg-teal-100 text-teal-700' };
                 const combList = Object.entries(comb).filter(([, v]) => v > 0);
                 return (
                   <div className="mt-2 pt-2 border-t border-white/15 flex items-start gap-1.5">
                     {/* "합계" 라벨을 왼쪽에 두고, 칩들(부·낙·표·입자 / 질소·압축)은 같은 왼쪽선에서 시작하게 한다 */}
-                    <span className={`text-[10px] shrink-0 leading-[18px] ${hdSub}`}>합계</span>
+                    <span className={`text-[10px] shrink-0 h-[18px] inline-flex items-center ${hdSub}`}>합계</span>
                     <div className="space-y-1 min-w-0">
                       {(sum.f + sum.l + sum.s + sum.p) > 0 && (
                         <div className="flex flex-nowrap items-center justify-start gap-1">
