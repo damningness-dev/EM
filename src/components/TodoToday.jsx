@@ -724,7 +724,8 @@ export default function TodoToday({ currentMember }) {
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto">
-    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_720px] gap-6 items-start">
+    {/* 메모 칸은 넓을 때 최대 720px, 창이 줄어들면 할일:메모가 5:5(같은 폭)가 되도록 한다 */}
+    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_min(720px,calc(50%_-_12px))] gap-6 items-start">
     <div className="space-y-5 min-w-0">
       {/* 헤더 */}
       <div className="flex items-end justify-between flex-wrap gap-3">
