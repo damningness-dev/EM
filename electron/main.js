@@ -202,11 +202,31 @@ async function downloadAsar(url, dest) {
 let downloadingUpdate = false;
 let downloadedVersion = null;
 
-async function checkForUpdate() {
+// 504·503·429 같은 서버/게이트웨이 일시 오류나 시간 초과·연결 끊김은 GitHub(릴리즈 CDN)·사내 프록시가
+// 잠깐 느려서 생기는 흔한 일이다. 그때마다 빨간 "업데이트 오류"를 띄우지 않도록 먼저 몇 번 다시 시도하고,
+// 주기적인 자동 확인이 연속으로 실패할 때만 알린다(직접 "다시 확인"을 누른 경우는 바로 알림).
+const TRANSIENT_ERR = /^HTTP (5\d\d|429)|시간 초과|ECONN|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|network|다운로드가 중간에/i;
+const isTransientErr = (err) => TRANSIENT_ERR.test(String(err?.message || err));
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+let checkFailStreak = 0;
+const QUIET_FAIL_LIMIT = 3; // 자동 확인이 이 횟수만큼 연달아 실패하면 그때 알린다(3분 간격이므로 약 9분)
+
+async function fetchMetaWithRetry() {
+  for (let attempt = 1; ; attempt++) {
+    try { return await fetchJSON(META_URL); }
+    catch (err) {
+      if (attempt >= 3 || !isTransientErr(err)) throw err;
+      await sleep(2000 * attempt);
+    }
+  }
+}
+
+async function checkForUpdate({ manual = false } = {}) {
   if (downloadingUpdate) return; // 다운로드 중엔 상태를 건드리지 않음
   sendStatus({ type: 'checking' });
   try {
-    const meta = await fetchJSON(META_URL);
+    const meta = await fetchMetaWithRetry();
+    checkFailStreak = 0;
     if (meta.version === app.getVersion()) {
       sendStatus({ type: 'latest' });
     } else if (downloadedVersion === meta.version) {
@@ -224,6 +244,16 @@ async function checkForUpdate() {
   } catch (err) {
     // 404 = 아직 게시된 릴리즈에 app-meta.json이 없음 (정상, 조용히 무시)
     if (err.message.startsWith('HTTP 404')) return;
+    if (isTransientErr(err)) {
+      checkFailStreak++;
+      if (!manual && checkFailStreak < QUIET_FAIL_LIMIT) {
+        // 일시적인 오류는 조용히 넘기고 다음 자동 확인에서 다시 시도한다. 이미 받아 둔 업데이트 안내는 되돌려 둔다.
+        sendStatus(downloadedVersion ? { type: 'downloaded', version: downloadedVersion } : { type: 'latest' });
+        return;
+      }
+      sendStatus({ type: 'error', message: `업데이트 서버(GitHub) 응답이 지연되고 있습니다 (${err.message}). 잠시 후 자동으로 다시 시도합니다.` });
+      return;
+    }
     sendStatus({ type: 'error', message: `업데이트 확인 실패: ${err.message}` });
   }
 }
@@ -1662,7 +1692,7 @@ if (applyUpdateArg) {
 function registerHandlers() {
 
   // ── 업데이트 ──
-  ipcMain.handle('update:check', checkForUpdate);
+  ipcMain.handle('update:check', () => checkForUpdate({ manual: true }));
   ipcMain.handle('update:download', downloadUpdate);
   ipcMain.handle('update:install', applyUpdateAndRestart);
   ipcMain.handle('app:restart', () => { app.relaunch(); app.exit(0); });
