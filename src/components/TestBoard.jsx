@@ -38,7 +38,7 @@ const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${Stri
 function dutyTasksOf(duty) {
   if (!duty) return [];
   const pick = (list, kind) => (Array.isArray(list) ? list : []).filter(t => t?.id && String(t.name || '').trim())
-    .map(t => ({ id: `wd_${t.id}`, name: String(t.name).trim(), kind, ...(t.alarmTime ? { alarmTime: t.alarmTime } : {}) }));
+    .map(t => ({ id: `wd_${t.id}`, name: String(t.name).trim(), kind, showOnCalendar: false, ...(t.alarmTime ? { alarmTime: t.alarmTime } : {}) }));
   return [...pick(duty.dailyTasks, 'daily'), ...pick(duty.weeklyTasks, 'weekly'), ...pick(duty.monthlyTasks, 'monthly')];
 }
 
@@ -125,7 +125,7 @@ export default function TestBoard({ adminUnlocked }) {
       id: task?.id || null,
       draft: {
         name: task?.name || '', kind: task?.kind || '', alarmTime: task?.alarmTime || '', note: task?.note || '',
-        showCal: task?.showOnCalendar !== false,
+        showCal: task ? task.showOnCalendar !== false : false, // 새 업무는 월별 일정 표시를 끈 상태가 기본
         curWorker: '',
         assign: task ? staff.filter(w => (board.assignments[w] || []).includes(task.id)) : [],
         due: task?.due || '', dow: task?.dow, monthDay: task?.monthDay, weekdaysOnly: task?.weekdaysOnly,
