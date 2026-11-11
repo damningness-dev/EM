@@ -35,7 +35,7 @@ const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${Stri
 function dutyTasksOf(duty) {
   if (!duty) return [];
   const pick = (list, kind) => (Array.isArray(list) ? list : []).filter(t => t?.id && String(t.name || '').trim())
-    .map(t => ({ id: `wd_${t.id}`, name: String(t.name).trim(), kind }));
+    .map(t => ({ id: `wd_${t.id}`, name: String(t.name).trim(), kind, ...(t.alarmTime ? { alarmTime: t.alarmTime } : {}) }));
   return [...pick(duty.dailyTasks, 'daily'), ...pick(duty.weeklyTasks, 'weekly'), ...pick(duty.monthlyTasks, 'monthly')];
 }
 
@@ -53,12 +53,10 @@ export default function TestBoard({ adminUnlocked }) {
   const [staff, setStaff] = useState(null);
   const [duty, setDuty] = useState(null);
   const [board, setBoard] = useState({ tasks: [], assignments: {}, progress: {} });
-  const [newName, setNewName] = useState('');
-  const [editingId, setEditingId] = useState(null);
-  const [editingName, setEditingName] = useState('');
   const [overCol, setOverCol] = useState(null);
   const [overPalette, setOverPalette] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [taskDlg, setTaskDlg] = useState(null); // { id|null(새 업무), draft } — 업무 상세 창
   const [rotDlg, setRotDlg] = useState(null); // { taskId, draft } — 로테이션 설정 창
   const saveTimer = useRef(null);
   const seeded = useRef(false);
@@ -113,11 +111,19 @@ export default function TestBoard({ adminUnlocked }) {
     flash(`주간근무 업무 ${add.length}개를 가져왔습니다.`);
   }
 
-  function addTask() {
-    const name = newName.trim();
+  // 업무 상세 창 — 새 업무(id 없음) 또는 기존 업무를 열어 이름·구분·알림시간·메모를 입력/수정한다.
+  function openTask(task) {
+    if (task) setTaskDlg({ id: task.id, draft: { name: task.name, kind: task.kind || '', alarmTime: task.alarmTime || '', note: task.note || '' } });
+    else { if (!guard()) return; setTaskDlg({ id: null, draft: { name: '', kind: '', alarmTime: '', note: '' } }); }
+  }
+  function saveTask() {
+    const { id, draft } = taskDlg;
+    const name = draft.name.trim();
     if (!name || !guard()) return;
-    commit({ ...board, tasks: [...board.tasks, { id: newTaskId(), name, kind: '' }] });
-    setNewName('');
+    const fields = { name, kind: draft.kind, alarmTime: draft.alarmTime || undefined, note: draft.note.trim() ? draft.note : undefined };
+    setTaskDlg(null);
+    if (!id) { commit({ ...board, tasks: [...board.tasks, { id: newTaskId(), ...fields }] }); return; }
+    commit({ ...board, tasks: board.tasks.map(t => t.id === id ? { ...t, ...fields } : t) });
   }
   function removeTask(id) {
     if (!guard()) return;
@@ -126,12 +132,6 @@ export default function TestBoard({ adminUnlocked }) {
     Object.entries(board.assignments).forEach(([who, ids]) => { assignments[who] = ids.filter(x => x !== id); });
     Object.entries(board.progress).forEach(([who, per]) => { const { [id]: _drop, ...rest } = per || {}; progress[who] = rest; }); // eslint-disable-line no-unused-vars
     commit({ tasks: board.tasks.filter(t => t.id !== id), assignments, progress });
-  }
-  function renameTask(id, name) {
-    setEditingId(null);
-    const n = name.trim();
-    if (!n || !guard()) return;
-    commit({ ...board, tasks: board.tasks.map(t => t.id === id ? { ...t, name: n } : t) });
   }
   // 기한·진행상태 입력. 로테이션 업무는 "이번 주기" 기록으로 남기고(주기가 바뀌면 자동으로 새로 시작), 같은
   // 업무의 다른 사람 기록은 정리한다.
@@ -283,10 +283,8 @@ export default function TestBoard({ adminUnlocked }) {
           <span className="text-sm font-semibold text-gray-700">📋 업무</span>
           {adminUnlocked && (
             <>
-              <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addTask(); }}
-                placeholder="업무 이름 입력 후 Enter" className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-64 focus:outline-none focus:ring-2 focus:ring-blue-400" />
-              <button onClick={addTask} disabled={!newName.trim()}
-                className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40">+ 업무 추가</button>
+              <button onClick={() => openTask(null)}
+                className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">+ 업무 추가</button>
               {canImport && (
                 <button onClick={importFromDuty} className="px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50"
                   title="주간근무의 매일·주간·월간 업무 중 아직 가져오지 않은 것을 업무 버튼으로 추가합니다">📥 주간근무 업무 가져오기</button>
@@ -307,17 +305,14 @@ export default function TestBoard({ adminUnlocked }) {
                     const ws = workersOf(t.id);
                     return (
                       <div key={t.id}
-                        draggable={adminUnlocked && editingId !== t.id}
+                        draggable={adminUnlocked}
                         onDragStart={e => startDrag(e, { kind: 'palette', taskId: t.id })}
-                        onDoubleClick={() => { if (adminUnlocked) { setEditingId(t.id); setEditingName(t.name); } }}
+                        onClick={() => openTask(t)}
                         className={`inline-flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-lg border border-gray-300 bg-gray-50 text-sm font-medium text-gray-700 select-none shadow-sm ${adminUnlocked ? 'cursor-grab active:cursor-grabbing hover:bg-white' : ''}`}
-                        title={adminUnlocked ? '끌어서 근무자에게 배치 · 더블클릭으로 이름 수정' : t.name}>
-                        {editingId === t.id ? (
-                          <input autoFocus value={editingName} onChange={e => setEditingName(e.target.value)}
-                            onBlur={() => renameTask(t.id, editingName)}
-                            onKeyDown={e => { if (e.key === 'Enter') renameTask(t.id, editingName); if (e.key === 'Escape') setEditingId(null); }}
-                            className="bg-white border border-gray-300 rounded px-1 text-sm w-44 text-gray-800" />
-                        ) : <span>{t.name}</span>}
+                        title={adminUnlocked ? '클릭하면 상세정보 · 끌어서 근무자에게 배치' : '클릭하면 상세정보'}>
+                        <span>{t.name}</span>
+                        {t.alarmTime && <span className="text-[10px] text-gray-400">⏰{t.alarmTime}</span>}
+                        {t.note && <span className="text-[10px]" title={t.note}>📝</span>}
                         {/* 배치된 근무자를 그 사람의 색 점으로 표시 */}
                         {ws.length > 0 && (
                           <span className="inline-flex items-center gap-0.5" title={`배치: ${ws.join(', ')}`}>
@@ -326,10 +321,10 @@ export default function TestBoard({ adminUnlocked }) {
                         )}
                         {t.rotation?.on && <span className="text-[10px] px-1 rounded bg-indigo-100 text-indigo-700 font-semibold" title={`로테이션: ${rotationLabel(t.rotation)}`}>🔄 {rotationLabel(t.rotation)}</span>}
                         {adminUnlocked && (
-                          <button onClick={() => openRotation(t)} title="로테이션 설정 — 정한 주기마다 다른 인원에게 자동으로 넘어갑니다"
+                          <button onClick={e => { e.stopPropagation(); openRotation(t); }} title="로테이션 설정 — 정한 주기마다 다른 인원에게 자동으로 넘어갑니다"
                             className={`text-xs leading-none px-0.5 ${t.rotation?.on ? 'text-indigo-600' : 'text-gray-300 hover:text-indigo-500'}`}>🔄</button>
                         )}
-                        {adminUnlocked && <button onClick={() => removeTask(t.id)} className="text-gray-400 hover:text-red-500 text-xs leading-none px-0.5" title="업무 버튼 삭제">✕</button>}
+                        {adminUnlocked && <button onClick={e => { e.stopPropagation(); removeTask(t.id); }} className="text-gray-400 hover:text-red-500 text-xs leading-none px-0.5" title="업무 버튼 삭제">✕</button>}
                       </div>
                     );
                   })}
@@ -410,6 +405,54 @@ export default function TestBoard({ adminUnlocked }) {
           </div>
         </div>
       )}
+
+      {/* 업무 상세 창 — 주간근무 목록처럼 업무명·알림시간 등을 입력한다 */}
+      {taskDlg && (() => {
+        const d = taskDlg.draft; const cur = taskDlg.id ? taskById.get(taskDlg.id) : null;
+        const set = (patch) => setTaskDlg(p => ({ ...p, draft: { ...p.draft, ...patch } }));
+        const ro = !adminUnlocked;
+        const closeIt = () => setTaskDlg(null);
+        return (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40" onClick={closeIt}>
+            <div className="bg-white rounded-2xl shadow-2xl w-[28rem] max-w-[95vw] p-5" onClick={e => e.stopPropagation()}>
+              <h3 className="text-base font-bold text-gray-900 mb-3">{taskDlg.id ? '📋 업무 상세정보' : '📋 새 업무 추가'}</h3>
+              <label className="block text-xs text-gray-500 mb-1">업무명</label>
+              <input autoFocus={!ro} value={d.name} disabled={ro} spellCheck={false} onChange={e => set({ name: e.target.value })}
+                onKeyDown={e => { if (e.key === 'Enter' && !ro) saveTask(); if (e.key === 'Escape') closeIt(); }}
+                placeholder="업무명" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-gray-50" />
+              <div className="flex gap-3 mb-3">
+                <div className="flex-1">
+                  <label className="block text-xs text-gray-500 mb-1">구분</label>
+                  <select value={d.kind} disabled={ro} onChange={e => set({ kind: e.target.value })}
+                    className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm disabled:bg-gray-50">
+                    <option value="">기타</option><option value="daily">일일점검</option><option value="weekly">주간점검</option><option value="monthly">월간점검</option>
+                  </select>
+                </div>
+                <div className="flex-1">
+                  <label className="block text-xs text-gray-500 mb-1">알림시간</label>
+                  <input type="time" value={d.alarmTime} disabled={ro} onChange={e => set({ alarmTime: e.target.value })}
+                    className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm disabled:bg-gray-50" />
+                </div>
+              </div>
+              <label className="block text-xs text-gray-500 mb-1">메모</label>
+              <textarea value={d.note} disabled={ro} rows={4} spellCheck={false} onChange={e => set({ note: e.target.value })}
+                placeholder="업무 내용·주의사항 등" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-gray-50" />
+              {cur && (
+                <div className="mt-3 text-xs text-gray-500 flex items-center gap-2 flex-wrap">
+                  <span>배치: {workersOf(cur.id).length ? workersOf(cur.id).join(', ') : '없음'}</span>
+                  {cur.rotation?.on && <span className="px-1.5 rounded bg-indigo-100 text-indigo-700 font-semibold">🔄 {rotationLabel(cur.rotation)}</span>}
+                  {!ro && <button onClick={() => { closeIt(); openRotation(cur); }} className="px-2 py-0.5 border border-indigo-200 text-indigo-600 rounded hover:bg-indigo-50">🔄 로테이션 설정</button>}
+                </div>
+              )}
+              <div className="flex gap-2 justify-end mt-4">
+                {!ro && cur && <button onClick={() => { closeIt(); removeTask(cur.id); }} className="mr-auto px-3 py-2 text-sm text-red-600 bg-red-50 rounded-lg hover:bg-red-100">삭제</button>}
+                <button onClick={closeIt} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">{ro ? '닫기' : '취소'}</button>
+                {!ro && <button onClick={saveTask} disabled={!d.name.trim()} className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40">{taskDlg.id ? '저장' : '추가'}</button>}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 로테이션 설정 창 */}
       {rotDlg && (() => {

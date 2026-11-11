@@ -2551,6 +2551,9 @@ function registerHandlers() {
     const tasks = (Array.isArray(board?.tasks) ? board.tasks : [])
       .map(t => {
         const item = { id: String(t?.id || ''), name: String(t?.name || '').trim(), kind: KINDS.includes(t?.kind) ? t.kind : '' };
+        if (/^([01]\d|2[0-3]):[0-5]\d$/.test(String(t?.alarmTime || ''))) item.alarmTime = t.alarmTime;
+        const note = String(t?.note || '').slice(0, 1000);
+        if (note.trim()) item.note = note;
         const rot = cleanRotation(t?.rotation);
         if (rot) item.rotation = rot;
         return item;
