@@ -419,7 +419,7 @@ export default function TestBoard({ adminUnlocked }) {
                 <button onClick={importFromDuty} className="px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50"
                   title="주간근무의 매일·주간·월간 업무 중 아직 가져오지 않은 것을 업무 버튼으로 추가합니다">📥 주간근무 업무 가져오기</button>
               )}
-              <span className="text-[11px] text-gray-400">버튼을 끌어서 근무자 칸에 놓으세요 · 배치된 칩을 이 영역에 놓으면 배치가 해제됩니다</span>
+              <span className="text-[11px] text-gray-400">버튼을 끌어서 근무자 칸에 놓으세요 · 배치된 칩을 이 영역에 놓거나 상세창의 배치 체크를 풀면 해제됩니다</span>
             </>
           )}
         </div>
@@ -528,7 +528,6 @@ export default function TestBoard({ adminUnlocked }) {
                             <span className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[t.kind || '']}`}>{KIND_SHORT[t.kind || '']}</span>
                             <span className={`flex-1 text-sm font-medium break-words ${pr.status === 'done' ? 'line-through opacity-60' : ''}`}>{t.name}</span>
                             {rs && <span className="text-indigo-500 text-xs leading-none">🔄</span>}
-                            {adminUnlocked && !rs && <button onClick={e => { e.stopPropagation(); unassign(who, id); }} className="text-gray-400 hover:text-red-500 text-xs leading-none" title="배치 해제">✕</button>}
                           </div>
                           {track && <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                             {adminUnlocked ? (

@@ -956,6 +956,7 @@ function explainGistError(err) {
   const m = String(err?.message || '');
   if (/HTTP 401/.test(m)) return `GitHub 인증 실패 — 토큰이 만료·폐기되었습니다. 새 토큰을 발급해 등록하세요. (${m})`;
   if (/HTTP 404/.test(m)) return `이 Gist를 수정할 수 없습니다 — Gist ID가 맞는지, 그리고 등록된 토큰이 그 Gist를 만든 GitHub 계정의 토큰인지 확인하세요. Gist는 만든 계정만 수정할 수 있습니다. (${m})`;
+  if (/HTTP 409/.test(m)) return `다른 PC가 같은 시각에 공유 데이터를 수정해 충돌했습니다(자동으로 다시 시도했지만 실패). 잠시 후 다시 동기화하세요. (${m})`;
   if (/HTTP 403/.test(m)) return `권한이 없습니다 — Classic 토큰에 gist 권한이 켜져 있는지 확인하세요. (${m})`;
   return m;
 }
@@ -1009,7 +1010,26 @@ function buildMemberUpload(remoteData, localData) {
 //   눌렀을 때만 true). 예전엔 항상 만들어서, PC마다 자기만의 Gist가 생겨 데이터가
 //   갈라지는 문제가 있었다.
 // overwriteRemote: 원격을 이 PC 내용으로 통째로 덮어쓴다("이 PC 기준으로 통일").
-async function syncUpload({ allowCreate = false, overwriteRemote = false } = {}) {
+// 올리기는 한 번에 하나씩만 한다. 변경이 연달아 일어나면(예: TEST 업무 배치판을 빠르게 만지는 경우) 올리기 요청이
+// 겹쳐 나가는데, GitHub는 같은 Gist를 동시에 수정하면 "HTTP 409 (충돌)"로 거절한다. 순서대로 처리하고,
+// 그래도 다른 PC와 겹쳐 409가 나면 원격을 다시 받아 합친 뒤 몇 번 다시 시도한다(그 사이에는 오류를 띄우지 않는다).
+let uploadChain = Promise.resolve();
+function syncUpload(opts = {}) {
+  const run = async () => {
+    const MAX = 4;
+    let r;
+    for (let attempt = 1; attempt <= MAX; attempt++) {
+      r = await syncUploadOnce({ ...opts, quietError: attempt < MAX });
+      if (r?.ok || !/HTTP 409/.test(String(r?.error || ''))) return r;
+      await sleep(600 * attempt);
+    }
+    return r;
+  };
+  const next = uploadChain.then(run, run);
+  uploadChain = next.catch(() => {});
+  return next;
+}
+async function syncUploadOnce({ allowCreate = false, overwriteRemote = false, quietError = false } = {}) {
   const cfg = loadSyncConfig();
   const token = effectiveToken(cfg);
   if (!token) return { ok: false, error: '업로드하려면 GitHub 토큰이 필요합니다' };
@@ -1065,7 +1085,8 @@ async function syncUpload({ allowCreate = false, overwriteRemote = false } = {})
     return { ok: true, gistId, updatedAt, merged };
   } catch (err) {
     const msg = explainGistError(err);
-    sendSyncStatus({ type: 'error', message: msg });
+    // 409(충돌)는 곧 다시 시도하므로 중간 시도에서는 화면에 오류를 띄우지 않는다
+    if (!(quietError && /HTTP 409/.test(String(err?.message || '')))) sendSyncStatus({ type: 'error', message: msg });
     return { ok: false, error: msg };
   }
 }
