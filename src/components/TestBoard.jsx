@@ -59,6 +59,7 @@ export default function TestBoard({ adminUnlocked }) {
   const [overCol, setOverCol] = useState(null);
   const [overPalette, setOverPalette] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [tip, setTip] = useState(null); // { id, who, x, y, up } — 업무 칩 위에 마우스를 올렸을 때의 안내
   const [kindMenu, setKindMenu] = useState(null); // { id, x, y } — 업무 버튼 구분 선택 메뉴
   const [taskDlg, setTaskDlg] = useState(null); // { id|null(새 업무), draft } — 업무 상세 창
   const saveTimer = useRef(null);
@@ -117,6 +118,7 @@ export default function TestBoard({ adminUnlocked }) {
   // 업무 상세 창 — 새 업무(id 없음) 또는 기존 업무를 열어 이름·구분·알림시간·메모·로테이션을 입력/수정한다.
   const defaultRot = () => ({ on: false, unit: 'week', every: 1, mode: 'sequential', start: fmtDate(new Date()), first: '', pool: [], seed: 1, overrides: {} });
   function openTask(task) {
+    setTip(null);
     if (!task && !guard()) return;
     const r = task?.rotation;
     setTaskDlg({
@@ -187,6 +189,10 @@ export default function TestBoard({ adminUnlocked }) {
     commit({ ...board, tasks, assignments, progress });
     if (msg) flash(msg);
   }
+  function showTip(e, t, who) {
+    const r = e.currentTarget.getBoundingClientRect();
+    setTip({ id: t.id, who, x: Math.max(8, Math.min(r.left, window.innerWidth - 308)), y: r.bottom + 8, top: r.top - 8, up: r.bottom + 280 > window.innerHeight });
+  }
   // 구분 변경(업무 버튼 앞 배지에서 고른다). 주기·마감기한 값은 지우지 않고 남겨 두어 되돌리면 그대로 쓸 수 있다.
   function setKind(id, kind) {
     setKindMenu(null);
@@ -240,6 +246,7 @@ export default function TestBoard({ adminUnlocked }) {
   // 업무 버튼(palette)을 칸에 놓으면 그 근무자에게 배치(같은 업무를 여러 명에게도 가능),
   // 배치된 칩(placed)을 다른 칸에 놓으면 기한·진행상태와 함께 이동, 업무 영역에 놓으면 배치 해제.
   function startDrag(e, payload) {
+    setTip(null);
     if (!adminUnlocked) { e.preventDefault(); return; }
     e.dataTransfer.effectAllowed = 'copyMove';
     e.dataTransfer.setData('text/plain', JSON.stringify(payload));
@@ -435,8 +442,8 @@ export default function TestBoard({ adminUnlocked }) {
                         draggable={adminUnlocked}
                         onDragStart={e => startDrag(e, { kind: 'palette', taskId: t.id })}
                         onClick={() => openTask(t)}
-                        className={`inline-flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-lg border border-gray-300 bg-gray-50 text-sm font-medium text-gray-700 select-none shadow-sm ${adminUnlocked ? 'cursor-grab active:cursor-grabbing hover:bg-white' : ''}`}
-                        title={adminUnlocked ? '클릭하면 상세정보 · 끌어서 근무자에게 배치' : '클릭하면 상세정보'}>
+                        onMouseEnter={e => showTip(e, t, null)} onMouseLeave={() => setTip(null)}
+                        className={`inline-flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-lg border border-gray-300 bg-gray-50 text-sm font-medium text-gray-700 select-none shadow-sm ${adminUnlocked ? 'cursor-grab active:cursor-grabbing hover:bg-white' : ''}`}>
                         {/* 구분 버튼 — 누를 때마다 일일 → 주간 → 월간 → 기타 순으로 바뀐다 */}
                         <button type="button" onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setKindMenu({ id: t.id, x: r.left, y: r.bottom + 4 }); }} disabled={!adminUnlocked}
                           title={adminUnlocked ? '구분 변경 (눌러서 선택)' : KIND_LABEL[t.kind || '']}
@@ -507,19 +514,12 @@ export default function TestBoard({ adminUnlocked }) {
                       const track = !t.kind; // 기타 업무만 기한·완료표시
                       const pr = track ? prOf(t, who, rs) : { due: '', status: 'todo' };
                       const dl = track ? dueLabel(pr.due, pr.status) : null;
-                      // 주기·알림시간·로테이션 정보는 칩에 쓰지 않고 마우스를 올렸을 때 툴팁으로 보여준다
-                      const tip = [
-                        t.kind ? `⏰ 주기: ${scheduleLabel(t)}` : (t.due ? `📅 마감기한: ${t.due}` : ''),
-                        rs ? `🔄 로테이션: ${rotationLabel(t.rotation)} · 이번 주기 ${rs.startDate.slice(5).replace('-', '/')}~${rs.endDate.slice(5).replace('-', '/')}\n   다음 담당: ${rs.upcoming.slice(0, 3).map(u => `${u.startDate.slice(5).replace('-', '/')} ${u.worker}`).join(' → ')}` : '',
-                        t.note ? `📝 ${t.note}` : '',
-                        '클릭하면 상세정보',
-                      ].filter(Boolean).join('\n');
                       return (
                         <div key={id}
                           draggable={adminUnlocked}
                           onDragStart={e => startDrag(e, { kind: 'placed', taskId: id, from: who })}
                           onClick={() => openTask(t)}
-                          title={tip}
+                          onMouseEnter={e => showTip(e, t, who)} onMouseLeave={() => setTip(null)}
                           className={`rounded-lg border px-2.5 py-2 shadow-sm cursor-pointer ${c.chip} ${adminUnlocked ? 'active:cursor-grabbing' : ''}`}>
                           <div className="flex items-start gap-1">
                             <span className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[t.kind || '']}`}>{KIND_SHORT[t.kind || '']}</span>
@@ -552,6 +552,61 @@ export default function TestBoard({ adminUnlocked }) {
           </div>
         </div>
       )}
+
+      {/* 업무 칩 툴팁 — 라벨/값을 두 칸으로 맞춰 정리해서 보여준다 */}
+      {tip && !taskDlg && !kindMenu && (() => {
+        const t = taskById.get(tip.id);
+        if (!t) return null;
+        const rs = rotOf(t);
+        const who = tip.who;
+        const pr = !t.kind && who ? prOf(t, who, rs) : null;
+        const due = t.kind ? '' : (pr?.due || t.due || '');
+        const dl = due ? dueLabel(due, pr?.status) : null;
+        const ws = workersOf(t.id);
+        const md = (d) => d.slice(5).replace('-', '/');
+        const Row = ({ label, children }) => (
+          <div className="grid grid-cols-[3.75rem_1fr] gap-x-2 items-baseline py-[3px]">
+            <span className="text-[11px] text-gray-400">{label}</span>
+            <div className="text-xs text-gray-100 min-w-0 break-words">{children}</div>
+          </div>
+        );
+        return (
+          <div className="fixed z-[280] w-[18.5rem] pointer-events-none rounded-xl bg-gray-900/95 text-white shadow-2xl ring-1 ring-white/10 backdrop-blur px-3.5 py-3"
+            style={{ left: tip.x, ...(tip.up ? { bottom: window.innerHeight - tip.top } : { top: tip.y }) }}>
+            <div className="flex items-center gap-2 pb-2 mb-1 border-b border-white/10">
+              <span className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[t.kind || '']}`}>{KIND_SHORT[t.kind || '']}</span>
+              <span className="text-sm font-semibold break-words min-w-0">{t.name}</span>
+            </div>
+            <Row label="담당">
+              {ws.length ? (
+                <span className="inline-flex flex-wrap gap-x-2.5 gap-y-0.5">
+                  {ws.map(w => <span key={w} className="inline-flex items-center gap-1"><span className={`w-2 h-2 rounded-full ${colorOf(w).dot}`} />{w}</span>)}
+                </span>
+              ) : <span className="text-gray-400">배치 없음</span>}
+            </Row>
+            {t.kind ? <Row label="주기">{scheduleLabel(t)}</Row> : <Row label="마감">{due ? <>{due}{dl && <span className={`ml-1.5 font-semibold ${dl.cls.includes('red') ? 'text-red-300' : dl.cls.includes('orange') ? 'text-orange-300' : 'text-gray-400'}`}>{dl.text}</span>}</> : <span className="text-gray-400">없음</span>}</Row>}
+            {pr && <Row label="상태">{STATUS.find(x => x[0] === pr.status)?.[1]}</Row>}
+            {rs && (
+              <>
+                <Row label="로테이션">{rotationLabel(t.rotation)}</Row>
+                <Row label="이번 주기">{md(rs.startDate)} ~ {md(rs.endDate)}</Row>
+                <Row label="다음 담당">
+                  <div className="space-y-0.5">
+                    {rs.upcoming.slice(0, 3).map(u => (
+                      <div key={u.k} className="flex items-center gap-1.5">
+                        <span className="text-gray-400 tabular-nums w-[2.4rem]">{md(u.startDate)}</span>
+                        <span className={`w-2 h-2 rounded-full ${colorOf(u.worker).dot}`} />{u.worker}
+                      </div>
+                    ))}
+                  </div>
+                </Row>
+              </>
+            )}
+            {t.note && <Row label="메모"><span className="whitespace-pre-wrap">{t.note.length > 120 ? t.note.slice(0, 120) + '…' : t.note}</span></Row>}
+            <p className="text-[10px] text-gray-500 mt-2 pt-2 border-t border-white/10">클릭하면 상세정보{adminUnlocked ? ' · 끌어서 배치' : ''}</p>
+          </div>
+        );
+      })()}
 
       {/* 구분 선택 메뉴 */}
       {kindMenu && (() => {
