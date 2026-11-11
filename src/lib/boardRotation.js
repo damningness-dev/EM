@@ -106,3 +106,48 @@ export function rotationLabel(r) {
   const every = Math.max(1, parseInt(r.every) || 1);
   return `${every === 1 ? '매' : `${every}${unit}마다`}${every === 1 ? unit : ''} ${r.mode === 'random' ? '무작위' : '순차'}`.replace('매일 ', '매일 ').trim();
 }
+
+// ── 달력 연동 ──
+// 근무자별 색 점(TEST 업무 배치판의 근무자 색과 같은 순서)
+export const WORKER_DOTS = ['bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-purple-500', 'bg-rose-500', 'bg-cyan-500', 'bg-lime-500', 'bg-orange-500'];
+export const workerDot = (staff, who) => WORKER_DOTS[Math.max(0, staff.indexOf(who)) % WORKER_DOTS.length];
+
+// 어느 날짜에 해야 하는 TEST 업무인지: 주간근무 알림과 같은 규칙 — 매일(평일·공휴일 제외) / 주간(월요일) / 월간(매월 1일·말일).
+// "직접 추가" 업무는 정해진 요일이 없으므로 기한(due)을 입력한 날에만 나온다. 기한이 그 날인 업무는 구분과 관계없이 나온다.
+// 담당자는 그 날짜 기준(로테이션이면 그 주기의 담당). 담당자가 없는 업무는 건너뛴다.
+// 반환: [{ id, name, kind, workers: [이름], due: boolean, status?: 'todo'|'doing'|'done' }]
+export function boardTasksOn(board, staff, dateStr, isHoliday = false) {
+  if (!board || !Array.isArray(board.tasks)) return [];
+  const date = parse(dateStr);
+  const dow = date.getDay();
+  const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+  const scheduled = {
+    daily: dow >= 1 && dow <= 5 && !isHoliday,
+    weekly: dow === 1,
+    monthly: date.getDate() === 1 || date.getDate() === lastDay,
+  };
+  const out = [];
+  for (const t of board.tasks) {
+    const rot = t.rotation?.on ? t.rotation : null;
+    let period = null;
+    let workers;
+    if (rot) {
+      if (dateStr < (rot.start || '')) continue; // 로테이션 시작 전
+      period = rotationPeriod(rot, date).k;
+      const w = staff.length ? rotationWorkerAt(t, staff, period) : '';
+      workers = w ? [w] : [];
+    } else {
+      workers = Object.entries(board.assignments || {}).filter(([, ids]) => (ids || []).includes(t.id)).map(([w]) => w);
+    }
+    if (workers.length === 0) continue;
+    let dueStatus = null;
+    for (const w of workers) {
+      const e = board.progress?.[w]?.[t.id];
+      if (e && e.due === dateStr && (period == null || e.period === period)) { dueStatus = e.status || 'todo'; break; }
+    }
+    const isDue = dueStatus != null;
+    if (!(scheduled[t.kind] || isDue)) continue;
+    out.push({ id: t.id, name: t.name, kind: t.kind || '', workers, due: isDue, ...(isDue ? { status: dueStatus } : {}) });
+  }
+  return out;
+}

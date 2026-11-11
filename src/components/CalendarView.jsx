@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef, useImperativeHandle, forwardRef, Fragment } from 'react';
 import { fetchCalibration, fetchZones, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchScheduleAssignees, setScheduleAssignee, fetchMembers, fetchTempSchedules, addTempSchedule, deleteTempSchedule, updateTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload, exportScheduleExcelTable, printDoc } from '../lib/api';
+import { fetchWeeklyBoard, fetchWeeklyDuty } from '../lib/api';
+import { boardTasksOn, workerDot } from '../lib/boardRotation';
 import { publishTeamRecords, fetchTeamRecords, adminSetTeamRecord, fetchTeams, setCurrentMemberOnMain, syncAfterChange } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
@@ -357,6 +359,22 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     try { await syncAfterChange(); } catch { /* 공유 설정이 없으면 이 PC에만 반영 */ }
     loadTeamInfo();
   }
+
+  // TEST 업무 배치판의 업무 — 해당 요일(매일·주간·월간) 또는 기한인 날에 자동으로 달력에 올라온다.
+  // 관리자와 TEST 메뉴 권한이 있는 계정에게만 보인다.
+  const [boardInfo, setBoardInfo] = useState({ board: null, staff: [] });
+  const canSeeBoard = !!currentMember && (currentMember.isAdmin || (currentMember.allowedTabs || []).includes('test'));
+  function loadBoardInfo() {
+    Promise.all([fetchWeeklyBoard().catch(() => null), fetchWeeklyDuty().catch(() => null)])
+      .then(([board, duty]) => setBoardInfo({ board, staff: Array.isArray(duty?.staff) ? duty.staff : [] }));
+  }
+  useEffect(() => {
+    if (!canSeeBoard) return;
+    loadBoardInfo();
+    const off = window.electronAPI?.onDataChanged?.(() => loadBoardInfo());
+    return () => { off?.(); };
+  }, [canSeeBoard]);
+  const boardTasksFor = (dateStr) => (canSeeBoard && boardInfo.board ? boardTasksOn(boardInfo.board, boardInfo.staff, dateStr, !!holidays[dateStr]) : []);
 
   // 날짜별 팀원 기록 — 한 사람 한 날짜 한 줄
   const teamByDate = useMemo(() => {
@@ -3091,6 +3109,16 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                           title={calibEvts.map(c => `${c.name} (${dDayText(c.next_calib_date)})`).join('\n')}
                         >교정일정 {calibEvts.length}건</div>
                       )}
+                      {(() => {
+                        const bt = isOther ? [] : boardTasksFor(dateStr);
+                        if (bt.length === 0) return null;
+                        return (
+                          <div className="cal-board print:hidden text-xs px-1 py-0.5 rounded truncate bg-teal-50 border border-teal-200 text-teal-700"
+                            title={bt.map(b => `${b.name} — ${b.workers.join(', ')}${b.due ? ' (기한)' : ''}`).join('\n')}>
+                            🧪 업무 {bt.length}건
+                          </div>
+                        );
+                      })()}
                       {/* 임시일정은 항상 정규 일정보다 위에 표시 */}
                       {tempEvts.map((t, i) => (
                         <div
@@ -3417,6 +3445,29 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                 </>
               )}
 
+              {selectedDay && (() => {
+                const bt = boardTasksFor(selectedDay);
+                if (bt.length === 0) return null;
+                const KL = { daily: '매일', weekly: '주간', monthly: '월간', '': '' };
+                const ST = { todo: '대기', doing: '진행중', done: '완료' };
+                return (
+                  <>
+                    <div className="px-4 py-1.5 bg-teal-50 border-b border-teal-100">
+                      <span className="text-xs font-semibold text-teal-700">🧪 업무({bt.length}건)</span>
+                    </div>
+                    <div className="px-3 py-2 border-b border-gray-100 space-y-1">
+                      {bt.map(b => (
+                        <div key={b.id} className={`flex items-center gap-1.5 text-xs ${b.status === 'done' ? 'text-gray-400' : 'text-gray-700'}`}>
+                          <span className="inline-flex items-center gap-0.5 shrink-0">{b.workers.map(w => <span key={w} className={`w-2 h-2 rounded-full ${workerDot(boardInfo.staff, w)}`} />)}</span>
+                          <span className={`truncate ${b.status === 'done' ? 'line-through' : ''}`} title={b.name}>{b.name}</span>
+                          <span className="ml-auto shrink-0 text-[10px] text-gray-400 whitespace-nowrap">{b.workers.join(', ')}{KL[b.kind] ? ` · ${KL[b.kind]}` : ''}{b.due ? ` · 기한${b.status ? ' ' + ST[b.status] : ''}` : ''}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                );
+              })()}
+
               {selectedDay && (selectedScheduleEvents.length > 0 || blockedDates.has(selectedDay)) && (
                 <div className="px-4 py-1.5 bg-blue-50 border-b border-blue-100 flex items-center justify-between gap-2">
                   <span className="text-xs font-semibold text-blue-600 whitespace-nowrap">측정일정({selectedScheduleEvents.length}건)</span>
@@ -3506,7 +3557,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                 </>
               )}
 
-              {selectedCalibEvents.length === 0 && selectedScheduleEvents.length === 0 && selectedTempEvents.length === 0 && !blockedDates.has(selectedDay) && (
+              {selectedCalibEvents.length === 0 && selectedScheduleEvents.length === 0 && selectedTempEvents.length === 0 && !blockedDates.has(selectedDay) && boardTasksFor(selectedDay).length === 0 && (
                 <p className="px-4 py-3 text-sm text-gray-400">일정 없음</p>
               )}
               </div>
