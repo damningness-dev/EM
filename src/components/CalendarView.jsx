@@ -2,9 +2,10 @@ import { useState, useEffect, useMemo, useCallback, useRef, useImperativeHandle,
 import { fetchCalibration, fetchZones, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchScheduleAssignees, setScheduleAssignee, fetchMembers, fetchTempSchedules, addTempSchedule, deleteTempSchedule, updateTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload, exportScheduleExcelTable, printDoc } from '../lib/api';
 import { fetchWeeklyBoard, fetchWeeklyDuty } from '../lib/api';
 import { boardTasksOn, workerDot } from '../lib/boardRotation';
+import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate } from '../lib/monitoringDay';
 import { publishTeamRecords, fetchTeamRecords, adminSetTeamRecord, fetchTeams, setCurrentMemberOnMain, syncAfterChange } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
-import { calcMeasurements, calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
+import { calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
 import { GRADE_COLORS, CATEGORY_SECTION } from '../data/initialData';
 import { lunarToSolar } from '../lib/lunar';
 import { effectiveCalib } from '../utils/calibUtils';
@@ -45,24 +46,6 @@ const CYCLE_TYPES = [
 const DEFAULT_INTERVAL = { daily: 1, weekly: 7, biweekly: 14, monthly: null, quarterly: null };
 const CYCLE_GRADES = ['P1', 'P2', 'P3', '유지관리'];
 const CYCLE_CATS = ['공조', '압축공기', '질소가스', '용수'];
-
-function mergeScheduleConfig(backend) {
-  const base = JSON.parse(JSON.stringify(DEFAULT_SCHEDULE_SPECS));
-  if (backend && typeof backend === 'object') {
-    // 백엔드의 모든 분류(기본 + 사용자가 추가한 소분류)를 반영한다.
-    for (const cat of Object.keys(backend)) {
-      if (!base[cat]) base[cat] = {};
-      const src = backend[cat];
-      if (src && typeof src === 'object') {
-        // __major 등 메타 키 보존 + 등급별 구간 병합
-        for (const key of Object.keys(src)) {
-          if (Array.isArray(src[key]) || key.startsWith('__')) base[cat][key] = src[key];
-        }
-      }
-    }
-  }
-  return base;
-}
 
 const DEFAULT_CHIP_COLORS = {
   'cat_공조':       { bg: '#ffffff', border: '#d1d5db' },
@@ -883,57 +866,10 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
 
   // 일정관리(순서/그룹 관리)와 동일한 정렬 기준으로 구역별 순위 계산
   // - 구역명 그룹 단위로 묶고, 그룹은 최소 sort_order(동률이면 이름), 그룹 내는 등급 우선순위
-  const zoneOrderRank = useMemo(() => {
-    const groups = {};
-    zones.forEach(z => {
-      const key = `${z.category}|||${z.name}`;
-      (groups[key] || (groups[key] = { name: z.name, zones: [] })).zones.push(z);
-    });
-    const arr = Object.values(groups);
-    arr.forEach(g => g.zones.sort((a, b) => (GRADE_PRIORITY[b.grade] || 0) - (GRADE_PRIORITY[a.grade] || 0)));
-    arr.sort((a, b) =>
-      (Math.min(...a.zones.map(z => z.sort_order ?? 1e9)) - Math.min(...b.zones.map(z => z.sort_order ?? 1e9)))
-      || a.name.localeCompare(b.name)
-    );
-    const rank = {};
-    let i = 0;
-    arr.forEach(g => g.zones.forEach(z => { rank[z.id] = i++; }));
-    return rank;
-  }, [zones]);
+  const zoneOrderRank = useMemo(() => buildZoneOrderRank(zones), [zones]);
 
   // Schedule events by date string (all dates, no month filter)
-  const scheduleByDate = useMemo(() => {
-    const map = {};
-    // 같은 구역명(분류+이름)의 서로 다른 등급(P1/P2/P3/유지관리)이 같은 날에
-    // 겹치지 않도록, 구역명 그룹 단위로 공유 usedDates Set을 사용한다.
-    // 시간순(시작일 → 등급 우선순위 P1먼저)으로 처리해 앞선 일정이 자리를 먼저 잡고
-    // 뒤 일정이 밀려나도록 한다.
-    const byName = {};
-    zones.forEach(zone => {
-      if (!zone.schedule_start) return;
-      const key = `${zone.category}|||${zone.name}`;
-      (byName[key] || (byName[key] = [])).push(zone);
-    });
-    Object.values(byName).forEach(groupZones => {
-      groupZones.sort((a, b) =>
-        (a.schedule_start || '').localeCompare(b.schedule_start || '')
-        || (GRADE_PRIORITY[b.grade] || 0) - (GRADE_PRIORITY[a.grade] || 0)
-      );
-      const used = new Set();
-      groupZones.forEach(zone => {
-        calcMeasurements(zone, scheduleAvoid, used).forEach(m => {
-          const key = format(m.date, 'yyyy-MM-dd');
-          if (!map[key]) map[key] = [];
-          map[key].push({ zone, measurement: m });
-        });
-      });
-    });
-    // 일정관리 전체 순서(zoneOrderRank) 기준 정렬 — 일정을 이동해도 순서 유지
-    Object.values(map).forEach(arr => arr.sort((a, b) =>
-      (zoneOrderRank[a.zone.id] ?? 1e9) - (zoneOrderRank[b.zone.id] ?? 1e9) || a.zone.name.localeCompare(b.zone.name)
-    ));
-    return map;
-  }, [zones, scheduleAvoid, scheduleConfig, zoneOrderRank]);
+  const scheduleByDate = useMemo(() => buildScheduleByDate(zones, scheduleAvoid, zoneOrderRank), [zones, scheduleAvoid, scheduleConfig, zoneOrderRank]);
 
   // 특정 구역/회차가 (이동 전) 현재 어느 날짜에 배치돼 있는지 조회 — 변경 알람에 "이전 날짜"를 표시하기 위함
   function currentDateOf(zoneId, num) {

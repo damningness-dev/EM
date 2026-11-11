@@ -1,5 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
-import { fetchWeeklyDuty, fetchWeeklyBoard, saveWeeklyBoard, syncAfterChange } from '../lib/api';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { fetchWeeklyDuty, fetchWeeklyBoard, saveWeeklyBoard, syncAfterChange, fetchZones, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchTempSchedules } from '../lib/api';
+import { buildHolidayMap, setScheduleConfig, totalCount } from '../lib/schedule';
+import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, monitoringButtons } from '../lib/monitoringDay';
 import { scheduleLabel, ROTATION_UNITS, rotationState, rotationPool, rotationLabel, fmtDate } from '../lib/boardRotation';
 
 // TEST 메뉴 — 업무 배치판. 기존 "주간근무" 메뉴는 그대로 두고, 같은 직원 목록을 가로 칸으로 펼친 뒤
@@ -62,12 +64,37 @@ export default function TestBoard({ adminUnlocked }) {
   const [tip, setTip] = useState(null); // { id, who, x, y, up } — 업무 칩 위에 마우스를 올렸을 때의 안내
   const [kindMenu, setKindMenu] = useState(null); // { id, x, y } — 업무 버튼 구분 선택 메뉴
   const [taskDlg, setTaskDlg] = useState(null); // { id|null(새 업무), draft } — 업무 상세 창
+  // [환경모니터링] 구역: 월별 모니터링 일정(구역별 측정 일정)을 읽어 와서 고른 날짜의 일정을 버튼으로 보여준다.
+  const [mon, setMon] = useState({ zones: [], holidayDefs: [], blocked: [], temps: [] });
+  const [monDate, setMonDate] = useState(todayStr());
+  const monYear = parseInt(monDate.slice(0, 4));
+  const monHolidays = useMemo(() => buildHolidayMap(mon.holidayDefs, monYear - 1, monYear + 1), [mon.holidayDefs, monYear]);
+  const monByDate = useMemo(() => {
+    const avoid = { ...monHolidays };
+    mon.blocked.forEach(d => { if (!avoid[d]) avoid[d] = '일정비우기'; });
+    return buildScheduleByDate(mon.zones, avoid, buildZoneOrderRank(mon.zones));
+  }, [mon, monHolidays]);
+  const monTempByDate = useMemo(() => {
+    const m = {};
+    mon.temps.forEach(t => { if (t?.date) (m[t.date] = m[t.date] || []).push(t); });
+    return m;
+  }, [mon.temps]);
   const saveTimer = useRef(null);
   const seeded = useRef(false);
 
   const adminRef = useRef(adminUnlocked);
   useEffect(() => { adminRef.current = adminUnlocked; }, [adminUnlocked]);
+  function loadMonitoring() {
+    Promise.all([fetchZones(), fetchHolidays(), fetchBlockedDates(), fetchScheduleConfig(), fetchTempSchedules()]).then(([zones, holidayDefs, blocked, cfg, temps]) => {
+      setScheduleConfig(mergeScheduleConfig(cfg)); // 일정 계산 함수가 읽는 주기 설정
+      setMon({
+        zones: (zones || []).map(z => z.category === '청정등급' ? { ...z, category: '공조' } : z),
+        holidayDefs: holidayDefs || [], blocked: [...(blocked || [])], temps: temps || [],
+      });
+    }).catch(() => {});
+  }
   function load() {
+    loadMonitoring();
     Promise.all([fetchWeeklyDuty().catch(() => null), fetchWeeklyBoard().catch(() => null)]).then(([d, b]) => {
       setDuty(d || null);
       setStaff(Array.isArray(d?.staff) ? d.staff : []);
@@ -401,6 +428,70 @@ export default function TestBoard({ adminUnlocked }) {
       </>
     );
   }
+  // 모든 업무의 월별 일정 표시를 한 번에 끄기/켜기
+  function setAllCalendar(on) {
+    if (!guard()) return;
+    if (!confirm(on ? '모든 업무를 월별 모니터링 일정에 표시할까요?' : '모든 업무의 월별 모니터링 일정 표시를 끌까요?\n(업무별로 상세창에서 다시 켤 수 있습니다)')) return;
+    commit({ ...board, tasks: board.tasks.map(t => { const { showOnCalendar: _s, ...rest } = t; return on ? rest : { ...rest, showOnCalendar: false }; }) }); // eslint-disable-line no-unused-vars
+    flash(on ? '모든 업무를 달력에 표시합니다.' : '모든 업무의 달력 표시를 껐습니다.');
+  }
+  const calOnCount = board.tasks.filter(t => t.showOnCalendar !== false).length;
+
+  // [환경모니터링] 구역 — 요일 막대에서 날짜를 고르면 그 날의 모니터링 일정이 측정 종류별 버튼으로 나온다.
+  function monitoringBox() {
+    const weekStartMon = (() => { try { return localStorage.getItem('em-week-start') === 'mon'; } catch { return false; } })();
+    const base = new Date(monDate + 'T00:00:00');
+    const startOff = weekStartMon ? (base.getDay() + 6) % 7 : base.getDay();
+    const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(base); d.setDate(base.getDate() - startOff + i); return d; });
+    const shift = (n) => { const d = new Date(base); d.setDate(d.getDate() + n); setMonDate(fmtDate(d)); };
+    const DOW = ['일', '월', '화', '수', '목', '금', '토'];
+    const countOf = (ds) => (monByDate[ds] || []).reduce((n, e) => n + monitoringButtons(e.zone).length, 0) + (monTempByDate[ds] || []).reduce((n, t) => n + monitoringButtons(t, { suffix: '[임시]' }).length, 0);
+    const evts = monByDate[monDate] || [];
+    const temps = monTempByDate[monDate] || [];
+    const hol = monHolidays[monDate];
+    const BTN = { air: 'bg-emerald-100 text-emerald-800 border-emerald-300', particle: 'bg-violet-100 text-violet-800 border-violet-300', surface: 'bg-amber-100 text-amber-800 border-amber-300', name: 'bg-gray-100 text-gray-700 border-gray-300' };
+    const items = [
+      ...evts.flatMap(({ zone, measurement }, i) => monitoringButtons(zone).map(b => ({ ...b, id: `z${i}${b.key}`, cls: BTN[b.key], tip: `${zone.category} · ${zone.grade || ''} ${measurement.num}/${totalCount(zone)}회차` }))),
+      ...temps.flatMap((t, i) => monitoringButtons(t, { suffix: '[임시]' }).map(b => ({ ...b, id: `t${i}${b.key}`, cls: 'bg-orange-50 text-orange-700 border-orange-300', tip: '임시일정' }))),
+    ];
+    return (
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 px-3 py-2.5 mb-3">
+        <div className="flex items-center gap-2 mb-2 flex-wrap">
+          <p className="text-xs font-bold text-emerald-700">🌿 환경모니터링 <span className="font-normal text-gray-400">— 월별 모니터링 일정</span></p>
+          <div className="ml-auto flex items-center gap-1">
+            <button type="button" onClick={() => shift(-7)} className="px-1.5 py-0.5 text-xs rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-50" title="이전 주">‹</button>
+            <button type="button" onClick={() => setMonDate(todayStr())} className="px-2 py-0.5 text-xs rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-50">오늘</button>
+            <button type="button" onClick={() => shift(7)} className="px-1.5 py-0.5 text-xs rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-50" title="다음 주">›</button>
+          </div>
+        </div>
+        <div className="grid grid-cols-7 gap-1 mb-2.5">
+          {days.map(d => {
+            const ds = fmtDate(d); const sel = ds === monDate; const n = countOf(ds); const isToday = ds === todayStr(); const off = d.getDay() === 0 || !!monHolidays[ds];
+            return (
+              <button key={ds} type="button" onClick={() => setMonDate(ds)} title={monHolidays[ds] || ''}
+                className={`relative flex flex-col items-center py-1 rounded-lg border text-xs transition-colors ${sel ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-gray-200 hover:bg-emerald-50'}`}>
+                <span className={`font-semibold ${sel ? '' : off ? 'text-red-500' : d.getDay() === 6 ? 'text-blue-500' : 'text-gray-600'}`}>{DOW[d.getDay()]}</span>
+                <span className={`text-[11px] ${sel ? 'text-white/90' : isToday ? 'text-emerald-600 font-bold' : 'text-gray-400'}`}>{d.getMonth() + 1}/{d.getDate()}</span>
+                <span className={`mt-0.5 text-[10px] leading-none px-1 py-0.5 rounded-full ${n ? (sel ? 'bg-white/25 text-white' : 'bg-emerald-100 text-emerald-700') : 'opacity-0'}`}>{n || 0}</span>
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-[11px] text-gray-500 mb-1.5">
+          {parseInt(monDate.slice(5, 7))}월 {parseInt(monDate.slice(8))}일 ({DOW[base.getDay()]}) {hol && <span className="text-red-500">· {hol}</span>} <span className="text-gray-400">· 모니터링 일정 {items.length}건</span>
+        </p>
+        {items.length === 0 ? (
+          <p className="text-xs text-gray-300 py-1">이 날은 모니터링 일정이 없습니다.</p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {items.map(b => (
+              <span key={b.id} title={b.tip} className={`inline-flex items-center px-2.5 py-1 rounded-lg border text-sm font-medium shadow-sm ${b.cls}`}>{b.label}</span>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
   const canImport = dutyTasksOf(duty).some(t => !taskById.has(t.id));
 
   return (
@@ -432,10 +523,18 @@ export default function TestBoard({ adminUnlocked }) {
                 <button onClick={importFromDuty} className="px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50"
                   title="주간근무의 매일·주간·월간 업무 중 아직 가져오지 않은 것을 업무 버튼으로 추가합니다">📥 주간근무 업무 가져오기</button>
               )}
+              {board.tasks.length > 0 && (
+                calOnCount > 0
+                  ? <button onClick={() => setAllCalendar(false)} className="px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50"
+                      title="모든 업무의 '월별 모니터링 일정에 표시'를 한 번에 끕니다">📆 달력 표시 모두 끄기 ({calOnCount})</button>
+                  : <button onClick={() => setAllCalendar(true)} className="px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50"
+                      title="모든 업무를 월별 모니터링 일정에 표시합니다">📆 달력 표시 모두 켜기</button>
+              )}
               <span className="text-[11px] text-gray-400">버튼을 끌어서 근무자 칸에 놓으세요 · 배치된 칩을 이 영역에 놓거나 상세창의 배치 체크를 풀면 해제됩니다</span>
             </>
           )}
         </div>
+        {monitoringBox()}
         {board.tasks.length === 0 ? (
           <p className="text-sm text-gray-300 py-2">{adminUnlocked ? '업무 버튼이 없습니다. 위에서 업무를 추가하거나 주간근무 업무를 가져오세요.' : '등록된 업무가 없습니다.'}</p>
         ) : (
