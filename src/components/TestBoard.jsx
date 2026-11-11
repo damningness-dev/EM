@@ -1,12 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { fetchWeeklyDuty, fetchWeeklyBoard, saveWeeklyBoard, syncAfterChange } from '../lib/api';
+import { ROTATION_UNITS, rotationState, rotationPool, rotationLabel, fmtDate } from '../lib/boardRotation';
 
 // TEST 메뉴 — 업무 배치판. 기존 "주간근무" 메뉴는 그대로 두고, 같은 직원 목록을 가로 칸으로 펼친 뒤
 // 업무 버튼을 끌어다(드래그 앤 드롭) 근무자에게 배치한다. 배치된 업무마다 기한과 진행상태를 입력하고,
 // 근무자마다 색이 달라 누구 업무인지 한눈에 보인다. 나중에 주간근무와 합치거나 바꿀 수 있도록
 // 배치 내용은 따로(weeklyBoard) 저장한다. 수정은 관리자만 할 수 있고, 나머지 계정은 보기만 한다.
-//   board = { tasks: [{ id, name, kind }], assignments: { '<직원>': [taskId] },
-//             progress: { '<직원>': { '<taskId>': { due, status } } } }
+// 업무마다 로테이션(🔄)을 켤 수 있다 — 정한 주기마다 담당이 다른 인원에게 순차 또는 무작위로 자동으로 넘어간다
+// (계산 규칙은 lib/boardRotation.js). 로테이션 업무는 배치 목록이 아니라 주기에 따라 자리가 정해진다.
+//   board = { tasks: [{ id, name, kind, rotation? }], assignments: { '<직원>': [taskId] },
+//             progress: { '<직원>': { '<taskId>': { due, status, period? } } } }
 
 // 근무자별 색(Tailwind가 클래스를 찾을 수 있게 전체 이름으로 적는다)
 const WORKER_COLORS = [
@@ -56,6 +59,7 @@ export default function TestBoard({ adminUnlocked }) {
   const [overCol, setOverCol] = useState(null);
   const [overPalette, setOverPalette] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [rotDlg, setRotDlg] = useState(null); // { taskId, draft } — 로테이션 설정 창
   const saveTimer = useRef(null);
   const seeded = useRef(false);
 
@@ -129,10 +133,72 @@ export default function TestBoard({ adminUnlocked }) {
     if (!n || !guard()) return;
     commit({ ...board, tasks: board.tasks.map(t => t.id === id ? { ...t, name: n } : t) });
   }
+  // 기한·진행상태 입력. 로테이션 업무는 "이번 주기" 기록으로 남기고(주기가 바뀌면 자동으로 새로 시작), 같은
+  // 업무의 다른 사람 기록은 정리한다.
   function setProgress(who, taskId, patch) {
     if (!guard()) return;
-    const cur = (board.progress[who] || {})[taskId] || { due: '', status: 'todo' };
-    commit({ ...board, progress: { ...board.progress, [who]: { ...(board.progress[who] || {}), [taskId]: { ...cur, ...patch } } } });
+    const task = board.tasks.find(t => t.id === taskId);
+    const rs = task?.rotation?.on ? rotationState(task, staff) : null;
+    const cur = rs ? prOf(task, who, rs) : ((board.progress[who] || {})[taskId] || { due: '', status: 'todo' });
+    const entry = { ...cur, ...patch, ...(rs ? { period: rs.k } : {}) };
+    delete entry.auto;
+    const progress = { ...board.progress };
+    if (rs) Object.keys(progress).forEach(w => { if (w !== who && progress[w]?.[taskId]) { const { [taskId]: _d, ...rest } = progress[w]; progress[w] = rest; } }); // eslint-disable-line no-unused-vars
+    progress[who] = { ...(progress[who] || {}), [taskId]: entry };
+    commit({ ...board, progress });
+  }
+  // 한 사람·한 업무의 기한/진행상태. 로테이션 업무는 이번 주기에 입력한 것만 쓰고, 없으면 주기 끝날을
+  // 기한으로 한 새 항목(대기)이다.
+  function prOf(task, who, rs) {
+    const stored = (board.progress[who] || {})[task.id];
+    if (task.rotation?.on && rs) return stored && stored.period === rs.k ? stored : { due: rs.endDate, status: 'todo', auto: true };
+    return stored || { due: '', status: 'todo' };
+  }
+
+  // ── 로테이션 설정 ──
+  function openRotation(task) {
+    if (!guard()) return;
+    const r = task.rotation;
+    setRotDlg({
+      taskId: task.id,
+      draft: r ? { ...r, pool: [...(r.pool || [])], overrides: { ...(r.overrides || {}) } }
+               : { on: false, unit: 'week', every: 1, mode: 'sequential', start: fmtDate(new Date()), first: '', pool: [], seed: 1, overrides: {} },
+    });
+  }
+  function saveRotation() {
+    const { taskId, draft } = rotDlg;
+    const task = board.tasks.find(t => t.id === taskId);
+    if (!task) { setRotDlg(null); return; }
+    setRotDlg(null);
+    const assignments = { ...board.assignments };
+    let tasks;
+    if (!draft.on) {
+      // 끄면 지금 담당자에게 일반 배치로 남긴다.
+      const now = task.rotation?.on ? rotationState(task, staff)?.worker : '';
+      tasks = board.tasks.map(t => { if (t.id !== taskId) return t; const { rotation: _r, ...rest } = t; return rest; }); // eslint-disable-line no-unused-vars
+      if (now) assignments[now] = (assignments[now] || []).includes(taskId) ? assignments[now] : [...(assignments[now] || []), taskId];
+      commit({ ...board, tasks, assignments });
+      flash('로테이션을 껐습니다. 지금 담당자에게 일반 배치로 남았습니다.');
+      return;
+    }
+    const wasOn = !!task.rotation?.on;
+    // 새로 켤 때: 지금 배치된 첫 사람을 1주기 담당으로 삼고, 일반 배치는 로테이션이 대신한다.
+    const placed = staff.filter(w => (board.assignments[w] || []).includes(taskId));
+    const pool = rotationPool({ rotation: draft }, staff);
+    const first = wasOn ? (draft.first || task.rotation.first) : (placed.find(w => pool.includes(w)) || pool[0] || '');
+    const rotation = { ...draft, on: true, first, every: Math.max(1, parseInt(draft.every) || 1), seed: wasOn ? (draft.seed || 1) : (1 + Math.floor(Math.random() * 2147483000)) };
+    tasks = board.tasks.map(t => t.id === taskId ? { ...t, rotation } : t);
+    if (!wasOn) staff.forEach(w => { assignments[w] = (assignments[w] || []).filter(x => x !== taskId); });
+    commit({ ...board, tasks, assignments });
+    flash(`로테이션 설정을 저장했습니다 (${rotationLabel(rotation)}).`);
+  }
+  // 로테이션 업무를 다른 근무자 칸에 놓으면 "이번 주기"만 그 사람이 맡도록 바꾼다(다음 주기부터는 원래 순서).
+  function overrideThisPeriod(task, who) {
+    const rs = rotationState(task, staff);
+    if (!rs || rs.worker === who) return;
+    const rotation = { ...task.rotation, overrides: { ...(task.rotation.overrides || {}), [rs.k]: who } };
+    commit({ ...board, tasks: board.tasks.map(t => t.id === task.id ? { ...t, rotation } : t) });
+    flash(`이번 주기(${rs.startDate.slice(5).replace('-', '/')}~${rs.endDate.slice(5).replace('-', '/')})는 ${who}님이 맡습니다.`);
   }
 
   // ── 드래그 앤 드롭 ──
@@ -148,6 +214,8 @@ export default function TestBoard({ adminUnlocked }) {
     e.preventDefault(); setOverCol(null);
     const d = readDrag(e);
     if (!d?.taskId || !guard()) return;
+    const dragged = board.tasks.find(t => t.id === d.taskId);
+    if (dragged?.rotation?.on) { overrideThisPeriod(dragged, who); return; }
     const assignments = { ...board.assignments };
     const progress = { ...board.progress };
     if (d.kind === 'placed' && d.from && d.from !== who) {
@@ -167,6 +235,7 @@ export default function TestBoard({ adminUnlocked }) {
     e.preventDefault(); setOverPalette(false);
     const d = readDrag(e);
     if (d?.kind !== 'placed' || !d.from) return;
+    if (board.tasks.find(t => t.id === d.taskId)?.rotation?.on) { flash('로테이션 업무는 🔄 설정에서 끌 수 있습니다.', true); return; }
     unassign(d.from, d.taskId);
   }
   function unassign(who, taskId) {
@@ -178,7 +247,16 @@ export default function TestBoard({ adminUnlocked }) {
   if (staff === null) return <div className="p-6 text-sm text-gray-400">불러오는 중...</div>;
   const taskById = new Map(board.tasks.map(t => [t.id, t]));
   const colorOf = (who) => WORKER_COLORS[Math.max(0, staff.indexOf(who)) % WORKER_COLORS.length];
-  const workersOf = (id) => staff.filter(w => (board.assignments[w] || []).includes(id));
+  const rotOf = (t) => (t?.rotation?.on ? rotationState(t, staff) : null);
+  // 일반 배치 + 로테이션으로 이번 주기에 그 사람이 맡은 업무
+  const workersOf = (id) => {
+    const t = taskById.get(id); const rs = rotOf(t);
+    return rs ? [rs.worker] : staff.filter(w => (board.assignments[w] || []).includes(id));
+  };
+  const idsOf = (who) => [
+    ...(board.assignments[who] || []).filter(id => taskById.has(id) && !taskById.get(id).rotation?.on),
+    ...board.tasks.filter(t => rotOf(t)?.worker === who).map(t => t.id),
+  ];
   const groups = KIND_ORDER.map(k => ({ kind: k, tasks: board.tasks.filter(t => (t.kind || '') === k) })).filter(g => g.tasks.length > 0);
   const canImport = dutyTasksOf(duty).some(t => !taskById.has(t.id));
 
@@ -246,6 +324,11 @@ export default function TestBoard({ adminUnlocked }) {
                             {ws.map(w => <span key={w} className={`w-2.5 h-2.5 rounded-full ${colorOf(w).dot}`} />)}
                           </span>
                         )}
+                        {t.rotation?.on && <span className="text-[10px] px-1 rounded bg-indigo-100 text-indigo-700 font-semibold" title={`로테이션: ${rotationLabel(t.rotation)}`}>🔄 {rotationLabel(t.rotation)}</span>}
+                        {adminUnlocked && (
+                          <button onClick={() => openRotation(t)} title="로테이션 설정 — 정한 주기마다 다른 인원에게 자동으로 넘어갑니다"
+                            className={`text-xs leading-none px-0.5 ${t.rotation?.on ? 'text-indigo-600' : 'text-gray-300 hover:text-indigo-500'}`}>🔄</button>
+                        )}
                         {adminUnlocked && <button onClick={() => removeTask(t.id)} className="text-gray-400 hover:text-red-500 text-xs leading-none px-0.5" title="업무 버튼 삭제">✕</button>}
                       </div>
                     );
@@ -265,8 +348,8 @@ export default function TestBoard({ adminUnlocked }) {
           <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${staff.length}, minmax(240px, 1fr))` }}>
             {staff.map(who => {
               const c = colorOf(who);
-              const ids = (board.assignments[who] || []).filter(id => taskById.has(id));
-              const doneCnt = ids.filter(id => (board.progress[who] || {})[id]?.status === 'done').length;
+              const ids = idsOf(who);
+              const doneCnt = ids.filter(id => prOf(taskById.get(id), who, rotOf(taskById.get(id))).status === 'done').length;
               const over = overCol === who;
               return (
                 <div key={who}
@@ -282,7 +365,8 @@ export default function TestBoard({ adminUnlocked }) {
                     {ids.length === 0 && <p className="text-xs text-gray-400 text-center py-8">{adminUnlocked ? '여기에 업무를 끌어다 놓으세요' : '배치된 업무 없음'}</p>}
                     {ids.map(id => {
                       const t = taskById.get(id);
-                      const pr = (board.progress[who] || {})[id] || { due: '', status: 'todo' };
+                      const rs = rotOf(t);
+                      const pr = prOf(t, who, rs);
                       const dl = dueLabel(pr.due, pr.status);
                       return (
                         <div key={id}
@@ -291,8 +375,14 @@ export default function TestBoard({ adminUnlocked }) {
                           className={`rounded-lg border px-2.5 py-2 shadow-sm ${c.chip} ${adminUnlocked ? 'cursor-grab active:cursor-grabbing' : ''}`}>
                           <div className="flex items-start gap-1">
                             <span className={`flex-1 text-sm font-medium break-words ${pr.status === 'done' ? 'line-through opacity-60' : ''}`}>{t.name}</span>
-                            {adminUnlocked && <button onClick={() => unassign(who, id)} className="text-gray-400 hover:text-red-500 text-xs leading-none" title="배치 해제">✕</button>}
+                            {adminUnlocked && rs && <button onClick={() => openRotation(t)} className="text-indigo-500 text-xs leading-none" title="로테이션 설정">🔄</button>}
+                            {adminUnlocked && !rs && <button onClick={() => unassign(who, id)} className="text-gray-400 hover:text-red-500 text-xs leading-none" title="배치 해제">✕</button>}
                           </div>
+                          {rs && (
+                            <p className="text-[10px] text-indigo-700 mt-1" title={`다음 담당: ${rs.upcoming.slice(0, 3).map(u => `${u.startDate.slice(5)} ${u.worker}`).join(' → ')}`}>
+                              🔄 {rotationLabel(t.rotation)} · {rs.startDate.slice(5).replace('-', '/')}~{rs.endDate.slice(5).replace('-', '/')} · 다음 <b>{rs.upcoming[0]?.worker}</b>
+                            </p>
+                          )}
                           <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                             {adminUnlocked ? (
                               <select value={pr.status} onChange={e => setProgress(who, id, { status: e.target.value })}
@@ -320,6 +410,79 @@ export default function TestBoard({ adminUnlocked }) {
           </div>
         </div>
       )}
+
+      {/* 로테이션 설정 창 */}
+      {rotDlg && (() => {
+        const task = taskById.get(rotDlg.taskId); const d = rotDlg.draft;
+        if (!task) return null;
+        const set = (patch) => setRotDlg(p => ({ ...p, draft: { ...p.draft, ...patch } }));
+        const preview = d.on && staff.length > 0 ? rotationState({ ...task, rotation: d }, staff, new Date(), 5) : null;
+        return (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40" onClick={() => setRotDlg(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-[30rem] max-w-[95vw] p-5" onClick={e => e.stopPropagation()}>
+              <h3 className="text-base font-bold text-gray-900 mb-0.5">🔄 로테이션 설정</h3>
+              <p className="text-sm text-gray-600 mb-3 break-words">{task.name}</p>
+              <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-3 cursor-pointer select-none">
+                <input type="checkbox" checked={!!d.on} onChange={e => set({ on: e.target.checked })} /> 로테이션 사용 (정한 주기마다 담당이 자동으로 넘어갑니다)
+              </label>
+              <div className={d.on ? '' : 'opacity-40 pointer-events-none'}>
+                <div className="flex items-center gap-2 mb-3 text-sm">
+                  <span className="w-14 text-gray-500 text-xs">주기</span>
+                  <input type="number" min="1" max="60" value={d.every} onChange={e => set({ every: e.target.value })} className="w-16 border border-gray-300 rounded px-2 py-1 text-center" />
+                  <select value={d.unit} onChange={e => set({ unit: e.target.value })} className="border border-gray-300 rounded px-2 py-1 bg-white">
+                    {ROTATION_UNITS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                  <span className="text-gray-500">마다 담당 변경</span>
+                </div>
+                <div className="flex items-center gap-3 mb-3 text-sm">
+                  <span className="w-14 text-gray-500 text-xs">방식</span>
+                  {[['sequential', '순차 (직원 순서대로)'], ['random', '무작위 (직전 담당 제외)']].map(([v, l]) => (
+                    <label key={v} className="flex items-center gap-1 cursor-pointer select-none">
+                      <input type="radio" checked={d.mode === v} onChange={() => set({ mode: v })} /> {l}
+                    </label>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 mb-3 text-sm">
+                  <span className="w-14 text-gray-500 text-xs">시작일</span>
+                  <input type="date" value={d.start} onChange={e => set({ start: e.target.value })} className="border border-gray-300 rounded px-2 py-1" />
+                  <span className="text-[11px] text-gray-400">이 날부터 1주기</span>
+                </div>
+                <div className="flex items-start gap-2 mb-3 text-sm">
+                  <span className="w-14 text-gray-500 text-xs pt-1">대상 인원</span>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1">
+                    {staff.map(w => {
+                      const on = d.pool.length === 0 || d.pool.includes(w);
+                      return (
+                        <label key={w} className="flex items-center gap-1 cursor-pointer select-none">
+                          <input type="checkbox" checked={on} onChange={e => {
+                            const base = d.pool.length === 0 ? [...staff] : [...d.pool];
+                            const next = e.target.checked ? [...new Set([...base, w])] : base.filter(x => x !== w);
+                            set({ pool: next.length === staff.length || next.length === 0 ? [] : next });
+                          }} />
+                          <span className={`w-2.5 h-2.5 rounded-full ${colorOf(w).dot}`} />{w}
+                        </label>
+                      );
+                    })}
+                    <span className="text-[11px] text-gray-400">(전체 선택 = 모든 직원)</span>
+                  </div>
+                </div>
+                {preview && (
+                  <div className="rounded-lg bg-indigo-50 border border-indigo-100 px-3 py-2 text-xs text-indigo-900 mb-3">
+                    <p className="font-semibold mb-1">미리보기 (순서)</p>
+                    <p>이번 주기 {preview.startDate.slice(5).replace('-', '/')}~{preview.endDate.slice(5).replace('-', '/')} : <b>{preview.worker}</b></p>
+                    {preview.upcoming.map(u => <p key={u.k} className="text-indigo-700">{u.startDate.slice(5).replace('-', '/')}~{u.endDate.slice(5).replace('-', '/')} : {u.worker}</p>)}
+                    {d.mode === 'random' && <p className="text-[10px] text-indigo-400 mt-1">무작위 순서는 한 번 정해지면 모든 PC에서 똑같이 유지됩니다.</p>}
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2 justify-end mt-2">
+                <button onClick={() => setRotDlg(null)} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>
+                <button onClick={saveRotation} className="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">저장</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

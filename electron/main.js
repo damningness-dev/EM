@@ -2528,9 +2528,35 @@ function registerHandlers() {
   ipcMain.handle('weeklyBoard:set', (_e, board) => {
     if (!computeAdminUnlocked()) return { ok: false, error: '관리자만 수정할 수 있습니다' };
     const KINDS = ['daily', 'weekly', 'monthly'];
+    const DATE = /^\d{4}-\d{2}-\d{2}$/;
+    // 로테이션 설정 정리: 주기(일/주/개월 × N)·방식(순차/무작위)·시작일·첫 담당·돌아가며 맡을 인원·무작위 고정값·주기별 수동 변경
+    const cleanRotation = (r) => {
+      if (!r || typeof r !== 'object' || !r.on) return null;
+      const overrides = {};
+      for (const [k, w] of Object.entries(r.overrides && typeof r.overrides === 'object' ? r.overrides : {})) {
+        if (/^\d{1,5}$/.test(k) && typeof w === 'string' && w) overrides[k] = w;
+      }
+      return {
+        on: true,
+        unit: ['day', 'week', 'month'].includes(r.unit) ? r.unit : 'week',
+        every: Math.min(60, Math.max(1, parseInt(r.every) || 1)),
+        mode: r.mode === 'random' ? 'random' : 'sequential',
+        start: DATE.test(String(r.start || '')) ? r.start : '',
+        first: typeof r.first === 'string' ? r.first : '',
+        pool: (Array.isArray(r.pool) ? r.pool : []).filter(w => typeof w === 'string' && w),
+        seed: Number.isFinite(r.seed) ? Math.trunc(r.seed) % 2147483647 : 1,
+        overrides,
+      };
+    };
     const tasks = (Array.isArray(board?.tasks) ? board.tasks : [])
-      .map(t => ({ id: String(t?.id || ''), name: String(t?.name || '').trim(), kind: KINDS.includes(t?.kind) ? t.kind : '' }))
+      .map(t => {
+        const item = { id: String(t?.id || ''), name: String(t?.name || '').trim(), kind: KINDS.includes(t?.kind) ? t.kind : '' };
+        const rot = cleanRotation(t?.rotation);
+        if (rot) item.rotation = rot;
+        return item;
+      })
       .filter(t => t.id && t.name);
+    const rotating = new Set(tasks.filter(t => t.rotation).map(t => t.id));
     const ids = new Set(tasks.map(t => t.id));
     const assignments = {};
     for (const [who, list] of Object.entries(board?.assignments && typeof board.assignments === 'object' ? board.assignments : {})) {
@@ -2540,11 +2566,14 @@ function registerHandlers() {
     const progress = {};
     for (const [who, per] of Object.entries(board?.progress && typeof board.progress === 'object' ? board.progress : {})) {
       for (const [tid, v] of Object.entries(per && typeof per === 'object' ? per : {})) {
-        if (!(assignments[who] || []).includes(tid)) continue;
-        const due = /^\d{4}-\d{2}-\d{2}$/.test(String(v?.due || '')) ? v.due : '';
+        // 로테이션 업무는 배치 목록(assignments)이 아니라 주기에 따라 자리가 정해지므로 그대로 남긴다.
+        if (!(assignments[who] || []).includes(tid) && !rotating.has(tid)) continue;
+        const due = DATE.test(String(v?.due || '')) ? v.due : '';
         const status = ['todo', 'doing', 'done'].includes(v?.status) ? v.status : 'todo';
-        if (!due && status === 'todo') continue;
-        (progress[who] = progress[who] || {})[tid] = { due, status };
+        const entry = { due, status };
+        if (Number.isInteger(v?.period) && v.period >= 0) entry.period = v.period; // 로테이션 업무의 어느 주기 기록인지
+        if (!due && status === 'todo' && entry.period == null) continue;
+        (progress[who] = progress[who] || {})[tid] = entry;
       }
     }
     const data = loadData();
