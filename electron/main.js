@@ -926,6 +926,13 @@ function mergeMemberAccounts(remoteList, localList) {
   });
 }
 
+// TEST 메뉴의 업무 배치판은 목록이 아니라 값 하나라, 양쪽 중 updatedAt이 더 최근인 쪽을 쓴다.
+function newerBoard(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return String(b.updatedAt || '') >= String(a.updatedAt || '') ? b : a;
+}
+
 function mergeSharedData(remote, local) {
   const out = { ...(remote || {}), ...(local || {}) }; // 설정성 단일 값은 이 PC 기준
   const deletions = mergeDeletions(remote?.deletions, local?.deletions);
@@ -933,7 +940,8 @@ function mergeSharedData(remote, local) {
   for (const key of keys) {
     if (key === 'deletions') continue;
     const rv = remote?.[key], lv = local?.[key];
-    if (key === 'memberAccounts') out[key] = applyDeletions(mergeMemberAccounts(rv, lv), deletions[key]);
+    if (key === 'weeklyBoard') out[key] = newerBoard(rv, lv);
+    else if (key === 'memberAccounts') out[key] = applyDeletions(mergeMemberAccounts(rv, lv), deletions[key]);
     else if (Array.isArray(rv) || Array.isArray(lv)) out[key] = applyDeletions(mergeListById(rv, lv), deletions[key]);
     else if (MERGE_MAP_KEYS.includes(key)) out[key] = { ...(rv || {}), ...(lv || {}) };
   }
@@ -989,6 +997,8 @@ function buildMemberUpload(remoteData, localData) {
   // 값이니 같은 원칙으로, 이 PC에서 방금 고친 값이 항상 반영되게 한다.
   if (localData && 'guestAllowedTabs' in localData) out.guestAllowedTabs = localData.guestAllowedTabs;
   if (localData && 'guestAccessConfigured' in localData) out.guestAccessConfigured = localData.guestAccessConfigured;
+  // 업무 배치판(TEST 메뉴)은 관리자가 어느 PC에서든 고칠 수 있게, 더 최근에 고친 쪽을 올린다.
+  if (localData?.weeklyBoard || remoteData?.weeklyBoard) out.weeklyBoard = newerBoard(remoteData?.weeklyBoard, localData?.weeklyBoard);
   // 첨부파일 보관용 Gist ID는 한 번 정해지면 계속 써야 하므로 있는 쪽을 남긴다.
   if (!out.attachGistId && localData?.attachGistId) out.attachGistId = localData.attachGistId;
   return out;
@@ -2503,6 +2513,27 @@ function registerHandlers() {
   // ── 주간근무 (업무 로테이션 담당표) ──
   ipcMain.handle('weeklyDuty:get', () => {
     return loadData().weeklyDuty;
+  });
+  // ── TEST 메뉴: 업무 배치판 — 업무 버튼을 근무자 칸에 끌어다 놓아 배치한다(기존 주간근무와 별개) ──
+  // 직원 목록은 주간근무의 staff를 그대로 쓰고, 이 배치판은 data.weeklyBoard에 따로 저장한다.
+  //   weeklyBoard = { tasks: [{ id, name }], assignments: { '<직원>': ['<업무 id>', ...] }, updatedAt }
+  ipcMain.handle('weeklyBoard:get', () => {
+    const b = loadData().weeklyBoard;
+    return b && typeof b === 'object' ? b : { tasks: [], assignments: {}, updatedAt: '' };
+  });
+  ipcMain.handle('weeklyBoard:set', (_e, board) => {
+    if (!computeAdminUnlocked()) return { ok: false, error: '관리자만 수정할 수 있습니다' };
+    const tasks = (Array.isArray(board?.tasks) ? board.tasks : [])
+      .map(t => ({ id: String(t?.id || ''), name: String(t?.name || '').trim() })).filter(t => t.id && t.name);
+    const ids = new Set(tasks.map(t => t.id));
+    const assignments = {};
+    for (const [who, list] of Object.entries(board?.assignments && typeof board.assignments === 'object' ? board.assignments : {})) {
+      assignments[who] = [...new Set((Array.isArray(list) ? list : []).map(String))].filter(id => ids.has(id));
+    }
+    const data = loadData();
+    data.weeklyBoard = { tasks, assignments, updatedAt: new Date().toISOString() };
+    saveData(data);
+    return { ok: true, updatedAt: data.weeklyBoard.updatedAt };
   });
   ipcMain.handle('weeklyDuty:set', (_e, weeklyDuty) => {
     const data = loadData();

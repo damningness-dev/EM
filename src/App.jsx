@@ -4,6 +4,7 @@ import Sop from './components/Sop';
 import Calibration from './components/Calibration';
 import UsagePoints from './components/UsagePoints';
 import WeeklyDuty from './components/WeeklyDuty';
+import TestBoard from './components/TestBoard';
 import AnnualPlan from './components/AnnualPlan';
 import ZoneStatus from './components/ZoneStatus';
 import ZoneGantt from './components/ZoneGantt';
@@ -32,6 +33,8 @@ const MENU = [
   { id: 'calibration', label: '교정 관리', icon: '⚙️' },
   { id: 'usagepoints', label: '업무별 진행상황', icon: '📍' },
   { id: 'weeklyduty', label: '주간근무', icon: '🗓️' },
+  // adminAlways: 시험용 메뉴 — 관리자는 허용 목록에 체크하지 않아도 항상 보이고, 다른 계정은 권한 설정에서 허용해야 보인다.
+  { id: 'test', label: 'TEST', icon: '🧪', adminAlways: true },
   // requiresLogin: 게스트 메뉴 제한을 꺼둔(전체 공개) PC에서도 로그인하지 않으면
   // 절대 보이지 않는다 — 권한 설정의 "로그인하지 않았을 때" 허용 목록과 무관하게
   // 아래 visibleMenu에서 항상 걸러진다.
@@ -109,7 +112,7 @@ export default function App() {
   useEffect(() => { reloadGuestAccess(); }, []);
 
   const visibleMenu = (currentMember
-    ? MENU.filter(m => (currentMember.allowedTabs || []).includes(m.id))
+    ? MENU.filter(m => (currentMember.allowedTabs || []).includes(m.id) || (m.adminAlways && currentMember.isAdmin))
     : (guestAllowedTabs ? MENU.filter(m => guestAllowedTabs.includes(m.id)) : MENU)
   ).filter(m => !m.requiresLogin || currentMember); // SOP처럼 로그인 필수인 메뉴는 게스트 설정과 무관하게 숨김
 
@@ -404,6 +407,7 @@ export default function App() {
           )}
           {page === 'usagepoints' && <UsagePoints adminUnlocked={adminUnlocked} currentMember={currentMember} />}
           {page === 'weeklyduty' && <WeeklyDuty adminUnlocked={adminUnlocked} />}
+          {page === 'test' && <TestBoard adminUnlocked={adminUnlocked} />}
           {page === 'sop' && <Sop adminUnlocked={adminUnlocked} currentMember={currentMember} />}
             </ErrorBoundary>
           )}

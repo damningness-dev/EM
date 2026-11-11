@@ -333,6 +333,13 @@ export async function fetchWeeklyDuty() {
 export async function saveWeeklyDuty(weeklyDuty) {
   return api.invoke('weeklyDuty:set', weeklyDuty);
 }
+// TEST 메뉴 — 업무 버튼을 근무자에게 끌어다 놓는 배치판
+export async function fetchWeeklyBoard() {
+  return api.invoke('weeklyBoard:get');
+}
+export async function saveWeeklyBoard(board) {
+  return api.invoke('weeklyBoard:set', board);
+}
 export async function syncWeeklyDutyTodosNow() {
   return api.invoke('weeklyDuty:syncTodosNow');
 }
