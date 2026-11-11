@@ -59,6 +59,7 @@ export default function TestBoard({ adminUnlocked }) {
   const [overCol, setOverCol] = useState(null);
   const [overPalette, setOverPalette] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [kindMenu, setKindMenu] = useState(null); // { id, x, y } — 업무 버튼 구분 선택 메뉴
   const [taskDlg, setTaskDlg] = useState(null); // { id|null(새 업무), draft } — 업무 상세 창
   const saveTimer = useRef(null);
   const seeded = useRef(false);
@@ -186,11 +187,11 @@ export default function TestBoard({ adminUnlocked }) {
     commit({ ...board, tasks, assignments, progress });
     if (msg) flash(msg);
   }
-  function cycleKind(t) {
+  // 구분 변경(업무 버튼 앞 배지에서 고른다). 주기·마감기한 값은 지우지 않고 남겨 두어 되돌리면 그대로 쓸 수 있다.
+  function setKind(id, kind) {
+    setKindMenu(null);
     if (!guard()) return;
-    const order = KIND_ORDER; // 매일, 주간, 월간, 기타
-    const next = order[(order.indexOf(t.kind || '') + 1) % order.length];
-    commit({ ...board, tasks: board.tasks.map(x => x.id === t.id ? { ...x, kind: next } : x) });
+    commit({ ...board, tasks: board.tasks.map(x => x.id === id ? { ...x, kind } : x) });
   }
   function removeTask(id) {
     if (!guard()) return;
@@ -437,8 +438,8 @@ export default function TestBoard({ adminUnlocked }) {
                         className={`inline-flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-lg border border-gray-300 bg-gray-50 text-sm font-medium text-gray-700 select-none shadow-sm ${adminUnlocked ? 'cursor-grab active:cursor-grabbing hover:bg-white' : ''}`}
                         title={adminUnlocked ? '클릭하면 상세정보 · 끌어서 근무자에게 배치' : '클릭하면 상세정보'}>
                         {/* 구분 버튼 — 누를 때마다 일일 → 주간 → 월간 → 기타 순으로 바뀐다 */}
-                        <button type="button" onClick={e => { e.stopPropagation(); cycleKind(t); }} disabled={!adminUnlocked}
-                          title={adminUnlocked ? '구분 변경 (눌러서 일일 → 주간 → 월간 → 기타)' : KIND_LABEL[t.kind || '']}
+                        <button type="button" onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setKindMenu({ id: t.id, x: r.left, y: r.bottom + 4 }); }} disabled={!adminUnlocked}
+                          title={adminUnlocked ? '구분 변경 (눌러서 선택)' : KIND_LABEL[t.kind || '']}
                           className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[t.kind || '']} ${adminUnlocked ? 'hover:brightness-95' : 'cursor-default'}`}>{KIND_SHORT[t.kind || '']}</button>
                         <span>{t.name}</span>
                         {t.kind ? <span className="text-[10px] text-gray-400 whitespace-nowrap" title="주기">⏰{scheduleLabel(t)}</span> : t.due ? <span className="text-[10px] text-gray-400 whitespace-nowrap" title="마감기한">📅마감 {t.due.slice(5).replace('-', '/')}</span> : null}
@@ -506,36 +507,39 @@ export default function TestBoard({ adminUnlocked }) {
                       const track = !t.kind; // 기타 업무만 기한·완료표시
                       const pr = track ? prOf(t, who, rs) : { due: '', status: 'todo' };
                       const dl = track ? dueLabel(pr.due, pr.status) : null;
+                      // 주기·알림시간·로테이션 정보는 칩에 쓰지 않고 마우스를 올렸을 때 툴팁으로 보여준다
+                      const tip = [
+                        t.kind ? `⏰ 주기: ${scheduleLabel(t)}` : (t.due ? `📅 마감기한: ${t.due}` : ''),
+                        rs ? `🔄 로테이션: ${rotationLabel(t.rotation)} · 이번 주기 ${rs.startDate.slice(5).replace('-', '/')}~${rs.endDate.slice(5).replace('-', '/')}\n   다음 담당: ${rs.upcoming.slice(0, 3).map(u => `${u.startDate.slice(5).replace('-', '/')} ${u.worker}`).join(' → ')}` : '',
+                        t.note ? `📝 ${t.note}` : '',
+                        '클릭하면 상세정보',
+                      ].filter(Boolean).join('\n');
                       return (
                         <div key={id}
                           draggable={adminUnlocked}
                           onDragStart={e => startDrag(e, { kind: 'placed', taskId: id, from: who })}
-                          className={`rounded-lg border px-2.5 py-2 shadow-sm ${c.chip} ${adminUnlocked ? 'cursor-grab active:cursor-grabbing' : ''}`}>
+                          onClick={() => openTask(t)}
+                          title={tip}
+                          className={`rounded-lg border px-2.5 py-2 shadow-sm cursor-pointer ${c.chip} ${adminUnlocked ? 'active:cursor-grabbing' : ''}`}>
                           <div className="flex items-start gap-1">
                             <span className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[t.kind || '']}`}>{KIND_SHORT[t.kind || '']}</span>
                             <span className={`flex-1 text-sm font-medium break-words ${pr.status === 'done' ? 'line-through opacity-60' : ''}`}>{t.name}</span>
-                            {adminUnlocked && rs && <button onClick={() => openTask(t)} className="text-indigo-500 text-xs leading-none" title="로테이션 설정">🔄</button>}
-                            {adminUnlocked && !rs && <button onClick={() => unassign(who, id)} className="text-gray-400 hover:text-red-500 text-xs leading-none" title="배치 해제">✕</button>}
+                            {rs && <span className="text-indigo-500 text-xs leading-none">🔄</span>}
+                            {adminUnlocked && !rs && <button onClick={e => { e.stopPropagation(); unassign(who, id); }} className="text-gray-400 hover:text-red-500 text-xs leading-none" title="배치 해제">✕</button>}
                           </div>
-                          {rs && (
-                            <p className="text-[10px] text-indigo-700 mt-1" title={`다음 담당: ${rs.upcoming.slice(0, 3).map(u => `${u.startDate.slice(5)} ${u.worker}`).join(' → ')}`}>
-                              🔄 {rotationLabel(t.rotation)} · {rs.startDate.slice(5).replace('-', '/')}~{rs.endDate.slice(5).replace('-', '/')} · 다음 <b>{rs.upcoming[0]?.worker}</b>
-                            </p>
-                          )}
                           {track && <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                             {adminUnlocked ? (
                               <select value={pr.status} onChange={e => setProgress(who, id, { status: e.target.value })}
-                                onMouseDown={e => e.stopPropagation()} draggable={false}
+                                onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()} draggable={false}
                                 className={`text-[11px] font-semibold rounded border px-1 py-0.5 cursor-pointer ${STATUS_CLS[pr.status]}`}>
                                 {STATUS.map(([v, l]) => <option key={v} value={v} className="bg-white text-gray-800">{l}</option>)}
                               </select>
                             ) : (
                               <span className={`text-[11px] font-semibold rounded border px-1.5 py-0.5 ${STATUS_CLS[pr.status]}`}>{STATUS.find(s => s[0] === pr.status)?.[1]}</span>
                             )}
-                            {pr.due && <span className="text-[11px] text-gray-600" title="마감기한 — 업무 버튼을 눌러 상세창에서 변경">마감 {pr.due.slice(5).replace('-', '/')}</span>}
+                            {pr.due && <span className="text-[11px] text-gray-600">마감 {pr.due.slice(5).replace('-', '/')}</span>}
                             {dl && <span className={`text-[10px] ${dl.cls}`}>{dl.text}</span>}
                           </div>}
-                          {!track && <p className="text-[10px] text-gray-500 mt-1">⏰ {scheduleLabel(t)}</p>}
                         </div>
                       );
                     })}
@@ -548,6 +552,24 @@ export default function TestBoard({ adminUnlocked }) {
           </div>
         </div>
       )}
+
+      {/* 구분 선택 메뉴 */}
+      {kindMenu && (() => {
+        const mt = taskById.get(kindMenu.id);
+        return (
+          <div className="fixed inset-0 z-[290]" onClick={() => setKindMenu(null)}>
+            <div className="absolute bg-white rounded-lg shadow-xl border border-gray-200 py-1 w-36" style={{ left: Math.min(kindMenu.x, window.innerWidth - 160), top: kindMenu.y }} onClick={e => e.stopPropagation()}>
+              {KIND_ORDER.map(k => (
+                <button key={k || 'etc'} type="button" onClick={() => setKind(kindMenu.id, k)}
+                  className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-gray-50 ${(mt?.kind || '') === k ? 'font-semibold text-blue-600' : 'text-gray-700'}`}>
+                  <span className={`text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[k]}`}>{KIND_SHORT[k]}</span>
+                  {k ? { daily: '일일점검', weekly: '주간점검', monthly: '월간점검' }[k] : '비주기(기타)'}{(mt?.kind || '') === k ? ' ✓' : ''}
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 업무 상세 창 — 주간근무 목록처럼 업무명·알림시간 등을 입력한다 */}
       {taskDlg && (() => {

@@ -2551,15 +2551,14 @@ function registerHandlers() {
     const tasks = (Array.isArray(board?.tasks) ? board.tasks : [])
       .map(t => {
         const item = { id: String(t?.id || ''), name: String(t?.name || '').trim(), kind: KINDS.includes(t?.kind) ? t.kind : '' };
-        if (item.kind && /^([01]\d|2[0-3]):[0-5]\d$/.test(String(t?.alarmTime || ''))) item.alarmTime = t.alarmTime;
-        if (!item.kind && DATE.test(String(t?.due || ''))) item.due = t.due; // 기타 업무의 마감기한
+        // 구분을 바꿨다가 되돌려도 값이 남도록 구분과 상관없이 보관한다(화면·달력은 구분에 맞는 값만 사용)
+        if (/^([01]\d|2[0-3]):[0-5]\d$/.test(String(t?.alarmTime || ''))) item.alarmTime = t.alarmTime;
+        if (DATE.test(String(t?.due || ''))) item.due = t.due; // 기타 업무의 마감기한
         // 주기: 주간 = 요일(0~6, 기본 월), 월간 = 일(1~31) 또는 'last'(말일), 일일 = 평일만 여부(기본 평일만)
-        if (item.kind === 'weekly' && Number.isInteger(t?.dow) && t.dow >= 0 && t.dow <= 6 && t.dow !== 1) item.dow = t.dow;
-        if (item.kind === 'monthly') {
-          if (t?.monthDay === 'last') item.monthDay = 'last';
-          else if (Number.isInteger(t?.monthDay) && t.monthDay >= 1 && t.monthDay <= 31) item.monthDay = t.monthDay;
-        }
-        if (item.kind === 'daily' && t?.weekdaysOnly === false) item.weekdaysOnly = false;
+        if (Number.isInteger(t?.dow) && t.dow >= 0 && t.dow <= 6 && t.dow !== 1) item.dow = t.dow;
+        if (t?.monthDay === 'last') item.monthDay = 'last';
+        else if (Number.isInteger(t?.monthDay) && t.monthDay >= 1 && t.monthDay <= 31) item.monthDay = t.monthDay;
+        if (t?.weekdaysOnly === false) item.weekdaysOnly = false;
         if (t?.showOnCalendar === false) item.showOnCalendar = false; // 월별 일정 표시 끔(기본은 표시)
         const note = String(t?.note || '').slice(0, 1000);
         if (note.trim()) item.note = note;
