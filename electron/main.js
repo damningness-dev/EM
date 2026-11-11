@@ -2552,6 +2552,13 @@ function registerHandlers() {
       .map(t => {
         const item = { id: String(t?.id || ''), name: String(t?.name || '').trim(), kind: KINDS.includes(t?.kind) ? t.kind : '' };
         if (/^([01]\d|2[0-3]):[0-5]\d$/.test(String(t?.alarmTime || ''))) item.alarmTime = t.alarmTime;
+        // 주기: 주간 = 요일(0~6, 기본 월), 월간 = 일(1~31) 또는 'last'(말일), 일일 = 평일만 여부(기본 평일만)
+        if (item.kind === 'weekly' && Number.isInteger(t?.dow) && t.dow >= 0 && t.dow <= 6 && t.dow !== 1) item.dow = t.dow;
+        if (item.kind === 'monthly') {
+          if (t?.monthDay === 'last') item.monthDay = 'last';
+          else if (Number.isInteger(t?.monthDay) && t.monthDay >= 1 && t.monthDay <= 31) item.monthDay = t.monthDay;
+        }
+        if (item.kind === 'daily' && t?.weekdaysOnly === false) item.weekdaysOnly = false;
         const note = String(t?.note || '').slice(0, 1000);
         if (note.trim()) item.note = note;
         const rot = cleanRotation(t?.rotation);

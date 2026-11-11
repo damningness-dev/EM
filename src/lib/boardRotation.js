@@ -121,10 +121,16 @@ export function boardTasksOn(board, staff, dateStr, isHoliday = false) {
   const date = parse(dateStr);
   const dow = date.getDay();
   const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
-  const scheduled = {
-    daily: dow >= 1 && dow <= 5 && !isHoliday,
-    weekly: dow === 1,
-    monthly: date.getDate() === 1 || date.getDate() === lastDay,
+  const dayOfMonth = date.getDate();
+  const isScheduled = (t) => {
+    if (t.kind === 'daily') return t.weekdaysOnly === false ? true : (dow >= 1 && dow <= 5 && !isHoliday);
+    if (t.kind === 'weekly') return dow === (Number.isInteger(t.dow) ? t.dow : 1);
+    if (t.kind === 'monthly') {
+      if (t.monthDay === 'last') return dayOfMonth === lastDay;
+      if (Number.isInteger(t.monthDay)) return dayOfMonth === Math.min(t.monthDay, lastDay);
+      return dayOfMonth === 1 || dayOfMonth === lastDay;
+    }
+    return false;
   };
   const out = [];
   for (const t of board.tasks) {
@@ -146,8 +152,18 @@ export function boardTasksOn(board, staff, dateStr, isHoliday = false) {
       if (e && e.due === dateStr && (period == null || e.period === period)) { dueStatus = e.status || 'todo'; break; }
     }
     const isDue = dueStatus != null;
-    if (!(scheduled[t.kind] || isDue)) continue;
-    out.push({ id: t.id, name: t.name, kind: t.kind || '', workers, due: isDue, ...(isDue ? { status: dueStatus } : {}) });
+    if (!(isScheduled(t) || isDue)) continue;
+    out.push({ id: t.id, name: t.name, kind: t.kind || '', time: t.alarmTime || '', workers, due: isDue, ...(isDue ? { status: dueStatus } : {}) });
   }
   return out;
+}
+
+// 업무의 주기를 사람이 읽는 말로: "매일 09:00 (평일)", "매주 화 10:30", "매월 15일 09:00", "매월 1일·말일"
+const DOW_KR = ['일', '월', '화', '수', '목', '금', '토'];
+export function scheduleLabel(t) {
+  const time = t?.alarmTime ? ` ${t.alarmTime}` : '';
+  if (t?.kind === 'daily') return `매일${time}${t.weekdaysOnly === false ? '' : ' (평일)'}`;
+  if (t?.kind === 'weekly') return `매주 ${DOW_KR[Number.isInteger(t.dow) ? t.dow : 1]}${time}`;
+  if (t?.kind === 'monthly') return `매월 ${t.monthDay === 'last' ? '말일' : Number.isInteger(t.monthDay) ? t.monthDay + '일' : '1일·말일'}${time}`;
+  return time.trim() || '기한 입력 시';
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { fetchWeeklyDuty, fetchWeeklyBoard, saveWeeklyBoard, syncAfterChange } from '../lib/api';
-import { ROTATION_UNITS, rotationState, rotationPool, rotationLabel, fmtDate } from '../lib/boardRotation';
+import { scheduleLabel, ROTATION_UNITS, rotationState, rotationPool, rotationLabel, fmtDate } from '../lib/boardRotation';
 
 // TEST 메뉴 — 업무 배치판. 기존 "주간근무" 메뉴는 그대로 두고, 같은 직원 목록을 가로 칸으로 펼친 뒤
 // 업무 버튼을 끌어다(드래그 앤 드롭) 근무자에게 배치한다. 배치된 업무마다 기한과 진행상태를 입력하고,
@@ -25,6 +25,7 @@ const WORKER_COLORS = [
 const KIND_LABEL = { daily: '매일', weekly: '주간', monthly: '월간', '': '직접 추가' };
 const KIND_SHORT = { daily: '일일', weekly: '주간', monthly: '월간', '': '기타' };
 const KIND_BADGE = { daily: 'bg-sky-100 text-sky-700 border-sky-300', weekly: 'bg-violet-100 text-violet-700 border-violet-300', monthly: 'bg-rose-100 text-rose-700 border-rose-300', '': 'bg-gray-100 text-gray-500 border-gray-300' };
+const DOW_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
 const KIND_ORDER = ['daily', 'weekly', 'monthly', ''];
 const STATUS = [['todo', '대기'], ['doing', '진행중'], ['done', '완료']];
 const STATUS_CLS = { todo: 'bg-white text-gray-500 border-gray-300', doing: 'bg-blue-600 text-white border-blue-600', done: 'bg-green-600 text-white border-green-600' };
@@ -121,6 +122,7 @@ export default function TestBoard({ adminUnlocked }) {
       id: task?.id || null,
       draft: {
         name: task?.name || '', kind: task?.kind || '', alarmTime: task?.alarmTime || '', note: task?.note || '',
+        dow: task?.dow, monthDay: task?.monthDay, weekdaysOnly: task?.weekdaysOnly,
         rot: r ? { ...r, pool: [...(r.pool || [])], overrides: { ...(r.overrides || {}) } } : defaultRot(),
       },
     });
@@ -131,7 +133,13 @@ export default function TestBoard({ adminUnlocked }) {
     if (!name || !guard()) return;
     const cur = id ? board.tasks.find(t => t.id === id) : null;
     const taskId = id || newTaskId();
-    const fields = { name, kind: draft.kind, alarmTime: draft.alarmTime || undefined, note: draft.note.trim() ? draft.note : undefined };
+    const fields = {
+      name, kind: draft.kind, alarmTime: draft.alarmTime || undefined, note: draft.note.trim() ? draft.note : undefined,
+      // 구분에 맞는 주기 값만 남긴다(기본값이면 저장하지 않는다)
+      dow: draft.kind === 'weekly' && draft.dow != null && draft.dow !== 1 ? draft.dow : undefined,
+      monthDay: draft.kind === 'monthly' && draft.monthDay != null && draft.monthDay !== 'edge' ? draft.monthDay : undefined,
+      weekdaysOnly: draft.kind === 'daily' && draft.weekdaysOnly === false ? false : undefined,
+    };
     setTaskDlg(null);
     let tasks = cur ? board.tasks.map(t => t.id === id ? { ...t, ...fields } : t) : [...board.tasks, { id: taskId, ...fields }];
     const assignments = { ...board.assignments };
@@ -404,7 +412,7 @@ export default function TestBoard({ adminUnlocked }) {
                           title={adminUnlocked ? '구분 변경 (눌러서 일일 → 주간 → 월간 → 기타)' : KIND_LABEL[t.kind || '']}
                           className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[t.kind || '']} ${adminUnlocked ? 'hover:brightness-95' : 'cursor-default'}`}>{KIND_SHORT[t.kind || '']}</button>
                         <span>{t.name}</span>
-                        {t.alarmTime && <span className="text-[10px] text-gray-400">⏰{t.alarmTime}</span>}
+                        {(t.kind || t.alarmTime) && <span className="text-[10px] text-gray-400 whitespace-nowrap" title="주기">⏰{scheduleLabel(t)}</span>}
                         {t.note && <span className="text-[10px]" title={t.note}>📝</span>}
                         {/* 배치된 근무자를 그 사람의 색 점으로 표시 */}
                         {ws.length > 0 && (
@@ -514,20 +522,61 @@ export default function TestBoard({ adminUnlocked }) {
               <input autoFocus={!ro} value={d.name} disabled={ro} spellCheck={false} onChange={e => set({ name: e.target.value })}
                 onKeyDown={e => { if (e.key === 'Enter' && !ro) saveTask(); if (e.key === 'Escape') closeIt(); }}
                 placeholder="업무명" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-gray-50" />
-              <div className="flex gap-3 mb-3">
-                <div className="flex-1">
-                  <label className="block text-xs text-gray-500 mb-1">구분</label>
-                  <select value={d.kind} disabled={ro} onChange={e => set({ kind: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm disabled:bg-gray-50">
-                    <option value="">기타</option><option value="daily">일일점검</option><option value="weekly">주간점검</option><option value="monthly">월간점검</option>
-                  </select>
-                </div>
-                <div className="flex-1">
-                  <label className="block text-xs text-gray-500 mb-1">알림시간</label>
-                  <input type="time" value={d.alarmTime} disabled={ro} onChange={e => set({ alarmTime: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm disabled:bg-gray-50" />
-                </div>
+              <div className="mb-3">
+                <label className="block text-xs text-gray-500 mb-1">구분</label>
+                <select value={d.kind} disabled={ro} onChange={e => set({ kind: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm disabled:bg-gray-50">
+                  <option value="">기타</option><option value="daily">일일점검</option><option value="weekly">주간점검</option><option value="monthly">월간점검</option>
+                </select>
               </div>
+              {/* 구분에 따른 주기 설정: 일일 = 매일 몇 시 / 주간 = 무슨 요일 몇 시 / 월간 = 며칠 몇 시 */}
+              {d.kind && (
+                <div className="mb-3 rounded-lg border border-gray-200 bg-gray-50/70 px-3 py-2.5">
+                  <p className="text-xs font-semibold text-gray-600 mb-2">⏰ 주기 설정 <span className="font-normal text-gray-400">— {scheduleLabel({ kind: d.kind, alarmTime: d.alarmTime, dow: d.dow, monthDay: d.monthDay, weekdaysOnly: d.weekdaysOnly })}</span></p>
+                  <div className="flex items-center gap-2 flex-wrap text-sm">
+                    {d.kind === 'daily' && <span className="text-gray-600">매일</span>}
+                    {d.kind === 'weekly' && (
+                      <>
+                        <span className="text-gray-600">매주</span>
+                        <div className="inline-flex rounded-lg overflow-hidden border border-gray-300">
+                          {DOW_NAMES.map((n, i) => (
+                            <button key={i} type="button" disabled={ro} onClick={() => set({ dow: i })}
+                              className={`px-2 py-1 text-xs font-medium border-r last:border-r-0 border-gray-300 ${(d.dow ?? 1) === i ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-100'}`}>{n}</button>
+                          ))}
+                        </div>
+                        <span className="text-gray-600">요일</span>
+                      </>
+                    )}
+                    {d.kind === 'monthly' && (
+                      <>
+                        <span className="text-gray-600">매월</span>
+                        <select value={d.monthDay ?? 'edge'} disabled={ro} onChange={e => set({ monthDay: e.target.value === 'edge' || e.target.value === 'last' ? e.target.value : parseInt(e.target.value) })}
+                          className="border border-gray-300 rounded-lg px-2 py-1 text-sm bg-white">
+                          <option value="edge">1일과 말일</option>
+                          {Array.from({ length: 31 }, (_, i) => i + 1).map(n => <option key={n} value={n}>{n}일</option>)}
+                          <option value="last">말일</option>
+                        </select>
+                      </>
+                    )}
+                    <input type="time" value={d.alarmTime} disabled={ro} onChange={e => set({ alarmTime: e.target.value })}
+                      className="border border-gray-300 rounded-lg px-2 py-1 text-sm bg-white" />
+                    <span className="text-gray-600">에</span>
+                  </div>
+                  {d.kind === 'daily' && (
+                    <label className="flex items-center gap-1.5 mt-2 text-xs text-gray-600 cursor-pointer select-none">
+                      <input type="checkbox" disabled={ro} checked={d.weekdaysOnly !== false} onChange={e => set({ weekdaysOnly: e.target.checked })} /> 주말·공휴일 제외 (평일만)
+                    </label>
+                  )}
+                </div>
+              )}
+              {!d.kind && (
+                <div className="mb-3">
+                  <label className="block text-xs text-gray-500 mb-1">알림시간 (선택)</label>
+                  <input type="time" value={d.alarmTime} disabled={ro} onChange={e => set({ alarmTime: e.target.value })}
+                    className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm disabled:bg-gray-50" />
+                  <p className="text-[11px] text-gray-400 mt-1">기타 업무는 정해진 주기가 없고, 근무자 칸에서 기한을 입력한 날 달력에 나타납니다.</p>
+                </div>
+              )}
               <label className="block text-xs text-gray-500 mb-1">메모</label>
               <textarea value={d.note} disabled={ro} rows={4} spellCheck={false} onChange={e => set({ note: e.target.value })}
                 placeholder="업무 내용·주의사항 등" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-gray-50" />

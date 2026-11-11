@@ -3459,7 +3459,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                       {bt.map(b => (
                         <div key={b.id} className={`flex items-center gap-1.5 text-xs ${b.status === 'done' ? 'text-gray-400' : 'text-gray-700'}`}>
                           <span className="inline-flex items-center gap-0.5 shrink-0">{b.workers.map(w => <span key={w} className={`w-2 h-2 rounded-full ${workerDot(boardInfo.staff, w)}`} />)}</span>
-                          <span className={`truncate ${b.status === 'done' ? 'line-through' : ''}`} title={b.name}>{b.name}</span>
+                          <span className={`truncate ${b.status === 'done' ? 'line-through' : ''}`} title={b.name}>{b.time && <span className="text-gray-400 mr-1">{b.time}</span>}{b.name}</span>
                           <span className="ml-auto shrink-0 text-[10px] text-gray-400 whitespace-nowrap">{b.workers.join(', ')}{KL[b.kind] ? ` · ${KL[b.kind]}` : ''}{b.due ? ` · 기한${b.status ? ' ' + ST[b.status] : ''}` : ''}</span>
                         </div>
                       ))}
