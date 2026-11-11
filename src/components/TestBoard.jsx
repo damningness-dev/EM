@@ -310,7 +310,9 @@ export default function TestBoard({ adminUnlocked }) {
               <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-3 cursor-pointer select-none">
                 <input type="checkbox" checked={!!d.on} onChange={e => set({ on: e.target.checked })} /> 로테이션 사용 (정한 주기마다 담당이 자동으로 넘어갑니다)
               </label>
-              <div className={d.on ? '' : 'opacity-40 pointer-events-none'}>
+              {/* 로테이션을 체크했을 때만 세부 설정을 펼친다 */}
+              {d.on && (
+              <div className="rounded-lg border border-indigo-100 bg-indigo-50/30 px-3 pt-3 pb-1">
                 <div className="flex items-center gap-2 mb-3 text-sm">
                   <span className="w-14 text-gray-500 text-xs">주기</span>
                   <input type="number" min="1" max="60" value={d.every} onChange={e => set({ every: e.target.value })} className="w-16 border border-gray-300 rounded px-2 py-1 text-center" />
@@ -382,6 +384,7 @@ export default function TestBoard({ adminUnlocked }) {
                   </div>
                 )}
               </div>
+              )}
       </>
     );
   }
