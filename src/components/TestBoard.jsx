@@ -122,6 +122,7 @@ export default function TestBoard({ adminUnlocked }) {
       id: task?.id || null,
       draft: {
         name: task?.name || '', kind: task?.kind || '', alarmTime: task?.alarmTime || '', note: task?.note || '',
+        assign: task ? staff.filter(w => (board.assignments[w] || []).includes(task.id)) : [],
         due: task?.due || '', dow: task?.dow, monthDay: task?.monthDay, weekdaysOnly: task?.weekdaysOnly,
         rot: r ? { ...r, pool: [...(r.pool || [])], overrides: { ...(r.overrides || {}) } } : defaultRot(),
       },
@@ -143,20 +144,36 @@ export default function TestBoard({ adminUnlocked }) {
     setTaskDlg(null);
     let tasks = cur ? board.tasks.map(t => t.id === id ? { ...t, ...fields } : t) : [...board.tasks, { id: taskId, ...fields }];
     const assignments = { ...board.assignments };
+    let progress = board.progress;
     const rd = draft.rot;
     const wasOn = !!cur?.rotation?.on;
     let msg = '';
+    // 배치 체크박스 반영(로테이션을 쓰지 않을 때): 체크 해제된 사람은 배치와 진행 기록을 함께 정리한다.
+    const applyChecked = (list) => {
+      progress = { ...board.progress };
+      staff.forEach(w => {
+        const has = (assignments[w] || []).includes(taskId), want = list.includes(w);
+        if (want && !has) assignments[w] = [...(assignments[w] || []), taskId];
+        if (!want && has) {
+          assignments[w] = assignments[w].filter(x => x !== taskId);
+          if (progress[w]?.[taskId]) { const { [taskId]: _d, ...rest } = progress[w]; progress[w] = rest; } // eslint-disable-line no-unused-vars
+        }
+      });
+    };
     if (!rd.on) {
-      if (wasOn) {
-        // 끄면 지금 담당자에게 일반 배치로 남긴다.
+      if (wasOn && draft.assign.length === 0) {
+        // 로테이션을 끄고 따로 고른 사람이 없으면 지금 담당자에게 일반 배치로 남긴다.
         const now = rotationState(cur, staff)?.worker;
-        tasks = tasks.map(t => { if (t.id !== taskId) return t; const { rotation: _r, ...rest } = t; return rest; }); // eslint-disable-line no-unused-vars
-        if (now) assignments[now] = (assignments[now] || []).includes(taskId) ? assignments[now] : [...(assignments[now] || []), taskId];
+        if (now) applyChecked([now]);
         msg = '로테이션을 껐습니다. 지금 담당자에게 일반 배치로 남았습니다.';
+      } else {
+        applyChecked(draft.assign);
+        if (wasOn) msg = '로테이션을 껐습니다.';
       }
+      if (wasOn) tasks = tasks.map(t => { if (t.id !== taskId) return t; const { rotation: _r, ...rest } = t; return rest; }); // eslint-disable-line no-unused-vars
     } else {
-      // 새로 켤 때: 지금 배치된 첫 사람을 1주기 담당으로 삼고, 일반 배치는 로테이션이 대신한다.
-      const placed = staff.filter(w => (board.assignments[w] || []).includes(taskId));
+      // 새로 켤 때: 체크한(배치된) 첫 사람을 1주기 담당으로 삼고, 일반 배치는 로테이션이 대신한다.
+      const placed = staff.filter(w => draft.assign.includes(w));
       const pool = rotationPool({ rotation: rd }, staff);
       const first = wasOn ? (rd.first || cur.rotation.first) : (placed.find(w => pool.includes(w)) || pool[0] || '');
       const rotation = { ...rd, on: true, first, every: Math.max(1, parseInt(rd.every) || 1), seed: wasOn ? (rd.seed || 1) : (1 + Math.floor(Math.random() * 2147483000)) };
@@ -164,7 +181,7 @@ export default function TestBoard({ adminUnlocked }) {
       if (!wasOn) staff.forEach(w => { assignments[w] = (assignments[w] || []).filter(x => x !== taskId); });
       msg = `로테이션 설정을 저장했습니다 (${rotationLabel(rotation)}).`;
     }
-    commit({ ...board, tasks, assignments });
+    commit({ ...board, tasks, assignments, progress });
     if (msg) flash(msg);
   }
   function cycleKind(t) {
@@ -276,7 +293,7 @@ export default function TestBoard({ adminUnlocked }) {
   // 로테이션 설정 입력 폼(업무 상세 창 안) — d: 로테이션 초안, set: 일부 값 변경
   function rotationForm(task, d, set) {
     // 새로 켜는 경우 저장할 때와 같이: 지금 배치된 사람이 첫 담당(대상 인원에 있을 때)
-    const pv = (!task?.rotation?.on && task?.id) ? (() => { const pool = rotationPool({ rotation: d }, staff); const placed = staff.find(w => (board.assignments[w] || []).includes(task.id) && pool.includes(w)); return placed ? { ...d, first: placed } : d; })() : d;
+    const pv = !task?.rotation?.on ? (() => { const pool = rotationPool({ rotation: d }, staff); const placed = staff.find(w => (taskDlg?.draft.assign || []).includes(w) && pool.includes(w)); return placed ? { ...d, first: placed } : d; })() : d;
     const preview = d.on && staff.length > 0 ? rotationState({ ...task, rotation: pv }, staff, new Date(), 5) : null;
     return (
       <>
@@ -605,7 +622,19 @@ export default function TestBoard({ adminUnlocked }) {
               <label className="block text-xs text-gray-500 mb-1">메모</label>
               <textarea value={d.note} disabled={ro} rows={4} spellCheck={false} onChange={e => set({ note: e.target.value })}
                 placeholder="업무 내용·주의사항 등" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-gray-50" />
-              {cur && <p className="mt-3 text-xs text-gray-500">배치: {workersOf(cur.id).length ? workersOf(cur.id).join(', ') : '없음'}</p>}
+              <div className="mt-3">
+                <p className="text-xs text-gray-500 mb-1">배치 <span className="text-gray-400">— 체크한 근무자에게 배정됩니다 (끌어다 놓아도 됩니다)</span></p>
+                <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                  {staff.map(w => (
+                    <label key={w} className={`inline-flex items-center gap-1.5 text-sm select-none ${ro || d.rot.on ? 'opacity-50' : 'cursor-pointer'}`}>
+                      <input type="checkbox" disabled={ro || d.rot.on} checked={d.rot.on && cur?.rotation?.on ? workersOf(cur.id).includes(w) : d.assign.includes(w)}
+                        onChange={e => set({ assign: e.target.checked ? [...d.assign, w] : d.assign.filter(x => x !== w) })} />
+                      <span className={`w-2.5 h-2.5 rounded-full ${colorOf(w).dot}`} />{w}
+                    </label>
+                  ))}
+                </div>
+                {d.rot.on && <p className="text-[11px] text-indigo-500 mt-1">로테이션을 쓰는 동안은 주기마다 담당이 자동으로 정해집니다(아래에서 끄면 직접 배치할 수 있어요).</p>}
+              </div>
               <div className="mt-3 pt-3 border-t border-gray-100">
                 <p className="text-sm font-semibold text-gray-700 mb-2">🔄 로테이션</p>
                 <div className={ro ? 'pointer-events-none opacity-70' : ''}>{rotationForm({ ...(cur || {}), id: taskDlg.id }, d.rot, (patch) => set({ rot: { ...d.rot, ...patch } }))}</div>
