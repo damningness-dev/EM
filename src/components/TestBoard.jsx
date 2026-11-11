@@ -537,21 +537,21 @@ export default function TestBoard({ adminUnlocked }) {
                           onClick={() => openTask(t)}
                           onMouseEnter={e => showTip(e, t, who)} onMouseLeave={() => setTip(null)}
                           className={`rounded-lg border px-2.5 py-2 shadow-sm cursor-pointer ${c.chip} ${adminUnlocked ? 'active:cursor-grabbing' : ''}`}>
-                          <div className="flex items-start gap-1">
+                          <div className="flex items-center gap-1.5">
                             <span className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[t.kind || '']}`}>{KIND_SHORT[t.kind || '']}</span>
                             <span className={`flex-1 text-sm font-medium break-words ${pr.status === 'done' ? 'line-through opacity-60' : ''}`}>{t.name}</span>
                             {rs && <span className="text-indigo-500 text-xs leading-none">🔄</span>}
-                          </div>
-                          {track && <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                            {adminUnlocked ? (
+                            {track && (adminUnlocked ? (
                               <select value={pr.status} onChange={e => setProgress(who, id, { status: e.target.value })}
                                 onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()} draggable={false}
-                                className={`text-[11px] font-semibold rounded border px-1 py-0.5 cursor-pointer ${STATUS_CLS[pr.status]}`}>
+                                className={`shrink-0 text-[11px] font-semibold rounded border px-1 py-0.5 cursor-pointer ${STATUS_CLS[pr.status]}`}>
                                 {STATUS.map(([v, l]) => <option key={v} value={v} className="bg-white text-gray-800">{l}</option>)}
                               </select>
                             ) : (
-                              <span className={`text-[11px] font-semibold rounded border px-1.5 py-0.5 ${STATUS_CLS[pr.status]}`}>{STATUS.find(s => s[0] === pr.status)?.[1]}</span>
-                            )}
+                              <span className={`shrink-0 text-[11px] font-semibold rounded border px-1.5 py-0.5 ${STATUS_CLS[pr.status]}`}>{STATUS.find(s => s[0] === pr.status)?.[1]}</span>
+                            ))}
+                          </div>
+                          {track && (pr.due || dl) && <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                             {pr.due && <span className="text-[11px] text-gray-600">마감 {pr.due.slice(5).replace('-', '/')}</span>}
                             {dl && <span className={`text-[10px] ${dl.cls}`}>{dl.text}</span>}
                           </div>}
