@@ -46,7 +46,7 @@ function dueLabel(due, status) {
   if (!due) return null;
   if (status === 'done') return { text: due.slice(5).replace('-', '/'), cls: 'text-gray-400' };
   const diff = Math.round((new Date(due + 'T00:00:00') - new Date(todayStr() + 'T00:00:00')) / 86400000);
-  if (diff < 0) return { text: `기한 ${-diff}일 지남`, cls: 'text-red-600 font-semibold' };
+  if (diff < 0) return { text: `마감 ${-diff}일 지남`, cls: 'text-red-600 font-semibold' };
   if (diff === 0) return { text: '오늘 마감', cls: 'text-red-600 font-semibold' };
   if (diff <= 3) return { text: `D-${diff}`, cls: 'text-orange-600 font-semibold' };
   return { text: `D-${diff}`, cls: 'text-gray-500' };
@@ -122,7 +122,7 @@ export default function TestBoard({ adminUnlocked }) {
       id: task?.id || null,
       draft: {
         name: task?.name || '', kind: task?.kind || '', alarmTime: task?.alarmTime || '', note: task?.note || '',
-        dow: task?.dow, monthDay: task?.monthDay, weekdaysOnly: task?.weekdaysOnly,
+        due: task?.due || '', dow: task?.dow, monthDay: task?.monthDay, weekdaysOnly: task?.weekdaysOnly,
         rot: r ? { ...r, pool: [...(r.pool || [])], overrides: { ...(r.overrides || {}) } } : defaultRot(),
       },
     });
@@ -134,7 +134,7 @@ export default function TestBoard({ adminUnlocked }) {
     const cur = id ? board.tasks.find(t => t.id === id) : null;
     const taskId = id || newTaskId();
     const fields = {
-      name, kind: draft.kind, alarmTime: draft.alarmTime || undefined, note: draft.note.trim() ? draft.note : undefined,
+      name, kind: draft.kind, alarmTime: draft.kind && draft.alarmTime ? draft.alarmTime : undefined, due: !draft.kind && draft.due ? draft.due : undefined, note: draft.note.trim() ? draft.note : undefined,
       // 구분에 맞는 주기 값만 남긴다(기본값이면 저장하지 않는다)
       dow: draft.kind === 'weekly' && draft.dow != null && draft.dow !== 1 ? draft.dow : undefined,
       monthDay: draft.kind === 'monthly' && draft.monthDay != null && draft.monthDay !== 'edge' ? draft.monthDay : undefined,
@@ -199,8 +199,11 @@ export default function TestBoard({ adminUnlocked }) {
   // 기한으로 한 새 항목(대기)이다.
   function prOf(task, who, rs) {
     const stored = (board.progress[who] || {})[task.id];
-    if (task.rotation?.on && rs) return stored && stored.period === rs.k ? stored : { due: rs.endDate, status: 'todo', auto: true };
-    return stored || { due: '', status: 'todo' };
+    const base = task.rotation?.on && rs
+      ? (stored && stored.period === rs.k ? stored : { due: rs.endDate, status: 'todo', auto: true })
+      : (stored || { due: '', status: 'todo' });
+    // 기타 업무의 마감기한은 업무 상세창에서 정한 값이 우선(없으면 예전에 칸에서 입력한 값/로테이션 주기 끝날)
+    return !task.kind && task.due ? { ...base, due: task.due } : base;
   }
 
   // ── 로테이션 ── (설정은 업무 상세 창 안에서 한다)
@@ -366,7 +369,7 @@ export default function TestBoard({ adminUnlocked }) {
         {notice && <span className={`text-xs font-medium ${notice.isError ? 'text-red-500' : 'text-green-600'}`}>{notice.text}</span>}
       </div>
       <p className="text-xs text-gray-400 mb-4">
-        기존 "주간근무" 메뉴는 그대로 두었습니다. 직원 목록과 업무는 주간근무에서 가져온 것이고, 업무 버튼을 근무자 칸으로 끌어다 놓아 배치한 뒤 기한·진행상태를 입력하세요.
+        기존 "주간근무" 메뉴는 그대로 두었습니다. 직원 목록과 업무는 주간근무에서 가져온 것이고, 업무 버튼을 근무자 칸으로 끌어다 놓아 배치하세요. 마감기한·완료표시는 구분이 '기타'인 업무만 입력할 수 있습니다.
       </p>
 
       {/* 업무 버튼 */}
@@ -412,7 +415,7 @@ export default function TestBoard({ adminUnlocked }) {
                           title={adminUnlocked ? '구분 변경 (눌러서 일일 → 주간 → 월간 → 기타)' : KIND_LABEL[t.kind || '']}
                           className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[t.kind || '']} ${adminUnlocked ? 'hover:brightness-95' : 'cursor-default'}`}>{KIND_SHORT[t.kind || '']}</button>
                         <span>{t.name}</span>
-                        {(t.kind || t.alarmTime) && <span className="text-[10px] text-gray-400 whitespace-nowrap" title="주기">⏰{scheduleLabel(t)}</span>}
+                        {t.kind ? <span className="text-[10px] text-gray-400 whitespace-nowrap" title="주기">⏰{scheduleLabel(t)}</span> : t.due ? <span className="text-[10px] text-gray-400 whitespace-nowrap" title="마감기한">📅마감 {t.due.slice(5).replace('-', '/')}</span> : null}
                         {t.note && <span className="text-[10px]" title={t.note}>📝</span>}
                         {/* 배치된 근무자를 그 사람의 색 점으로 표시 */}
                         {ws.length > 0 && (
@@ -445,7 +448,9 @@ export default function TestBoard({ adminUnlocked }) {
             {staff.map(who => {
               const c = colorOf(who);
               const ids = idsOf(who);
-              const doneCnt = ids.filter(id => prOf(taskById.get(id), who, rotOf(taskById.get(id))).status === 'done').length;
+              // 기한·완료표시는 구분이 '기타'인 업무만 쓴다 → 완료 집계도 기타 업무 기준
+              const tracked = ids.filter(id => !taskById.get(id)?.kind);
+              const doneCnt = tracked.filter(id => prOf(taskById.get(id), who, rotOf(taskById.get(id))).status === 'done').length;
               const over = overCol === who;
               return (
                 <div key={who}
@@ -455,15 +460,16 @@ export default function TestBoard({ adminUnlocked }) {
                   className={`rounded-xl border-2 min-h-[260px] flex flex-col transition-colors ${over ? c.over : c.col}`}>
                   <div className={`px-3 py-2.5 rounded-t-[10px] flex items-center justify-between ${c.head}`}>
                     <span className="font-semibold">👤 {who}</span>
-                    <span className="text-xs opacity-90">{ids.length ? `${doneCnt}/${ids.length} 완료` : '0건'}</span>
+                    <span className="text-xs opacity-90">{ids.length === 0 ? '0건' : tracked.length ? `${doneCnt}/${tracked.length} 완료${ids.length > tracked.length ? ` · ${ids.length}건` : ''}` : `${ids.length}건`}</span>
                   </div>
                   <div className="p-2.5 space-y-2 flex-1">
                     {ids.length === 0 && <p className="text-xs text-gray-400 text-center py-8">{adminUnlocked ? '여기에 업무를 끌어다 놓으세요' : '배치된 업무 없음'}</p>}
                     {ids.map(id => {
                       const t = taskById.get(id);
                       const rs = rotOf(t);
-                      const pr = prOf(t, who, rs);
-                      const dl = dueLabel(pr.due, pr.status);
+                      const track = !t.kind; // 기타 업무만 기한·완료표시
+                      const pr = track ? prOf(t, who, rs) : { due: '', status: 'todo' };
+                      const dl = track ? dueLabel(pr.due, pr.status) : null;
                       return (
                         <div key={id}
                           draggable={adminUnlocked}
@@ -480,7 +486,7 @@ export default function TestBoard({ adminUnlocked }) {
                               🔄 {rotationLabel(t.rotation)} · {rs.startDate.slice(5).replace('-', '/')}~{rs.endDate.slice(5).replace('-', '/')} · 다음 <b>{rs.upcoming[0]?.worker}</b>
                             </p>
                           )}
-                          <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                          {track && <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                             {adminUnlocked ? (
                               <select value={pr.status} onChange={e => setProgress(who, id, { status: e.target.value })}
                                 onMouseDown={e => e.stopPropagation()} draggable={false}
@@ -490,13 +496,10 @@ export default function TestBoard({ adminUnlocked }) {
                             ) : (
                               <span className={`text-[11px] font-semibold rounded border px-1.5 py-0.5 ${STATUS_CLS[pr.status]}`}>{STATUS.find(s => s[0] === pr.status)?.[1]}</span>
                             )}
-                            {adminUnlocked ? (
-                              <input type="date" value={pr.due} onChange={e => setProgress(who, id, { due: e.target.value })}
-                                onMouseDown={e => e.stopPropagation()} draggable={false} title="기한"
-                                className="text-[11px] rounded border border-gray-300 bg-white/80 px-1 py-0.5 text-gray-700" />
-                            ) : pr.due ? <span className="text-[11px] text-gray-600">기한 {pr.due}</span> : null}
+                            {pr.due && <span className="text-[11px] text-gray-600" title="마감기한 — 업무 버튼을 눌러 상세창에서 변경">마감 {pr.due.slice(5).replace('-', '/')}</span>}
                             {dl && <span className={`text-[10px] ${dl.cls}`}>{dl.text}</span>}
-                          </div>
+                          </div>}
+                          {!track && <p className="text-[10px] text-gray-500 mt-1">⏰ {scheduleLabel(t)}</p>}
                         </div>
                       );
                     })}
@@ -569,12 +572,16 @@ export default function TestBoard({ adminUnlocked }) {
                   )}
                 </div>
               )}
+              {/* 기타 업무는 주기 대신 마감기한과 완료표시를 쓴다 */}
               {!d.kind && (
-                <div className="mb-3">
-                  <label className="block text-xs text-gray-500 mb-1">알림시간 (선택)</label>
-                  <input type="time" value={d.alarmTime} disabled={ro} onChange={e => set({ alarmTime: e.target.value })}
-                    className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm disabled:bg-gray-50" />
-                  <p className="text-[11px] text-gray-400 mt-1">기타 업무는 정해진 주기가 없고, 근무자 칸에서 기한을 입력한 날 달력에 나타납니다.</p>
+                <div className="mb-3 rounded-lg border border-gray-200 bg-gray-50/70 px-3 py-2.5">
+                  <p className="text-xs font-semibold text-gray-600 mb-2">📅 마감기한 <span className="font-normal text-gray-400">— 완료표시는 근무자 칸의 업무에서 합니다</span></p>
+                  <div className="flex items-center gap-2">
+                    <input type="date" value={d.due || ''} disabled={ro} onChange={e => set({ due: e.target.value })}
+                      className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm bg-white disabled:bg-gray-50" />
+                    {d.due && !ro && <button type="button" onClick={() => set({ due: '' })} className="text-xs text-gray-500 px-2 py-1 rounded hover:bg-gray-200">지우기</button>}
+                    {!d.due && <span className="text-[11px] text-gray-400">정하지 않으면 마감 없음{d.rot?.on ? '(로테이션이면 주기 끝날)' : ''}</span>}
+                  </div>
                 </div>
               )}
               <label className="block text-xs text-gray-500 mb-1">메모</label>
