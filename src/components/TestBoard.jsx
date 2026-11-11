@@ -264,7 +264,9 @@ export default function TestBoard({ adminUnlocked }) {
   const groups = KIND_ORDER.map(k => ({ kind: k, tasks: board.tasks.filter(t => (t.kind || '') === k) })).filter(g => g.tasks.length > 0);
   // 로테이션 설정 입력 폼(업무 상세 창 안) — d: 로테이션 초안, set: 일부 값 변경
   function rotationForm(task, d, set) {
-    const preview = d.on && staff.length > 0 ? rotationState({ ...task, rotation: d }, staff, new Date(), 5) : null;
+    // 새로 켜는 경우 저장할 때와 같이: 지금 배치된 사람이 첫 담당(대상 인원에 있을 때)
+    const pv = (!task?.rotation?.on && task?.id) ? (() => { const pool = rotationPool({ rotation: d }, staff); const placed = staff.find(w => (board.assignments[w] || []).includes(task.id) && pool.includes(w)); return placed ? { ...d, first: placed } : d; })() : d;
+    const preview = d.on && staff.length > 0 ? rotationState({ ...task, rotation: pv }, staff, new Date(), 5) : null;
     return (
       <>
               <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-3 cursor-pointer select-none">
@@ -294,21 +296,43 @@ export default function TestBoard({ adminUnlocked }) {
                 </div>
                 <div className="flex items-start gap-2 mb-3 text-sm">
                   <span className="w-14 text-gray-500 text-xs pt-1">대상 인원</span>
-                  <div className="flex flex-wrap gap-x-3 gap-y-1">
-                    {staff.map(w => {
-                      const on = d.pool.length === 0 || d.pool.includes(w);
+                  <div className="flex-1">
+                    {(() => {
+                      // 순서 = 대상 인원 목록의 순서(비어 있으면 직원 목록 순서 그대로). 칩을 끌어서 앞뒤를 바꾼다.
+                      const order = d.pool.length ? d.pool.filter(w => staff.includes(w)) : staff;
+                      const rest = staff.filter(w => !order.includes(w));
+                      const put = (arr) => set({ pool: arr.length === staff.length && arr.every((x, i) => x === staff[i]) ? [] : arr });
+                      const move = (from, to) => {
+                        if (!from || from === to || !order.includes(from) || !order.includes(to)) return;
+                        const arr = order.filter(x => x !== from);
+                        arr.splice(order.indexOf(to), 0, from);
+                        put(arr);
+                      };
                       return (
-                        <label key={w} className="flex items-center gap-1 cursor-pointer select-none">
-                          <input type="checkbox" checked={on} onChange={e => {
-                            const base = d.pool.length === 0 ? [...staff] : [...d.pool];
-                            const next = e.target.checked ? [...new Set([...base, w])] : base.filter(x => x !== w);
-                            set({ pool: next.length === staff.length || next.length === 0 ? [] : next });
-                          }} />
-                          <span className={`w-2.5 h-2.5 rounded-full ${colorOf(w).dot}`} />{w}
-                        </label>
+                        <>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {order.map((w, i) => (
+                              <div key={w} draggable
+                                onDragStart={e => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', 'rot:' + w); }}
+                                onDragOver={e => e.preventDefault()}
+                                onDrop={e => { e.preventDefault(); e.stopPropagation(); const t = e.dataTransfer.getData('text/plain'); if (t.startsWith('rot:')) move(t.slice(4), w); }}
+                                title="끌어서 순서 변경"
+                                className="inline-flex items-center gap-1 pl-1.5 pr-1 py-1 rounded-lg border border-gray-300 bg-white text-sm cursor-grab active:cursor-grabbing select-none shadow-sm">
+                                <span className="text-[10px] font-bold text-indigo-500 w-3 text-center">{i + 1}</span>
+                                <span className={`w-2.5 h-2.5 rounded-full ${colorOf(w).dot}`} />{w}
+                                {order.length > 1 && <button type="button" onClick={() => put(order.filter(x => x !== w))} className="text-gray-300 hover:text-red-500 text-xs leading-none px-0.5" title="이 인원 제외">✕</button>}
+                              </div>
+                            ))}
+                            {rest.map(w => (
+                              <button key={w} type="button" onClick={() => put([...order, w])}
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-dashed border-gray-300 text-sm text-gray-400 hover:text-gray-700 hover:border-gray-400"
+                                title="대상 인원에 추가(맨 뒤)">+ <span className={`w-2.5 h-2.5 rounded-full opacity-50 ${colorOf(w).dot}`} />{w}</button>
+                            ))}
+                          </div>
+                          <p className="text-[11px] text-gray-400 mt-1">{d.mode === 'random' ? '무작위는 순서와 관계없이 이 인원 중에서 뽑습니다.' : '칩을 끌어 다른 칩 자리에 놓으면 순서가 바뀝니다. 1번부터 차례로 돌아갑니다.'}</p>
+                        </>
                       );
-                    })}
-                    <span className="text-[11px] text-gray-400">(전체 선택 = 모든 직원)</span>
+                    })()}
                   </div>
                 </div>
                 {preview && (
