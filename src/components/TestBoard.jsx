@@ -396,8 +396,15 @@ export default function TestBoard({ adminUnlocked }) {
         {board.tasks.length === 0 ? (
           <p className="text-sm text-gray-300 py-2">{adminUnlocked ? '업무 버튼이 없습니다. 위에서 업무를 추가하거나 주간근무 업무를 가져오세요.' : '등록된 업무가 없습니다.'}</p>
         ) : (
-          <div className="space-y-2.5">
-            {groups.map(g => (
+          <div className="space-y-3">
+            {[
+              { key: 'periodic', title: '🔁 주기적 업무', sub: '일일·주간·월간 — 정해진 주기에 반복', box: 'border-sky-200 bg-sky-50/40', head: 'text-sky-700', list: groups.filter(g => g.kind) },
+              { key: 'oneoff', title: '📌 비주기적 업무', sub: '기타 — 마감기한·완료표시로 관리', box: 'border-gray-300 bg-gray-50/70', head: 'text-gray-600', list: groups.filter(g => !g.kind) },
+            ].filter(sec => sec.list.length > 0).map(sec => (
+            <div key={sec.key} className={`rounded-lg border px-3 py-2.5 ${sec.box}`}>
+              <p className={`text-xs font-bold mb-2 ${sec.head}`}>{sec.title} <span className="font-normal text-gray-400">{sec.sub}</span></p>
+              <div className="space-y-2.5">
+            {sec.list.map(g => (
               <div key={g.kind || 'etc'} className="flex items-start gap-2">
                 <span className="shrink-0 w-14 text-[11px] font-semibold text-gray-400 pt-2">{KIND_LABEL[g.kind]}</span>
                 <div className="flex flex-wrap gap-2">
@@ -435,6 +442,9 @@ export default function TestBoard({ adminUnlocked }) {
                 </div>
               </div>
             ))}
+              </div>
+            </div>
+            ))}
           </div>
         )}
       </div>
@@ -464,7 +474,13 @@ export default function TestBoard({ adminUnlocked }) {
                   </div>
                   <div className="p-2.5 space-y-2 flex-1">
                     {ids.length === 0 && <p className="text-xs text-gray-400 text-center py-8">{adminUnlocked ? '여기에 업무를 끌어다 놓으세요' : '배치된 업무 없음'}</p>}
-                    {ids.map(id => {
+                    {[
+                      { key: 'p', title: '🔁 주기적 업무', box: 'border-black/10 bg-white/50', head: 'text-sky-700', list: ids.filter(id => taskById.get(id)?.kind) },
+                      { key: 'o', title: '📌 비주기적 업무', box: 'border-dashed border-black/20 bg-white/30', head: 'text-gray-600', list: ids.filter(id => !taskById.get(id)?.kind) },
+                    ].filter(sec => sec.list.length > 0).map(sec => (
+                    <div key={sec.key} className={`rounded-lg border p-1.5 space-y-2 ${sec.box}`}>
+                      <p className={`text-[11px] font-bold px-1 ${sec.head}`}>{sec.title}</p>
+                    {sec.list.map(id => {
                       const t = taskById.get(id);
                       const rs = rotOf(t);
                       const track = !t.kind; // 기타 업무만 기한·완료표시
@@ -503,6 +519,8 @@ export default function TestBoard({ adminUnlocked }) {
                         </div>
                       );
                     })}
+                    </div>
+                    ))}
                   </div>
                 </div>
               );
