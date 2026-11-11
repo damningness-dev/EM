@@ -122,6 +122,7 @@ export default function TestBoard({ adminUnlocked }) {
       id: task?.id || null,
       draft: {
         name: task?.name || '', kind: task?.kind || '', alarmTime: task?.alarmTime || '', note: task?.note || '',
+        showCal: task?.showOnCalendar !== false,
         assign: task ? staff.filter(w => (board.assignments[w] || []).includes(task.id)) : [],
         due: task?.due || '', dow: task?.dow, monthDay: task?.monthDay, weekdaysOnly: task?.weekdaysOnly,
         rot: r ? { ...r, pool: [...(r.pool || [])], overrides: { ...(r.overrides || {}) } } : defaultRot(),
@@ -137,6 +138,7 @@ export default function TestBoard({ adminUnlocked }) {
     const fields = {
       name, kind: draft.kind, alarmTime: draft.kind && draft.alarmTime ? draft.alarmTime : undefined, due: !draft.kind && draft.due ? draft.due : undefined, note: draft.note.trim() ? draft.note : undefined,
       // 구분에 맞는 주기 값만 남긴다(기본값이면 저장하지 않는다)
+      showOnCalendar: draft.showCal === false ? false : undefined, // 기본은 표시
       dow: draft.kind === 'weekly' && draft.dow != null && draft.dow !== 1 ? draft.dow : undefined,
       monthDay: draft.kind === 'monthly' && draft.monthDay != null && draft.monthDay !== 'edge' ? draft.monthDay : undefined,
       weekdaysOnly: draft.kind === 'daily' && draft.weekdaysOnly === false ? false : undefined,
@@ -441,6 +443,7 @@ export default function TestBoard({ adminUnlocked }) {
                         <span>{t.name}</span>
                         {t.kind ? <span className="text-[10px] text-gray-400 whitespace-nowrap" title="주기">⏰{scheduleLabel(t)}</span> : t.due ? <span className="text-[10px] text-gray-400 whitespace-nowrap" title="마감기한">📅마감 {t.due.slice(5).replace('-', '/')}</span> : null}
                         {t.note && <span className="text-[10px]" title={t.note}>📝</span>}
+                        {t.showOnCalendar === false && <span className="text-[10px] opacity-60" title="월별 모니터링 일정에 표시하지 않음">📆✕</span>}
                         {/* 배치된 근무자를 그 사람의 색 점으로 표시 */}
                         {ws.length > 0 && (
                           <span className="inline-flex items-center gap-0.5" title={`배치: ${ws.join(', ')}`}>
@@ -619,6 +622,10 @@ export default function TestBoard({ adminUnlocked }) {
                   </div>
                 </div>
               )}
+              <label className={`flex items-center gap-1.5 mb-3 text-sm text-gray-700 select-none ${ro ? 'opacity-60' : 'cursor-pointer'}`}>
+                <input type="checkbox" disabled={ro} checked={d.showCal !== false} onChange={e => set({ showCal: e.target.checked })} />
+                📆 월별 모니터링 일정에 표시
+              </label>
               <label className="block text-xs text-gray-500 mb-1">메모</label>
               <textarea value={d.note} disabled={ro} rows={4} spellCheck={false} onChange={e => set({ note: e.target.value })}
                 placeholder="업무 내용·주의사항 등" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-gray-50" />

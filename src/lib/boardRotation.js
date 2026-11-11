@@ -135,6 +135,7 @@ export function boardTasksOn(board, staff, dateStr, isHoliday = false) {
   };
   const out = [];
   for (const t of board.tasks) {
+    if (t.showOnCalendar === false) continue; // 업무 상세창에서 '월별 일정에 표시'를 끈 업무
     const rot = t.rotation?.on ? t.rotation : null;
     let period = null;
     let workers;

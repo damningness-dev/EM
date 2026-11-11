@@ -2560,6 +2560,7 @@ function registerHandlers() {
           else if (Number.isInteger(t?.monthDay) && t.monthDay >= 1 && t.monthDay <= 31) item.monthDay = t.monthDay;
         }
         if (item.kind === 'daily' && t?.weekdaysOnly === false) item.weekdaysOnly = false;
+        if (t?.showOnCalendar === false) item.showOnCalendar = false; // 월별 일정 표시 끔(기본은 표시)
         const note = String(t?.note || '').slice(0, 1000);
         if (note.trim()) item.note = note;
         const rot = cleanRotation(t?.rotation);
