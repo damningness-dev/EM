@@ -10,7 +10,7 @@
 //   first: '<직원>',                                   // 1주기 담당(순차는 여기서부터 순서대로)
 //   pool: ['<직원>', ...],                             // 돌아가며 맡을 인원(비면 전체 직원)
 //   seed: number,                                      // 무작위 순서를 고정하는 값
-//   overrides: { '<주기 번호>': '<직원>' },            // 그 주기만 수동으로 바꾼 담당
+//   overrides: { '<주기 번호>': '<직원>' },            // 수동으로 바꾼 담당. 순차: 그 주기부터 그 사람을 기준으로 순서가 이어진다 / 무작위: 그 주기 담당만 바뀐다
 // }
 
 export const ROTATION_UNITS = [['day', '일'], ['week', '주'], ['month', '개월']];
@@ -85,7 +85,15 @@ export function rotationWorkerAt(task, staff, k) {
     }
     return prev;
   }
-  if (valid(ov[k])) return ov[k];
+  // 순차: 가장 최근에 수동으로 바꾼 주기(j ≤ k)가 있으면, 그 사람을 기준으로 다음 순서가 이어진다
+  // (예: 순서가 A→B→C일 때 이번 주기를 C로 바꾸면 다음은 A, B…). 과거 주기는 그대로 유지된다.
+  if (valid(ov[k]) && !pool.includes(ov[k])) return ov[k]; // 대상 인원이 아닌 사람은 그 주기만
+  let j = -1;
+  for (const key of Object.keys(ov)) {
+    const i = parseInt(key);
+    if (i <= k && i > j && valid(ov[key]) && pool.includes(ov[key])) j = i;
+  }
+  if (j >= 0) return pool[(pool.indexOf(ov[j]) + (k - j)) % n];
   return pool[(pool.indexOf(first) + k) % n];
 }
 
