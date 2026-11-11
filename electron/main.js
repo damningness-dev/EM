@@ -2516,22 +2516,39 @@ function registerHandlers() {
   });
   // ── TEST 메뉴: 업무 배치판 — 업무 버튼을 근무자 칸에 끌어다 놓아 배치한다(기존 주간근무와 별개) ──
   // 직원 목록은 주간근무의 staff를 그대로 쓰고, 이 배치판은 data.weeklyBoard에 따로 저장한다.
-  //   weeklyBoard = { tasks: [{ id, name }], assignments: { '<직원>': ['<업무 id>', ...] }, updatedAt }
+  //   weeklyBoard = {
+  //     tasks: [{ id, name, kind: 'daily'|'weekly'|'monthly'|'' }],
+  //     assignments: { '<직원>': ['<업무 id>', ...] },
+  //     progress: { '<직원>': { '<업무 id>': { due: 'yyyy-MM-dd', status: 'todo'|'doing'|'done' } } },  // 직원별 기한·진행상태
+  //     updatedAt }
   ipcMain.handle('weeklyBoard:get', () => {
     const b = loadData().weeklyBoard;
-    return b && typeof b === 'object' ? b : { tasks: [], assignments: {}, updatedAt: '' };
+    return b && typeof b === 'object' ? b : { tasks: [], assignments: {}, progress: {}, updatedAt: '' };
   });
   ipcMain.handle('weeklyBoard:set', (_e, board) => {
     if (!computeAdminUnlocked()) return { ok: false, error: '관리자만 수정할 수 있습니다' };
+    const KINDS = ['daily', 'weekly', 'monthly'];
     const tasks = (Array.isArray(board?.tasks) ? board.tasks : [])
-      .map(t => ({ id: String(t?.id || ''), name: String(t?.name || '').trim() })).filter(t => t.id && t.name);
+      .map(t => ({ id: String(t?.id || ''), name: String(t?.name || '').trim(), kind: KINDS.includes(t?.kind) ? t.kind : '' }))
+      .filter(t => t.id && t.name);
     const ids = new Set(tasks.map(t => t.id));
     const assignments = {};
     for (const [who, list] of Object.entries(board?.assignments && typeof board.assignments === 'object' ? board.assignments : {})) {
       assignments[who] = [...new Set((Array.isArray(list) ? list : []).map(String))].filter(id => ids.has(id));
     }
+    // 진행 정보는 실제로 배치된 (직원, 업무)에 대해서만 남긴다.
+    const progress = {};
+    for (const [who, per] of Object.entries(board?.progress && typeof board.progress === 'object' ? board.progress : {})) {
+      for (const [tid, v] of Object.entries(per && typeof per === 'object' ? per : {})) {
+        if (!(assignments[who] || []).includes(tid)) continue;
+        const due = /^\d{4}-\d{2}-\d{2}$/.test(String(v?.due || '')) ? v.due : '';
+        const status = ['todo', 'doing', 'done'].includes(v?.status) ? v.status : 'todo';
+        if (!due && status === 'todo') continue;
+        (progress[who] = progress[who] || {})[tid] = { due, status };
+      }
+    }
     const data = loadData();
-    data.weeklyBoard = { tasks, assignments, updatedAt: new Date().toISOString() };
+    data.weeklyBoard = { tasks, assignments, progress, updatedAt: new Date().toISOString() };
     saveData(data);
     return { ok: true, updatedAt: data.weeklyBoard.updatedAt };
   });
