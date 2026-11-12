@@ -89,6 +89,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   // [환경모니터링] 구역: 월별 모니터링 일정(구역별 측정 일정)을 읽어 와서 고른 날짜의 일정을 버튼으로 보여준다.
   const [mon, setMon] = useState({ zones: [], holidayDefs: [], blocked: [], temps: [] });
   const [monDate, setMonDate] = useState(todayStr()); // 화면 전체의 기준 날짜
+  const [distFilter, setDistFilter] = useState('all'); // 업무배분 필터: 'all' 전체보기 / 'none' 미분배만
   const [viewMode, setViewMode] = useState('day'); // 'day' 일별 보기 / 'all' 전체 보기
   const monYear = parseInt(monDate.slice(0, 4));
   const monHolidays = useMemo(() => buildHolidayMap(mon.holidayDefs, monYear - 1, monYear + 1), [mon.holidayDefs, monYear]);
@@ -414,7 +415,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     });
   }
   const shownIds = (who) => (dayItems ? dayItems.filter(i => i.workers.includes(who)).map(i => i.id) : idsOf(who));
-  const groups = KIND_ORDER.map(k => ({ kind: k, tasks: board.tasks.filter(t => (t.kind || '') === k) })).filter(g => g.tasks.length > 0);
+  const groups = KIND_ORDER.map(k => ({ kind: k, tasks: board.tasks.filter(t => (t.kind || '') === k && (distFilter === 'all' || workersOf(t.id).length === 0)) })).filter(g => g.tasks.length > 0);
   // 로테이션 설정 입력 폼(업무 상세 창 안) — d: 로테이션 초안, set: 일부 값 변경
   function rotationForm(task, d, set) {
     // 새로 켜는 경우 저장할 때와 같이: 지금 배치된 사람이 첫 담당(대상 인원에 있을 때)
@@ -572,14 +573,14 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
 
   // [환경모니터링(EM)] 구역 — 고른 날짜의 모니터링 일정이 측정 종류별 버튼으로 나온다. 버튼은 근무자 칸으로 끌어다 배치할 수 있다.
   function monitoringBox() {
-    const items = emItemsOf(monDate);
     const assigned = board.monAssign?.[monDate] || {};
+    const items = emItemsOf(monDate).filter(b => distFilter === 'all' || !assigned[b.mkey]);
     return (
       <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 px-3 py-2.5 mb-3">
         <p className="text-xs font-bold text-emerald-700 mb-2">🌿 환경모니터링 <span className="px-1 py-0.5 rounded bg-emerald-600 text-white text-[10px] font-bold align-middle">EM</span>
           <span className="font-normal text-gray-400"> — 측정일정 {emCount(monDate)}건{adminUnlocked ? ' · 끌어서 근무자에게 배치' : ''}</span></p>
         {items.length === 0 ? (
-          <p className="text-xs text-gray-300 py-1">이 날은 모니터링 일정이 없습니다.</p>
+          <p className="text-xs text-gray-300 py-1">{distFilter === 'none' && emCount(monDate) > 0 ? '미분배 모니터링 일정이 없습니다.' : '이 날은 모니터링 일정이 없습니다.'}</p>
         ) : (
           <div className="flex flex-wrap gap-1.5">
             {items.map(b => {
@@ -588,7 +589,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                 <span key={b.mkey} title={b.tip + (who ? ` · 배치: ${who}` : '')}
                   draggable={adminUnlocked}
                   onDragStart={e => startDrag(e, { kind: 'mon', date: monDate, mkey: b.mkey, label: b.label, tip: b.tip })}
-                  className={`inline-flex items-center gap-1.5 pl-1.5 pr-2.5 py-1 rounded-lg border text-sm font-medium shadow-sm select-none bg-white border-gray-300 text-gray-800 ${adminUnlocked ? 'cursor-grab active:cursor-grabbing' : ''}`}>
+                  className={`inline-flex items-center gap-1.5 pl-1.5 pr-2.5 py-1 rounded-lg border text-sm font-medium shadow-sm select-none ${who ? 'bg-green-100 border-green-400 text-green-900' : 'bg-white border-gray-300 text-gray-800'} ${adminUnlocked ? 'cursor-grab active:cursor-grabbing' : ''}`}>
                   <span className="text-[10px] leading-none font-bold px-1.5 py-1 rounded border bg-white/70 border-emerald-300 text-emerald-700">EM</span>
                   <EmLabel b={b} />
                   {who && <span className={`w-2.5 h-2.5 rounded-full ${colorOf(who).dot}`} />}
@@ -727,6 +728,18 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
       >
         <div className="flex items-center gap-2 mb-3 flex-wrap">
           <span className="text-sm font-semibold text-gray-700">📋 업무배분</span>
+          {/* 필터: 전체보기 / 미분배(아직 근무자에게 배치되지 않은 업무·모니터링 일정) */}
+          {(() => {
+            const asg = board.monAssign?.[monDate] || {};
+            const undist = board.tasks.filter(t => workersOf(t.id).length === 0).length + emItemsOf(monDate).filter(b => !asg[b.mkey]).length;
+            const total = board.tasks.length + emItemsOf(monDate).length;
+            return (
+              <div className="inline-flex rounded-lg overflow-hidden border border-gray-300 text-xs font-medium">
+                <button type="button" onClick={() => setDistFilter('all')} className={`px-3 py-1.5 ${distFilter === 'all' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`} title="모든 업무 보기">전체보기 ({total})</button>
+                <button type="button" onClick={() => setDistFilter('none')} className={`px-3 py-1.5 border-l border-gray-300 ${distFilter === 'none' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`} title="아직 근무자에게 배치되지 않은 업무만 보기">미분배 ({undist})</button>
+              </div>
+            );
+          })()}
           {adminUnlocked && (
             <>
               <button onClick={() => openTask(null)}
@@ -747,7 +760,9 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
           )}
         </div>
         {monitoringBox()}
-        {board.tasks.length === 0 ? (
+        {board.tasks.length > 0 && groups.length === 0 ? (
+          <p className="text-sm text-gray-300 py-2">미분배 업무가 없습니다. 모든 업무가 근무자에게 배치되어 있습니다.</p>
+        ) : board.tasks.length === 0 ? (
           <p className="text-sm text-gray-300 py-2">{adminUnlocked ? '업무 버튼이 없습니다. 위에서 업무를 추가하거나 주간근무 업무를 가져오세요.' : '등록된 업무가 없습니다.'}</p>
         ) : (
           <div className="space-y-3">
@@ -770,7 +785,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                         onDragStart={e => startDrag(e, { kind: 'palette', taskId: t.id })}
                         onClick={() => openTask(t)}
                         onMouseEnter={e => showTip(e, t, null)} onMouseLeave={() => setTip(null)}
-                        className={`inline-flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-lg border border-gray-300 bg-gray-50 text-sm font-medium text-gray-700 select-none shadow-sm ${adminUnlocked ? 'cursor-grab active:cursor-grabbing hover:bg-white' : ''}`}>
+                        className={`inline-flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-lg border text-sm font-medium select-none shadow-sm ${ws.length > 0 ? 'border-green-400 bg-green-100 text-green-900' : 'border-gray-300 bg-gray-50 text-gray-700'} ${adminUnlocked ? 'cursor-grab active:cursor-grabbing hover:brightness-95' : ''}`}>
                         {/* 구분 버튼 — 누를 때마다 일일 → 주간 → 월간 → 기타 순으로 바뀐다 */}
                         <button type="button" onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setKindMenu({ id: t.id, x: r.left, y: r.bottom + 4 }); }} disabled={!adminUnlocked}
                           title={adminUnlocked ? '구분 변경 (눌러서 선택)' : KIND_LABEL[t.kind || '']}
