@@ -573,7 +573,8 @@ export default function TestBoard({ adminUnlocked }) {
         <p className="text-sm text-gray-400 py-8 text-center">직원이 없습니다. "주간근무" 메뉴의 직원 목록에서 직원을 먼저 추가하세요.</p>
       ) : (
         <div className="overflow-x-auto pb-2">
-          <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${staff.length}, minmax(240px, 1fr))` }}>
+          {/* 근무자 칸은 위→아래로 [이름 / 환경모니터링 / 주기적 / 비주기적] 4개 행을 같이 쓴다 → 모든 근무자의 같은 구역 제목이 한 줄에 맞춰진다 */}
+          <div className="grid gap-x-4" style={{ gridTemplateColumns: `repeat(${staff.length}, minmax(240px, 1fr))`, gridTemplateRows: 'auto auto auto minmax(60px, 1fr)' }}>
             {staff.map(who => {
               const c = colorOf(who);
               const ids = shownIds(who);
@@ -587,14 +588,13 @@ export default function TestBoard({ adminUnlocked }) {
                   onDragOver={e => { if (adminUnlocked) { e.preventDefault(); setOverCol(who); } }}
                   onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setOverCol(null); }}
                   onDrop={e => dropOnStaff(e, who)}
-                  className={`rounded-xl border-2 min-h-[260px] flex flex-col transition-colors ${over ? c.over : c.col}`}>
+                  style={{ gridRow: 'span 4', gridTemplateRows: 'subgrid' }}
+                  className={`rounded-xl border-2 grid mb-4 transition-colors ${over ? c.over : c.col}`}>
                   <div className={`px-3 py-2.5 rounded-t-[10px] flex items-center justify-between ${c.head}`}>
                     <span className="font-semibold">👤 {who}</span>
                     <span className="text-xs opacity-90">{ids.length === 0 && emIds.length === 0 ? '0건' : ids.length === 0 ? `EM ${emIds.length}건` : tracked.length ? `${doneCnt}/${tracked.length} 완료${ids.length > tracked.length ? ` · ${ids.length}건` : ''}` : `${ids.length}건`}</span>
                   </div>
-                  <div className="p-2.5 space-y-2 flex-1">
-                    {ids.length === 0 && emIds.length === 0 && <p className="text-xs text-gray-400 text-center py-8">{viewMode === 'day' ? '이 날 해당하는 업무가 없습니다' : adminUnlocked ? '여기에 업무를 끌어다 놓으세요' : '배치된 업무 없음'}</p>}
-                    {emIds.length > 0 && (
+                  <div className="px-2.5 pt-2.5">
                       <div className="rounded-lg border border-emerald-300 bg-emerald-50/70 p-1.5 space-y-1.5">
                         <p className="text-[11px] font-bold px-1 text-emerald-700">🌿 환경모니터링 <span className="font-normal text-gray-400">{parseInt(monDate.slice(5, 7))}/{parseInt(monDate.slice(8))}</span></p>
                         {emIds.map(([mkey, v]) => (
@@ -605,13 +605,15 @@ export default function TestBoard({ adminUnlocked }) {
                             <span className="flex-1 text-sm font-medium break-words">{v.label}</span>
                           </div>
                         ))}
+                        {emIds.length === 0 && <p className="text-[11px] text-gray-300 px-1 py-1">없음</p>}
                       </div>
-                    )}
+                  </div>
                     {[
                       { key: 'p', title: '🔁 주기적 업무', box: 'border-black/10 bg-white/50', head: 'text-sky-700', list: ids.filter(id => taskById.get(id)?.kind) },
                       { key: 'o', title: '📌 비주기적 업무', box: 'border-dashed border-black/20 bg-white/30', head: 'text-gray-600', list: ids.filter(id => !taskById.get(id)?.kind) },
-                    ].filter(sec => sec.list.length > 0).map(sec => (
-                    <div key={sec.key} className={`rounded-lg border p-1.5 space-y-2 ${sec.box}`}>
+                    ].map(sec => (
+                    <div key={sec.key} className="px-2.5 pt-2 pb-0.5 last:pb-2.5">
+                    <div className={`rounded-lg border p-1.5 space-y-2 h-full ${sec.box}`}>
                       <p className={`text-[11px] font-bold px-1 ${sec.head}`}>{sec.title}</p>
                     {sec.list.map(id => {
                       const t = taskById.get(id);
@@ -645,9 +647,10 @@ export default function TestBoard({ adminUnlocked }) {
                         </div>
                       );
                     })}
+                    {sec.list.length === 0 && <p className="text-[11px] text-gray-300 px-1 py-1">{viewMode === 'day' ? '이 날 해당 없음' : '없음'}</p>}
+                    </div>
                     </div>
                     ))}
-                  </div>
                 </div>
               );
             })}
