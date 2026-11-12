@@ -69,28 +69,29 @@ export function buildScheduleByDate(zones, scheduleAvoid, zoneOrderRank) {
   return map;
 }
 
-// 하루 일정을 버튼 목록으로: 구역(또는 임시일정) 하나가 측정 종류별로 나뉜다.
-//   "AHU-31 부유균,낙하균" / "AHU-31 부유입자" / "AHU-31 표면균" / "005-B-05-2 부유균" …
+// 하루 일정을 버튼 목록으로: 구역(또는 임시일정) 하나가 측정 종류별로 나뉘고 측정포인트 수가 붙는다.
+//   "AHU-31 부유균,낙하균 21개" / "AHU-31 부유입자 55개" / "AHU-31 표면균 21개" / "005-B-05-2 부유균 3개" …
 // 공조는 항상 위 세 가지, 그 밖의 분류(질소가스·압축공기 등)는 포인트가 있는 종류만 버튼으로 만들고,
 // 측정포인트가 하나도 없는 구역(예: 용수)은 이름만 있는 버튼 하나.
 export function monitoringButtons(zoneOrTemp, extra = {}) {
   const z = zoneOrTemp;
   const name = extra.suffix ? `${z.name}${extra.suffix}` : z.name;
-  // 공조(소분류 포함)는 포인트 입력 여부와 관계없이 항상 세 가지로 나눈다: 부유균,낙하균 / 부유입자 / 표면균
-  if (z.category && getMajorCat(z.category) === '공조') {
-    return [
-      { key: 'air', label: `${name} 부유균,낙하균`, types: ['부유균', '낙하균'] },
-      { key: 'particle', label: `${name} 부유입자`, types: ['부유입자'] },
-      { key: 'surface', label: `${name} 표면균`, types: ['표면균'] },
-    ];
-  }
-  const air = [];
-  if ((z.points_float || 0) > 0) air.push('부유균');
-  if ((z.points_fall || 0) > 0) air.push('낙하균');
+  const f = z.points_float || 0, l = z.points_fall || 0, p = z.points_particle || 0, sf = z.points_surface || 0;
+  const isAir = !!z.category && getMajorCat(z.category) === '공조';
+  // 분배된 측정량: 이 일정의 측정포인트 수. "표면균 21개", 부유균·낙하균이 같으면 "부유균,낙하균 21개", 다르면 "부유균 9개,낙하균 8개".
+  const airLabel = (() => {
+    if (f > 0 && l > 0 && f === l) return `부유균,낙하균 ${f}개`;
+    const parts = [];
+    if (f > 0) parts.push(`부유균 ${f}개`); else if (isAir) parts.push('부유균');
+    if (l > 0) parts.push(`낙하균 ${l}개`); else if (isAir) parts.push('낙하균');
+    return parts.join(',');
+  })();
   const out = [];
-  if (air.length) out.push({ key: 'air', label: `${name} ${air.join(',')}`, types: air });
-  if ((z.points_particle || 0) > 0) out.push({ key: 'particle', label: `${name} 부유입자`, types: ['부유입자'] });
-  if ((z.points_surface || 0) > 0) out.push({ key: 'surface', label: `${name} 표면균`, types: ['표면균'] });
-  if (out.length === 0) out.push({ key: 'name', label: name, types: [] });
+  // 공조(소분류 포함)는 포인트 입력 여부와 관계없이 항상 세 가지로 나눈다: 부유균,낙하균 / 부유입자 / 표면균
+  if (isAir || f > 0 || l > 0) out.push({ key: 'air', label: `${name} ${airLabel}`, types: ['부유균', '낙하균'].filter((_, i) => isAir || (i === 0 ? f > 0 : l > 0)), count: f + l });
+  if (isAir || p > 0) out.push({ key: 'particle', label: `${name} 부유입자${p > 0 ? ` ${p}개` : ''}`, types: ['부유입자'], count: p });
+  if (isAir || sf > 0) out.push({ key: 'surface', label: `${name} 표면균${sf > 0 ? ` ${sf}개` : ''}`, types: ['표면균'], count: sf });
+  // 측정포인트가 하나도 없는 비공조 구역(예: 용수)은 이름만 있는 버튼 하나
+  if (out.length === 0) out.push({ key: 'name', label: name, types: [], count: 0 });
   return out;
 }

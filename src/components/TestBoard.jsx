@@ -473,7 +473,9 @@ export default function TestBoard({ adminUnlocked }) {
       ...(monTempByDate[ds] || []).flatMap(t => monitoringButtons(t, { suffix: '[임시]' }).map(b => ({ ...b, mkey: `t${t.id}:${b.key}`, cls: 'bg-orange-50 text-orange-700 border-orange-300', tip: '임시일정' }))),
     ];
   };
-  const dayCount = (ds) => boardTasksOn(board, staff, ds, !!monHolidays[ds], dayOpts()).length + emItemsOf(ds).length;
+  // 환경모니터링 건수는 달력의 '측정일정(N건)'과 같게 구역 일정 수로 센다(측정 종류별 버튼 수가 아니라)
+  const emCount = (ds) => (monByDate[ds] || []).length;
+  const dayCount = (ds) => boardTasksOn(board, staff, ds, !!monHolidays[ds], dayOpts()).length + emCount(ds);
 
   function dayBar() {
     const weekStartMon = (() => { try { return localStorage.getItem('em-week-start') === 'mon'; } catch { return false; } })();
@@ -526,7 +528,7 @@ export default function TestBoard({ adminUnlocked }) {
     return (
       <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 px-3 py-2.5 mb-3">
         <p className="text-xs font-bold text-emerald-700 mb-2">🌿 환경모니터링 <span className="px-1 py-0.5 rounded bg-emerald-600 text-white text-[10px] font-bold align-middle">EM</span>
-          <span className="font-normal text-gray-400"> — {parseInt(monDate.slice(5, 7))}/{parseInt(monDate.slice(8))} 모니터링 일정 {items.length}건{adminUnlocked ? ' · 끌어서 근무자에게 배치' : ''}</span></p>
+          <span className="font-normal text-gray-400"> — 측정일정 {emCount(monDate)}건{adminUnlocked ? ' · 끌어서 근무자에게 배치' : ''}</span></p>
         {items.length === 0 ? (
           <p className="text-xs text-gray-300 py-1">이 날은 모니터링 일정이 없습니다.</p>
         ) : (
@@ -596,7 +598,7 @@ export default function TestBoard({ adminUnlocked }) {
                   </div>
                   <div className="px-2.5 pt-2.5">
                       <div className="rounded-lg border border-emerald-300 bg-emerald-50/70 p-1.5 space-y-1.5">
-                        <p className="text-[11px] font-bold px-1 text-emerald-700">🌿 환경모니터링 <span className="font-normal text-gray-400">{parseInt(monDate.slice(5, 7))}/{parseInt(monDate.slice(8))}</span></p>
+                        <p className="text-[11px] font-bold px-1 text-emerald-700">🌿 환경모니터링</p>
                         {emIds.map(([mkey, v]) => (
                           <div key={mkey} draggable={adminUnlocked} title={v.tip || ''}
                             onDragStart={e => startDrag(e, { kind: 'mon-placed', date: monDate, mkey, label: v.label, tip: v.tip })}
