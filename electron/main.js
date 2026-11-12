@@ -2544,7 +2544,7 @@ function registerHandlers() {
   //     updatedAt }
   ipcMain.handle('weeklyBoard:get', () => {
     const b = loadData().weeklyBoard;
-    return b && typeof b === 'object' ? b : { tasks: [], assignments: {}, progress: {}, updatedAt: '' };
+    return b && typeof b === 'object' ? b : { tasks: [], assignments: {}, progress: {}, monAssign: {}, updatedAt: '' };
   });
   ipcMain.handle('weeklyBoard:set', (_e, board) => {
     if (!computeAdminUnlocked()) return { ok: false, error: '관리자만 수정할 수 있습니다' };
@@ -2608,8 +2608,19 @@ function registerHandlers() {
         (progress[who] = progress[who] || {})[tid] = entry;
       }
     }
+    // 환경모니터링(EM) 일정 버튼의 배치: { 'yyyy-MM-dd': { '<구역id:종류>': { who, label, tip } } } — 오래된 날짜는 정리한다
+    const monAssign = {};
+    const keepFrom = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10);
+    for (const [date, items] of Object.entries(board?.monAssign && typeof board.monAssign === 'object' ? board.monAssign : {})) {
+      if (!DATE.test(date) || date < keepFrom) continue;
+      for (const [key, v] of Object.entries(items && typeof items === 'object' ? items : {})) {
+        const who = String(v?.who || '').slice(0, 40);
+        if (!key || key.length > 80 || !who) continue;
+        (monAssign[date] = monAssign[date] || {})[key] = { who, label: String(v?.label || '').slice(0, 120), tip: String(v?.tip || '').slice(0, 80) };
+      }
+    }
     const data = loadData();
-    data.weeklyBoard = { tasks, assignments, progress, updatedAt: new Date().toISOString() };
+    data.weeklyBoard = { tasks, assignments, progress, monAssign, updatedAt: new Date().toISOString() };
     saveData(data);
     return { ok: true, updatedAt: data.weeklyBoard.updatedAt };
   });

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { fetchWeeklyDuty, fetchWeeklyBoard, saveWeeklyBoard, syncAfterChange, fetchZones, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchTempSchedules } from '../lib/api';
 import { buildHolidayMap, setScheduleConfig, totalCount } from '../lib/schedule';
 import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, monitoringButtons } from '../lib/monitoringDay';
-import { scheduleLabel, ROTATION_UNITS, rotationState, rotationPool, rotationLabel, fmtDate } from '../lib/boardRotation';
+import { boardTasksOn, scheduleLabel, ROTATION_UNITS, rotationState, rotationPool, rotationLabel, fmtDate } from '../lib/boardRotation';
 
 // TEST 메뉴 — 업무 배치판. 기존 "주간근무" 메뉴는 그대로 두고, 같은 직원 목록을 가로 칸으로 펼친 뒤
 // 업무 버튼을 끌어다(드래그 앤 드롭) 근무자에게 배치한다. 배치된 업무마다 기한과 진행상태를 입력하고,
@@ -28,6 +28,8 @@ const KIND_LABEL = { daily: '매일', weekly: '주간', monthly: '월간', '': '
 const KIND_SHORT = { daily: '일일', weekly: '주간', monthly: '월간', '': '기타' };
 const KIND_BADGE = { daily: 'bg-sky-100 text-sky-700 border-sky-300', weekly: 'bg-violet-100 text-violet-700 border-violet-300', monthly: 'bg-rose-100 text-rose-700 border-rose-300', '': 'bg-gray-100 text-gray-500 border-gray-300' };
 const DOW_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
+const DOW = DOW_NAMES;
+const DAY_OPTS = { ignoreFlag: true, includeUndated: true }; // 일별 보기: 달력 표시 설정과 무관하게, 마감기한 없는 기타 업무는 매일
 const KIND_ORDER = ['daily', 'weekly', 'monthly', ''];
 const STATUS = [['todo', '대기'], ['doing', '진행중'], ['done', '완료']];
 const STATUS_CLS = { todo: 'bg-white text-gray-500 border-gray-300', doing: 'bg-blue-600 text-white border-blue-600', done: 'bg-green-600 text-white border-green-600' };
@@ -57,7 +59,7 @@ function dueLabel(due, status) {
 export default function TestBoard({ adminUnlocked }) {
   const [staff, setStaff] = useState(null);
   const [duty, setDuty] = useState(null);
-  const [board, setBoard] = useState({ tasks: [], assignments: {}, progress: {} });
+  const [board, setBoard] = useState({ tasks: [], assignments: {}, progress: {}, monAssign: {} });
   const [overCol, setOverCol] = useState(null);
   const [overPalette, setOverPalette] = useState(false);
   const [notice, setNotice] = useState(null);
@@ -66,7 +68,8 @@ export default function TestBoard({ adminUnlocked }) {
   const [taskDlg, setTaskDlg] = useState(null); // { id|null(새 업무), draft } — 업무 상세 창
   // [환경모니터링] 구역: 월별 모니터링 일정(구역별 측정 일정)을 읽어 와서 고른 날짜의 일정을 버튼으로 보여준다.
   const [mon, setMon] = useState({ zones: [], holidayDefs: [], blocked: [], temps: [] });
-  const [monDate, setMonDate] = useState(todayStr());
+  const [monDate, setMonDate] = useState(todayStr()); // 화면 전체의 기준 날짜
+  const [viewMode, setViewMode] = useState('day'); // 'day' 일별 보기 / 'all' 전체 보기
   const monYear = parseInt(monDate.slice(0, 4));
   const monHolidays = useMemo(() => buildHolidayMap(mon.holidayDefs, monYear - 1, monYear + 1), [mon.holidayDefs, monYear]);
   const monByDate = useMemo(() => {
@@ -98,7 +101,7 @@ export default function TestBoard({ adminUnlocked }) {
     Promise.all([fetchWeeklyDuty().catch(() => null), fetchWeeklyBoard().catch(() => null)]).then(([d, b]) => {
       setDuty(d || null);
       setStaff(Array.isArray(d?.staff) ? d.staff : []);
-      const loadedBoard = { tasks: b?.tasks || [], assignments: b?.assignments || {}, progress: b?.progress || {} };
+      const loadedBoard = { tasks: b?.tasks || [], assignments: b?.assignments || {}, progress: b?.progress || {}, monAssign: b?.monAssign || {} };
       // 처음 열었는데 업무 버튼이 하나도 없으면(관리자) 주간근무 업무를 자동으로 채워 저장한다.
       if (!seeded.current && adminRef.current && loadedBoard.tasks.length === 0 && dutyTasksOf(d).length > 0) {
         seeded.current = true;
@@ -245,14 +248,14 @@ export default function TestBoard({ adminUnlocked }) {
     const assignments = {}, progress = {};
     Object.entries(board.assignments).forEach(([who, ids]) => { assignments[who] = ids.filter(x => x !== id); });
     Object.entries(board.progress).forEach(([who, per]) => { const { [id]: _drop, ...rest } = per || {}; progress[who] = rest; }); // eslint-disable-line no-unused-vars
-    commit({ tasks: board.tasks.filter(t => t.id !== id), assignments, progress });
+    commit({ ...board, tasks: board.tasks.filter(t => t.id !== id), assignments, progress });
   }
   // 기한·진행상태 입력. 로테이션 업무는 "이번 주기" 기록으로 남기고(주기가 바뀌면 자동으로 새로 시작), 같은
   // 업무의 다른 사람 기록은 정리한다.
   function setProgress(who, taskId, patch) {
     if (!guard()) return;
     const task = board.tasks.find(t => t.id === taskId);
-    const rs = task?.rotation?.on ? rotationState(task, staff) : null;
+    const rs = task?.rotation?.on ? rotationState(task, staff, viewD) : null;
     const cur = rs ? prOf(task, who, rs) : ((board.progress[who] || {})[taskId] || { due: '', status: 'todo' });
     const entry = { ...cur, ...patch, ...(rs ? { period: rs.k } : {}) };
     delete entry.auto;
@@ -275,7 +278,7 @@ export default function TestBoard({ adminUnlocked }) {
   // ── 로테이션 ── (설정은 업무 상세 창 안에서 한다)
   // 로테이션 업무를 다른 근무자 칸에 놓으면 "이번 주기"만 그 사람이 맡도록 바꾼다(다음 주기부터는 원래 순서).
   function overrideThisPeriod(task, who) {
-    const rs = rotationState(task, staff);
+    const rs = rotationState(task, staff, viewD);
     if (!rs || rs.worker === who) return;
     const rotation = { ...task.rotation, overrides: { ...(task.rotation.overrides || {}), [rs.k]: who } };
     commit({ ...board, tasks: board.tasks.map(t => t.id === task.id ? { ...t, rotation } : t) });
@@ -295,6 +298,10 @@ export default function TestBoard({ adminUnlocked }) {
   function dropOnStaff(e, who) {
     e.preventDefault(); setOverCol(null);
     const d = readDrag(e);
+    if ((d?.kind === 'mon' || d?.kind === 'mon-placed') && d.mkey && d.date) {
+      if (guard()) setMonAssign(d.date, d.mkey, { who, label: d.label, tip: d.tip });
+      return;
+    }
     if (!d?.taskId || !guard()) return;
     const dragged = board.tasks.find(t => t.id === d.taskId);
     if (dragged?.rotation?.on) { overrideThisPeriod(dragged, who); return; }
@@ -311,11 +318,24 @@ export default function TestBoard({ adminUnlocked }) {
     }
     const cur = assignments[who] || [];
     assignments[who] = cur.includes(d.taskId) ? cur : [...cur, d.taskId];
-    commit({ ...board, assignments, progress });
+    const next = { ...board, assignments, progress };
+    commit(next);
+    if (viewMode === 'day' && !boardTasksOn(next, staff, monDate, !!monHolidays[monDate], DAY_OPTS).some(i => i.id === d.taskId && i.workers.includes(who))) {
+      flash('배치했습니다. 이 날짜에는 해당하지 않아 일별 보기에서는 보이지 않습니다(전체 보기에서 확인).');
+    }
+  }
+  // 환경모니터링(EM) 일정 버튼 배치: 날짜·항목별로 한 명에게 배정(다른 사람 칸에 놓으면 이동)
+  function setMonAssign(date, mkey, value) {
+    const monAssign = { ...(board.monAssign || {}) };
+    const day = { ...(monAssign[date] || {}) };
+    if (value) day[mkey] = value; else delete day[mkey];
+    if (Object.keys(day).length) monAssign[date] = day; else delete monAssign[date];
+    commit({ ...board, monAssign });
   }
   function dropOnPalette(e) {
     e.preventDefault(); setOverPalette(false);
     const d = readDrag(e);
+    if (d?.kind === 'mon-placed') { if (guard()) setMonAssign(d.date, d.mkey, null); return; } // EM 버튼을 영역으로 돌려놓으면 배치 해제
     if (d?.kind !== 'placed' || !d.from) return;
     if (board.tasks.find(t => t.id === d.taskId)?.rotation?.on) { flash('로테이션 업무는 🔄 설정에서 끌 수 있습니다.', true); return; }
     unassign(d.from, d.taskId);
@@ -329,7 +349,9 @@ export default function TestBoard({ adminUnlocked }) {
   if (staff === null) return <div className="p-6 text-sm text-gray-400">불러오는 중...</div>;
   const taskById = new Map(board.tasks.map(t => [t.id, t]));
   const colorOf = (who) => WORKER_COLORS[Math.max(0, staff.indexOf(who)) % WORKER_COLORS.length];
-  const rotOf = (t) => (t?.rotation?.on ? rotationState(t, staff) : null);
+  // 일별 보기에서는 고른 날짜 기준으로 로테이션 주기·담당을 계산한다
+  const viewD = viewMode === 'day' ? new Date(monDate + 'T00:00:00') : undefined;
+  const rotOf = (t) => (t?.rotation?.on ? rotationState(t, staff, viewD) : null);
   // 일반 배치 + 로테이션으로 이번 주기에 그 사람이 맡은 업무
   const workersOf = (id) => {
     const t = taskById.get(id); const rs = rotOf(t);
@@ -339,6 +361,8 @@ export default function TestBoard({ adminUnlocked }) {
     ...(board.assignments[who] || []).filter(id => taskById.has(id) && !taskById.get(id).rotation?.on),
     ...board.tasks.filter(t => rotOf(t)?.worker === who).map(t => t.id),
   ];
+  const dayItems = viewMode === 'day' ? boardTasksOn(board, staff, monDate, !!monHolidays[monDate], DAY_OPTS) : null;
+  const shownIds = (who) => (dayItems ? dayItems.filter(i => i.workers.includes(who)).map(i => i.id) : idsOf(who));
   const groups = KIND_ORDER.map(k => ({ kind: k, tasks: board.tasks.filter(t => (t.kind || '') === k) })).filter(g => g.tasks.length > 0);
   // 로테이션 설정 입력 폼(업무 상세 창 안) — d: 로테이션 초안, set: 일부 값 변경
   function rotationForm(task, d, set) {
@@ -437,56 +461,83 @@ export default function TestBoard({ adminUnlocked }) {
   }
   const calOnCount = board.tasks.filter(t => t.showOnCalendar !== false).length;
 
-  // [환경모니터링] 구역 — 요일 막대에서 날짜를 고르면 그 날의 모니터링 일정이 측정 종류별 버튼으로 나온다.
-  function monitoringBox() {
+  // ── 일별 보기 ──
+  // 위쪽 날짜 막대에서 고른 날짜(monDate)가 화면 전체의 기준이다. '일별' 보기에서는 근무자 칸에 그 날 해야 하는 업무만
+  // (매일·주간·월간 주기와 마감기한, 로테이션은 그 날짜의 담당 기준) 나오고, '전체' 보기에서는 배치된 업무가 모두 나온다.
+  const emItemsOf = (ds) => {
+    const BTN = { air: 'bg-emerald-100 text-emerald-800 border-emerald-300', particle: 'bg-violet-100 text-violet-800 border-violet-300', surface: 'bg-amber-100 text-amber-800 border-amber-300', name: 'bg-gray-100 text-gray-700 border-gray-300' };
+    return [
+      ...(monByDate[ds] || []).flatMap(({ zone, measurement }) => monitoringButtons(zone).map(b => ({ ...b, mkey: `${zone.id}:${b.key}`, cls: BTN[b.key], tip: `${zone.category} · ${zone.grade || ''} ${measurement.num}/${totalCount(zone)}회차` }))),
+      ...(monTempByDate[ds] || []).flatMap(t => monitoringButtons(t, { suffix: '[임시]' }).map(b => ({ ...b, mkey: `t${t.id}:${b.key}`, cls: 'bg-orange-50 text-orange-700 border-orange-300', tip: '임시일정' }))),
+    ];
+  };
+  const dayCount = (ds) => boardTasksOn(board, staff, ds, !!monHolidays[ds], DAY_OPTS).length + emItemsOf(ds).length;
+
+  function dayBar() {
     const weekStartMon = (() => { try { return localStorage.getItem('em-week-start') === 'mon'; } catch { return false; } })();
     const base = new Date(monDate + 'T00:00:00');
     const startOff = weekStartMon ? (base.getDay() + 6) % 7 : base.getDay();
     const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(base); d.setDate(base.getDate() - startOff + i); return d; });
     const shift = (n) => { const d = new Date(base); d.setDate(d.getDate() + n); setMonDate(fmtDate(d)); };
-    const DOW = ['일', '월', '화', '수', '목', '금', '토'];
-    const countOf = (ds) => (monByDate[ds] || []).reduce((n, e) => n + monitoringButtons(e.zone).length, 0) + (monTempByDate[ds] || []).reduce((n, t) => n + monitoringButtons(t, { suffix: '[임시]' }).length, 0);
-    const evts = monByDate[monDate] || [];
-    const temps = monTempByDate[monDate] || [];
     const hol = monHolidays[monDate];
-    const BTN = { air: 'bg-emerald-100 text-emerald-800 border-emerald-300', particle: 'bg-violet-100 text-violet-800 border-violet-300', surface: 'bg-amber-100 text-amber-800 border-amber-300', name: 'bg-gray-100 text-gray-700 border-gray-300' };
-    const items = [
-      ...evts.flatMap(({ zone, measurement }, i) => monitoringButtons(zone).map(b => ({ ...b, id: `z${i}${b.key}`, cls: BTN[b.key], tip: `${zone.category} · ${zone.grade || ''} ${measurement.num}/${totalCount(zone)}회차` }))),
-      ...temps.flatMap((t, i) => monitoringButtons(t, { suffix: '[임시]' }).map(b => ({ ...b, id: `t${i}${b.key}`, cls: 'bg-orange-50 text-orange-700 border-orange-300', tip: '임시일정' }))),
-    ];
     return (
-      <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 px-3 py-2.5 mb-3">
+      <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 mb-4">
         <div className="flex items-center gap-2 mb-2 flex-wrap">
-          <p className="text-xs font-bold text-emerald-700">🌿 환경모니터링 <span className="font-normal text-gray-400">— 월별 모니터링 일정</span></p>
+          <span className="text-sm font-semibold text-gray-700">📅 {parseInt(monDate.slice(5, 7))}월 {parseInt(monDate.slice(8))}일 ({DOW[base.getDay()]}) {hol && <span className="text-red-500 text-xs font-medium">· {hol}</span>}</span>
+          <div className="inline-flex rounded-lg overflow-hidden border border-gray-300 text-xs font-medium ml-2">
+            <button type="button" onClick={() => setViewMode('day')} className={`px-3 py-1 ${viewMode === 'day' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`} title="고른 날짜에 해야 하는 업무만 보기">일별 보기</button>
+            <button type="button" onClick={() => setViewMode('all')} className={`px-3 py-1 border-l border-gray-300 ${viewMode === 'all' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`} title="배치된 업무를 날짜와 관계없이 모두 보기">전체 보기</button>
+          </div>
+          <span className="text-[11px] text-gray-400">{viewMode === 'day' ? '근무자 칸에 이 날 해당하는 업무만 나옵니다' : '배치된 업무를 모두 보여줍니다 (날짜는 환경모니터링 일정용)'}</span>
           <div className="ml-auto flex items-center gap-1">
-            <button type="button" onClick={() => shift(-7)} className="px-1.5 py-0.5 text-xs rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-50" title="이전 주">‹</button>
+            <button type="button" onClick={() => shift(-1)} className="px-2 py-0.5 text-xs rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-50" title="전날">‹</button>
             <button type="button" onClick={() => setMonDate(todayStr())} className="px-2 py-0.5 text-xs rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-50">오늘</button>
-            <button type="button" onClick={() => shift(7)} className="px-1.5 py-0.5 text-xs rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-50" title="다음 주">›</button>
+            <button type="button" onClick={() => shift(1)} className="px-2 py-0.5 text-xs rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-50" title="다음날">›</button>
+            <input type="date" value={monDate} onChange={e => e.target.value && setMonDate(e.target.value)} className="ml-1 text-xs rounded border border-gray-300 px-1.5 py-0.5 text-gray-600" />
           </div>
         </div>
-        <div className="grid grid-cols-7 gap-1 mb-2.5">
+        <div className="grid grid-cols-7 gap-1">
           {days.map(d => {
-            const ds = fmtDate(d); const sel = ds === monDate; const n = countOf(ds); const isToday = ds === todayStr(); const off = d.getDay() === 0 || !!monHolidays[ds];
+            const ds = fmtDate(d); const sel = ds === monDate; const n = dayCount(ds); const isToday = ds === todayStr(); const off = d.getDay() === 0 || !!monHolidays[ds];
             return (
               <button key={ds} type="button" onClick={() => setMonDate(ds)} title={monHolidays[ds] || ''}
-                className={`relative flex flex-col items-center py-1 rounded-lg border text-xs transition-colors ${sel ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-gray-200 hover:bg-emerald-50'}`}>
+                className={`flex flex-col items-center py-1 rounded-lg border text-xs transition-colors ${sel ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-200 hover:bg-blue-50'}`}>
                 <span className={`font-semibold ${sel ? '' : off ? 'text-red-500' : d.getDay() === 6 ? 'text-blue-500' : 'text-gray-600'}`}>{DOW[d.getDay()]}</span>
-                <span className={`text-[11px] ${sel ? 'text-white/90' : isToday ? 'text-emerald-600 font-bold' : 'text-gray-400'}`}>{d.getMonth() + 1}/{d.getDate()}</span>
-                <span className={`mt-0.5 text-[10px] leading-none px-1 py-0.5 rounded-full ${n ? (sel ? 'bg-white/25 text-white' : 'bg-emerald-100 text-emerald-700') : 'opacity-0'}`}>{n || 0}</span>
+                <span className={`text-[11px] ${sel ? 'text-white/90' : isToday ? 'text-blue-600 font-bold' : 'text-gray-400'}`}>{d.getMonth() + 1}/{d.getDate()}</span>
+                <span className={`mt-0.5 text-[10px] leading-none px-1 py-0.5 rounded-full ${n ? (sel ? 'bg-white/25 text-white' : 'bg-blue-100 text-blue-700') : 'opacity-0'}`} title="이 날 업무+모니터링 일정 건수">{n || 0}</span>
               </button>
             );
           })}
         </div>
-        <p className="text-[11px] text-gray-500 mb-1.5">
-          {parseInt(monDate.slice(5, 7))}월 {parseInt(monDate.slice(8))}일 ({DOW[base.getDay()]}) {hol && <span className="text-red-500">· {hol}</span>} <span className="text-gray-400">· 모니터링 일정 {items.length}건</span>
-        </p>
+      </div>
+    );
+  }
+
+  // [환경모니터링(EM)] 구역 — 고른 날짜의 모니터링 일정이 측정 종류별 버튼으로 나온다. 버튼은 근무자 칸으로 끌어다 배치할 수 있다.
+  function monitoringBox() {
+    const items = emItemsOf(monDate);
+    const assigned = board.monAssign?.[monDate] || {};
+    return (
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 px-3 py-2.5 mb-3">
+        <p className="text-xs font-bold text-emerald-700 mb-2">🌿 환경모니터링 <span className="px-1 py-0.5 rounded bg-emerald-600 text-white text-[10px] font-bold align-middle">EM</span>
+          <span className="font-normal text-gray-400"> — {parseInt(monDate.slice(5, 7))}/{parseInt(monDate.slice(8))} 모니터링 일정 {items.length}건{adminUnlocked ? ' · 끌어서 근무자에게 배치' : ''}</span></p>
         {items.length === 0 ? (
           <p className="text-xs text-gray-300 py-1">이 날은 모니터링 일정이 없습니다.</p>
         ) : (
           <div className="flex flex-wrap gap-1.5">
-            {items.map(b => (
-              <span key={b.id} title={b.tip} className={`inline-flex items-center px-2.5 py-1 rounded-lg border text-sm font-medium shadow-sm ${b.cls}`}>{b.label}</span>
-            ))}
+            {items.map(b => {
+              const who = assigned[b.mkey]?.who;
+              return (
+                <span key={b.mkey} title={b.tip + (who ? ` · 배치: ${who}` : '')}
+                  draggable={adminUnlocked}
+                  onDragStart={e => startDrag(e, { kind: 'mon', date: monDate, mkey: b.mkey, label: b.label, tip: b.tip })}
+                  className={`inline-flex items-center gap-1.5 pl-1.5 pr-2.5 py-1 rounded-lg border text-sm font-medium shadow-sm select-none ${b.cls} ${adminUnlocked ? 'cursor-grab active:cursor-grabbing' : ''}`}>
+                  <span className="text-[10px] leading-none font-bold px-1.5 py-1 rounded border bg-white/70 border-emerald-300 text-emerald-700">EM</span>
+                  {b.label}
+                  {who && <span className={`w-2.5 h-2.5 rounded-full ${colorOf(who).dot}`} />}
+                </span>
+              );
+            })}
           </div>
         )}
       </div>
@@ -505,6 +556,9 @@ export default function TestBoard({ adminUnlocked }) {
       <p className="text-xs text-gray-400 mb-4">
         기존 "주간근무" 메뉴는 그대로 두었습니다. 직원 목록과 업무는 주간근무에서 가져온 것이고, 업무 버튼을 근무자 칸으로 끌어다 놓아 배치하세요. 마감기한·완료표시는 구분이 '기타'인 업무만 입력할 수 있습니다.
       </p>
+
+      {/* 날짜 막대 — 화면 전체(근무자 칸·환경모니터링)의 기준 날짜와 일별/전체 보기 */}
+      {dayBar()}
 
       {/* 업무 버튼 */}
       <div
@@ -600,7 +654,8 @@ export default function TestBoard({ adminUnlocked }) {
           <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${staff.length}, minmax(240px, 1fr))` }}>
             {staff.map(who => {
               const c = colorOf(who);
-              const ids = idsOf(who);
+              const ids = shownIds(who);
+              const emIds = Object.entries(board.monAssign?.[monDate] || {}).filter(([, v]) => v.who === who);
               // 기한·완료표시는 구분이 '기타'인 업무만 쓴다 → 완료 집계도 기타 업무 기준
               const tracked = ids.filter(id => !taskById.get(id)?.kind);
               const doneCnt = tracked.filter(id => prOf(taskById.get(id), who, rotOf(taskById.get(id))).status === 'done').length;
@@ -613,10 +668,23 @@ export default function TestBoard({ adminUnlocked }) {
                   className={`rounded-xl border-2 min-h-[260px] flex flex-col transition-colors ${over ? c.over : c.col}`}>
                   <div className={`px-3 py-2.5 rounded-t-[10px] flex items-center justify-between ${c.head}`}>
                     <span className="font-semibold">👤 {who}</span>
-                    <span className="text-xs opacity-90">{ids.length === 0 ? '0건' : tracked.length ? `${doneCnt}/${tracked.length} 완료${ids.length > tracked.length ? ` · ${ids.length}건` : ''}` : `${ids.length}건`}</span>
+                    <span className="text-xs opacity-90">{ids.length === 0 && emIds.length === 0 ? '0건' : ids.length === 0 ? `EM ${emIds.length}건` : tracked.length ? `${doneCnt}/${tracked.length} 완료${ids.length > tracked.length ? ` · ${ids.length}건` : ''}` : `${ids.length}건`}</span>
                   </div>
                   <div className="p-2.5 space-y-2 flex-1">
-                    {ids.length === 0 && <p className="text-xs text-gray-400 text-center py-8">{adminUnlocked ? '여기에 업무를 끌어다 놓으세요' : '배치된 업무 없음'}</p>}
+                    {ids.length === 0 && emIds.length === 0 && <p className="text-xs text-gray-400 text-center py-8">{viewMode === 'day' ? '이 날 해당하는 업무가 없습니다' : adminUnlocked ? '여기에 업무를 끌어다 놓으세요' : '배치된 업무 없음'}</p>}
+                    {emIds.length > 0 && (
+                      <div className="rounded-lg border border-emerald-300 bg-emerald-50/70 p-1.5 space-y-1.5">
+                        <p className="text-[11px] font-bold px-1 text-emerald-700">🌿 환경모니터링 <span className="font-normal text-gray-400">{parseInt(monDate.slice(5, 7))}/{parseInt(monDate.slice(8))}</span></p>
+                        {emIds.map(([mkey, v]) => (
+                          <div key={mkey} draggable={adminUnlocked} title={v.tip || ''}
+                            onDragStart={e => startDrag(e, { kind: 'mon-placed', date: monDate, mkey, label: v.label, tip: v.tip })}
+                            className={`rounded-lg border px-2.5 py-1.5 shadow-sm flex items-center gap-1.5 ${c.chip} ${adminUnlocked ? 'cursor-grab active:cursor-grabbing' : ''}`}>
+                            <span className="shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border bg-emerald-100 border-emerald-300 text-emerald-700">EM</span>
+                            <span className="flex-1 text-sm font-medium break-words">{v.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {[
                       { key: 'p', title: '🔁 주기적 업무', box: 'border-black/10 bg-white/50', head: 'text-sky-700', list: ids.filter(id => taskById.get(id)?.kind) },
                       { key: 'o', title: '📌 비주기적 업무', box: 'border-dashed border-black/20 bg-white/30', head: 'text-gray-600', list: ids.filter(id => !taskById.get(id)?.kind) },
