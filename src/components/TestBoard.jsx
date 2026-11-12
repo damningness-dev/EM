@@ -482,19 +482,23 @@ export default function TestBoard({ adminUnlocked }) {
     const hol = monHolidays[monDate];
     return (
       <div className="rounded-xl border border-gray-200 bg-white px-4 py-3 mb-4">
-        <div className="flex items-center gap-2 mb-2 flex-wrap">
-          <span className="text-sm font-semibold text-gray-700">📅 {parseInt(monDate.slice(5, 7))}월 {parseInt(monDate.slice(8))}일 ({DOW[base.getDay()]}) {hol && <span className="text-red-500 text-xs font-medium">· {hol}</span>}</span>
-          <div className="inline-flex rounded-lg overflow-hidden border border-gray-300 text-xs font-medium ml-2">
+        {/* 제목: ○○년 ○월 ○일 일일업무 — 양 끝 화살표로 하루씩 이동 */}
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <button type="button" onClick={() => shift(-1)} title="전날" className="w-9 h-9 shrink-0 flex items-center justify-center rounded-full border border-gray-300 bg-white text-xl leading-none text-gray-600 hover:bg-gray-50">‹</button>
+          <h2 className="flex-1 text-center text-xl font-bold text-gray-800">
+            {base.getFullYear()}년 {base.getMonth() + 1}월 {base.getDate()}일 일일업무
+            <span className={`ml-2 text-sm font-semibold ${base.getDay() === 0 || hol ? 'text-red-500' : base.getDay() === 6 ? 'text-blue-500' : 'text-gray-400'}`}>({DOW[base.getDay()]}요일){hol ? ` · ${hol}` : ''}</span>
+          </h2>
+          <button type="button" onClick={() => shift(1)} title="다음날" className="w-9 h-9 shrink-0 flex items-center justify-center rounded-full border border-gray-300 bg-white text-xl leading-none text-gray-600 hover:bg-gray-50">›</button>
+        </div>
+        <div className="flex items-center justify-center gap-2 mb-2.5 flex-wrap">
+          <div className="inline-flex rounded-lg overflow-hidden border border-gray-300 text-xs font-medium">
             <button type="button" onClick={() => setViewMode('day')} className={`px-3 py-1 ${viewMode === 'day' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`} title="고른 날짜에 해야 하는 업무만 보기">일별 보기</button>
             <button type="button" onClick={() => setViewMode('all')} className={`px-3 py-1 border-l border-gray-300 ${viewMode === 'all' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`} title="배치된 업무를 날짜와 관계없이 모두 보기">전체 보기</button>
           </div>
-          <span className="text-[11px] text-gray-400">{viewMode === 'day' ? '근무자 칸에 이 날 해당하는 업무만 나옵니다' : '배치된 업무를 모두 보여줍니다 (날짜는 환경모니터링 일정용)'}</span>
-          <div className="ml-auto flex items-center gap-1">
-            <button type="button" onClick={() => shift(-1)} className="px-2 py-0.5 text-xs rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-50" title="전날">‹</button>
-            <button type="button" onClick={() => setMonDate(todayStr())} className="px-2 py-0.5 text-xs rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-50">오늘</button>
-            <button type="button" onClick={() => shift(1)} className="px-2 py-0.5 text-xs rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-50" title="다음날">›</button>
-            <input type="date" value={monDate} onChange={e => e.target.value && setMonDate(e.target.value)} className="ml-1 text-xs rounded border border-gray-300 px-1.5 py-0.5 text-gray-600" />
-          </div>
+          <span className="text-[11px] text-gray-400">{viewMode === 'day' ? '개인별 업무표에 이 날 해당하는 업무만 나옵니다' : '배치된 업무를 모두 보여줍니다 (날짜는 환경모니터링 일정용)'}</span>
+          <button type="button" onClick={() => setMonDate(todayStr())} className="px-2 py-0.5 text-xs rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-50">오늘</button>
+          <input type="date" value={monDate} onChange={e => e.target.value && setMonDate(e.target.value)} className="text-xs rounded border border-gray-300 px-1.5 py-0.5 text-gray-600" />
         </div>
         <div className="grid grid-cols-7 gap-1">
           {days.map(d => {
@@ -560,92 +564,8 @@ export default function TestBoard({ adminUnlocked }) {
       {/* 날짜 막대 — 화면 전체(근무자 칸·환경모니터링)의 기준 날짜와 일별/전체 보기 */}
       {dayBar()}
 
-      {/* 업무 버튼 */}
-      <div
-        onDragOver={e => { if (adminUnlocked) { e.preventDefault(); setOverPalette(true); } }}
-        onDragLeave={() => setOverPalette(false)}
-        onDrop={dropOnPalette}
-        className={`rounded-xl border bg-white p-4 mb-5 transition-colors ${overPalette ? 'border-red-300 bg-red-50/40' : 'border-gray-200'}`}
-      >
-        <div className="flex items-center gap-2 mb-3 flex-wrap">
-          <span className="text-sm font-semibold text-gray-700">📋 업무</span>
-          {adminUnlocked && (
-            <>
-              <button onClick={() => openTask(null)}
-                className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">+ 업무 추가</button>
-              {canImport && (
-                <button onClick={importFromDuty} className="px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50"
-                  title="주간근무의 매일·주간·월간 업무 중 아직 가져오지 않은 것을 업무 버튼으로 추가합니다">📥 주간근무 업무 가져오기</button>
-              )}
-              {board.tasks.length > 0 && (
-                calOnCount > 0
-                  ? <button onClick={() => setAllCalendar(false)} className="px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50"
-                      title="모든 업무의 '월별 모니터링 일정에 표시'를 한 번에 끕니다">📆 달력 표시 모두 끄기 ({calOnCount})</button>
-                  : <button onClick={() => setAllCalendar(true)} className="px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50"
-                      title="모든 업무를 월별 모니터링 일정에 표시합니다">📆 달력 표시 모두 켜기</button>
-              )}
-              <span className="text-[11px] text-gray-400">버튼을 끌어서 근무자 칸에 놓으세요 · 배치된 칩을 이 영역에 놓거나 상세창의 배치 체크를 풀면 해제됩니다</span>
-            </>
-          )}
-        </div>
-        {monitoringBox()}
-        {board.tasks.length === 0 ? (
-          <p className="text-sm text-gray-300 py-2">{adminUnlocked ? '업무 버튼이 없습니다. 위에서 업무를 추가하거나 주간근무 업무를 가져오세요.' : '등록된 업무가 없습니다.'}</p>
-        ) : (
-          <div className="space-y-3">
-            {[
-              { key: 'periodic', title: '🔁 주기적 업무', sub: '일일·주간·월간 — 정해진 주기에 반복', box: 'border-sky-200 bg-sky-50/40', head: 'text-sky-700', list: groups.filter(g => g.kind) },
-              { key: 'oneoff', title: '📌 비주기적 업무', sub: '기타 — 마감기한·완료표시로 관리', box: 'border-gray-300 bg-gray-50/70', head: 'text-gray-600', list: groups.filter(g => !g.kind) },
-            ].filter(sec => sec.list.length > 0).map(sec => (
-            <div key={sec.key} className={`rounded-lg border px-3 py-2.5 ${sec.box}`}>
-              <p className={`text-xs font-bold mb-2 ${sec.head}`}>{sec.title} <span className="font-normal text-gray-400">{sec.sub}</span></p>
-              <div className="space-y-2.5">
-            {sec.list.map(g => (
-              <div key={g.kind || 'etc'} className="flex items-start gap-2">
-                <span className="shrink-0 w-14 text-[11px] font-semibold text-gray-400 pt-2">{KIND_LABEL[g.kind]}</span>
-                <div className="flex flex-wrap gap-2">
-                  {g.tasks.map(t => {
-                    const ws = workersOf(t.id);
-                    return (
-                      <div key={t.id}
-                        draggable={adminUnlocked}
-                        onDragStart={e => startDrag(e, { kind: 'palette', taskId: t.id })}
-                        onClick={() => openTask(t)}
-                        onMouseEnter={e => showTip(e, t, null)} onMouseLeave={() => setTip(null)}
-                        className={`inline-flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-lg border border-gray-300 bg-gray-50 text-sm font-medium text-gray-700 select-none shadow-sm ${adminUnlocked ? 'cursor-grab active:cursor-grabbing hover:bg-white' : ''}`}>
-                        {/* 구분 버튼 — 누를 때마다 일일 → 주간 → 월간 → 기타 순으로 바뀐다 */}
-                        <button type="button" onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setKindMenu({ id: t.id, x: r.left, y: r.bottom + 4 }); }} disabled={!adminUnlocked}
-                          title={adminUnlocked ? '구분 변경 (눌러서 선택)' : KIND_LABEL[t.kind || '']}
-                          className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[t.kind || '']} ${adminUnlocked ? 'hover:brightness-95' : 'cursor-default'}`}>{KIND_SHORT[t.kind || '']}</button>
-                        <span>{t.name}</span>
-                        {t.kind ? <span className="text-[10px] text-gray-400 whitespace-nowrap" title="주기">⏰{scheduleLabel(t)}</span> : t.due ? <span className="text-[10px] text-gray-400 whitespace-nowrap" title="마감기한">📅마감 {t.due.slice(5).replace('-', '/')}</span> : null}
-                        {t.note && <span className="text-[10px]" title={t.note}>📝</span>}
-                        {t.showOnCalendar === false && <span className="text-[10px] opacity-60" title="월별 모니터링 일정에 표시하지 않음">📆✕</span>}
-                        {/* 배치된 근무자를 그 사람의 색 점으로 표시 */}
-                        {ws.length > 0 && (
-                          <span className="inline-flex items-center gap-0.5" title={`배치: ${ws.join(', ')}`}>
-                            {ws.map(w => <span key={w} className={`w-2.5 h-2.5 rounded-full ${colorOf(w).dot}`} />)}
-                          </span>
-                        )}
-                        {t.rotation?.on && <span className="text-[10px] px-1 rounded bg-indigo-100 text-indigo-700 font-semibold" title={`로테이션: ${rotationLabel(t.rotation)}`}>🔄 {rotationLabel(t.rotation)}</span>}
-                        {adminUnlocked && (
-                          <button onClick={e => { e.stopPropagation(); openTask(t); }} title="로테이션 설정 — 정한 주기마다 다른 인원에게 자동으로 넘어갑니다"
-                            className={`text-xs leading-none px-0.5 ${t.rotation?.on ? 'text-indigo-600' : 'text-gray-300 hover:text-indigo-500'}`}>🔄</button>
-                        )}
-                        {adminUnlocked && <button onClick={e => { e.stopPropagation(); removeTask(t.id); }} className="text-gray-400 hover:text-red-500 text-xs leading-none px-0.5" title="업무 버튼 삭제">✕</button>}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-              </div>
-            </div>
-            ))}
-          </div>
-        )}
-      </div>
-
+      {/* 개인별 업무표 */}
+      <h2 className="text-base font-bold text-gray-700 mb-2">👥 개인별 업무표</h2>
       {/* 근무자 칸 — 인원수만큼 가로로, 사람마다 다른 색 */}
       {staff.length === 0 ? (
         <p className="text-sm text-gray-400 py-8 text-center">직원이 없습니다. "주간근무" 메뉴의 직원 목록에서 직원을 먼저 추가하세요.</p>
@@ -734,6 +654,92 @@ export default function TestBoard({ adminUnlocked }) {
           </div>
         </div>
       )}
+
+      {/* 업무배분 — 업무 버튼·환경모니터링 일정 (개인별 업무표 아래) */}
+      <div
+        onDragOver={e => { if (adminUnlocked) { e.preventDefault(); setOverPalette(true); } }}
+        onDragLeave={() => setOverPalette(false)}
+        onDrop={dropOnPalette}
+        className={`rounded-xl border bg-white p-4 mt-5 mb-5 transition-colors ${overPalette ? 'border-red-300 bg-red-50/40' : 'border-gray-200'}`}
+      >
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <span className="text-sm font-semibold text-gray-700">📋 업무배분</span>
+          {adminUnlocked && (
+            <>
+              <button onClick={() => openTask(null)}
+                className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">+ 업무 추가</button>
+              {canImport && (
+                <button onClick={importFromDuty} className="px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50"
+                  title="주간근무의 매일·주간·월간 업무 중 아직 가져오지 않은 것을 업무 버튼으로 추가합니다">📥 주간근무 업무 가져오기</button>
+              )}
+              {board.tasks.length > 0 && (
+                calOnCount > 0
+                  ? <button onClick={() => setAllCalendar(false)} className="px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50"
+                      title="모든 업무의 '월별 모니터링 일정에 표시'를 한 번에 끕니다">📆 달력 표시 모두 끄기 ({calOnCount})</button>
+                  : <button onClick={() => setAllCalendar(true)} className="px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50"
+                      title="모든 업무를 월별 모니터링 일정에 표시합니다">📆 달력 표시 모두 켜기</button>
+              )}
+              <span className="text-[11px] text-gray-400">버튼을 끌어서 근무자 칸에 놓으세요 · 배치된 칩을 이 영역에 놓거나 상세창의 배치 체크를 풀면 해제됩니다</span>
+            </>
+          )}
+        </div>
+        {monitoringBox()}
+        {board.tasks.length === 0 ? (
+          <p className="text-sm text-gray-300 py-2">{adminUnlocked ? '업무 버튼이 없습니다. 위에서 업무를 추가하거나 주간근무 업무를 가져오세요.' : '등록된 업무가 없습니다.'}</p>
+        ) : (
+          <div className="space-y-3">
+            {[
+              { key: 'periodic', title: '🔁 주기적 업무', sub: '일일·주간·월간 — 정해진 주기에 반복', box: 'border-sky-200 bg-sky-50/40', head: 'text-sky-700', list: groups.filter(g => g.kind) },
+              { key: 'oneoff', title: '📌 비주기적 업무', sub: '기타 — 마감기한·완료표시로 관리', box: 'border-gray-300 bg-gray-50/70', head: 'text-gray-600', list: groups.filter(g => !g.kind) },
+            ].filter(sec => sec.list.length > 0).map(sec => (
+            <div key={sec.key} className={`rounded-lg border px-3 py-2.5 ${sec.box}`}>
+              <p className={`text-xs font-bold mb-2 ${sec.head}`}>{sec.title} <span className="font-normal text-gray-400">{sec.sub}</span></p>
+              <div className="space-y-2.5">
+            {sec.list.map(g => (
+              <div key={g.kind || 'etc'} className="flex items-start gap-2">
+                <span className="shrink-0 w-14 text-[11px] font-semibold text-gray-400 pt-2">{KIND_LABEL[g.kind]}</span>
+                <div className="flex flex-wrap gap-2">
+                  {g.tasks.map(t => {
+                    const ws = workersOf(t.id);
+                    return (
+                      <div key={t.id}
+                        draggable={adminUnlocked}
+                        onDragStart={e => startDrag(e, { kind: 'palette', taskId: t.id })}
+                        onClick={() => openTask(t)}
+                        onMouseEnter={e => showTip(e, t, null)} onMouseLeave={() => setTip(null)}
+                        className={`inline-flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-lg border border-gray-300 bg-gray-50 text-sm font-medium text-gray-700 select-none shadow-sm ${adminUnlocked ? 'cursor-grab active:cursor-grabbing hover:bg-white' : ''}`}>
+                        {/* 구분 버튼 — 누를 때마다 일일 → 주간 → 월간 → 기타 순으로 바뀐다 */}
+                        <button type="button" onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setKindMenu({ id: t.id, x: r.left, y: r.bottom + 4 }); }} disabled={!adminUnlocked}
+                          title={adminUnlocked ? '구분 변경 (눌러서 선택)' : KIND_LABEL[t.kind || '']}
+                          className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[t.kind || '']} ${adminUnlocked ? 'hover:brightness-95' : 'cursor-default'}`}>{KIND_SHORT[t.kind || '']}</button>
+                        <span>{t.name}</span>
+                        {t.kind ? <span className="text-[10px] text-gray-400 whitespace-nowrap" title="주기">⏰{scheduleLabel(t)}</span> : t.due ? <span className="text-[10px] text-gray-400 whitespace-nowrap" title="마감기한">📅마감 {t.due.slice(5).replace('-', '/')}</span> : null}
+                        {t.note && <span className="text-[10px]" title={t.note}>📝</span>}
+                        {t.showOnCalendar === false && <span className="text-[10px] opacity-60" title="월별 모니터링 일정에 표시하지 않음">📆✕</span>}
+                        {/* 배치된 근무자를 그 사람의 색 점으로 표시 */}
+                        {ws.length > 0 && (
+                          <span className="inline-flex items-center gap-0.5" title={`배치: ${ws.join(', ')}`}>
+                            {ws.map(w => <span key={w} className={`w-2.5 h-2.5 rounded-full ${colorOf(w).dot}`} />)}
+                          </span>
+                        )}
+                        {t.rotation?.on && <span className="text-[10px] px-1 rounded bg-indigo-100 text-indigo-700 font-semibold" title={`로테이션: ${rotationLabel(t.rotation)}`}>🔄 {rotationLabel(t.rotation)}</span>}
+                        {adminUnlocked && (
+                          <button onClick={e => { e.stopPropagation(); openTask(t); }} title="로테이션 설정 — 정한 주기마다 다른 인원에게 자동으로 넘어갑니다"
+                            className={`text-xs leading-none px-0.5 ${t.rotation?.on ? 'text-indigo-600' : 'text-gray-300 hover:text-indigo-500'}`}>🔄</button>
+                        )}
+                        {adminUnlocked && <button onClick={e => { e.stopPropagation(); removeTask(t.id); }} className="text-gray-400 hover:text-red-500 text-xs leading-none px-0.5" title="업무 버튼 삭제">✕</button>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+              </div>
+            </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* 업무 칩 툴팁 — 라벨/값을 두 칸으로 맞춰 정리해서 보여준다 */}
       {tip && !taskDlg && !kindMenu && (() => {
