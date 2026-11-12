@@ -643,7 +643,6 @@ export default function TestBoard({ adminUnlocked }) {
                               <span className={`shrink-0 text-[11px] font-semibold rounded border px-1.5 py-0.5 ${STATUS_CLS[pr.status]}`}>{STATUS.find(s => s[0] === pr.status)?.[1]}</span>
                             ))}
                           </div>
-                          {track && pr.due && <div className="mt-1 text-[11px] text-gray-600">마감 {pr.due.slice(5).replace('-', '/')}</div>}
                         </div>
                       );
                     })}
