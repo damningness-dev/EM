@@ -407,7 +407,7 @@ export default function App() {
           )}
           {page === 'usagepoints' && <UsagePoints adminUnlocked={adminUnlocked} currentMember={currentMember} />}
           {page === 'weeklyduty' && <WeeklyDuty adminUnlocked={adminUnlocked} />}
-          {page === 'test' && <TestBoard adminUnlocked={adminUnlocked} />}
+          {page === 'test' && <TestBoard adminUnlocked={adminUnlocked} currentMember={currentMember} />}
           {page === 'sop' && <Sop adminUnlocked={adminUnlocked} currentMember={currentMember} />}
             </ErrorBoundary>
           )}

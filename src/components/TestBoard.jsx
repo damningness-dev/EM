@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { fetchWeeklyDuty, fetchWeeklyBoard, saveWeeklyBoard, syncAfterChange, fetchZones, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchTempSchedules } from '../lib/api';
+import { fetchWeeklyDuty, fetchWeeklyBoard, saveWeeklyBoard, syncAfterChange, fetchZones, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchTempSchedules, fetchTeamRecords } from '../lib/api';
 import { buildHolidayMap, setScheduleConfig, totalCount } from '../lib/schedule';
 import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, monitoringButtons } from '../lib/monitoringDay';
 import { boardTasksOn, scheduleLabel, ROTATION_UNITS, rotationState, rotationPool, rotationLabel, fmtDate } from '../lib/boardRotation';
@@ -58,7 +58,7 @@ function dueLabel(due, status) {
   return { text, cls: 'text-gray-500 bg-white/70 border-gray-300' };
 }
 
-export default function TestBoard({ adminUnlocked }) {
+export default function TestBoard({ adminUnlocked, currentMember }) {
   const [staff, setStaff] = useState(null);
   const [duty, setDuty] = useState(null);
   const [board, setBoard] = useState({ tasks: [], assignments: {}, progress: {}, monAssign: {} });
@@ -68,6 +68,7 @@ export default function TestBoard({ adminUnlocked }) {
   const [tip, setTip] = useState(null); // { id, who, x, y, up } — 업무 칩 위에 마우스를 올렸을 때의 안내
   const [kindMenu, setKindMenu] = useState(null); // { id, x, y } — 업무 버튼 구분 선택 메뉴
   const [taskDlg, setTaskDlg] = useState(null); // { id|null(새 업무), draft } — 업무 상세 창
+  const [leaves, setLeaves] = useState([]); // 같은 팀(관리자는 전체)이 공유한 휴가 기록 [{ username, date, leave }]
   // [환경모니터링] 구역: 월별 모니터링 일정(구역별 측정 일정)을 읽어 와서 고른 날짜의 일정을 버튼으로 보여준다.
   const [mon, setMon] = useState({ zones: [], holidayDefs: [], blocked: [], temps: [] });
   const [monDate, setMonDate] = useState(todayStr()); // 화면 전체의 기준 날짜
@@ -100,6 +101,7 @@ export default function TestBoard({ adminUnlocked }) {
   }
   function load() {
     loadMonitoring();
+    fetchTeamRecords().then(r => setLeaves(Array.isArray(r?.records) ? r.records : [])).catch(() => {});
     Promise.all([fetchWeeklyDuty().catch(() => null), fetchWeeklyBoard().catch(() => null)]).then(([d, b]) => {
       setDuty(d || null);
       setStaff(Array.isArray(d?.staff) ? d.staff : []);
@@ -363,7 +365,37 @@ export default function TestBoard({ adminUnlocked }) {
     ...(board.assignments[who] || []).filter(id => taskById.has(id) && !taskById.get(id).rotation?.on),
     ...board.tasks.filter(t => rotOf(t)?.worker === who).map(t => t.id),
   ];
-  const dayItems = viewMode === 'day' ? boardTasksOn(board, staff, monDate, !!monHolidays[monDate], dayOpts()) : null;
+  // ── 휴가 ──
+  // 그 날 휴가인 근무자: 내 휴가는 이 PC의 달력 기록(연장·연차), 다른 사람은 팀으로 공유된 기록을 쓴다.
+  const leaveOf = (who, ds) => {
+    if (currentMember?.username === who) {
+      try { const l = (JSON.parse(localStorage.getItem('em-overtime')) || {})[ds]?.leave; if (l) return l; } catch { /* 기록이 없거나 읽을 수 없으면 무시 */ }
+    }
+    return leaves.find(r => r.username === who && r.date === ds && r.leave)?.leave || '';
+  };
+  const LEAVE_TEXT = { annual: '연차', am: '오전반차', pm: '오후반차' };
+  // 일별 보기: 연차인 근무자는 업무표에 X로 표시하고, 비주기적(기타) 업무를 뺀 그의 업무를 휴가가 아닌 다른 근무자에게
+  // 나눈다(대상 인원이 정해진 로테이션은 그 안에서, 그때그때 업무가 가장 적은 사람에게 순서대로).
+  const absent = viewMode === 'day' ? staff.filter(w => leaveOf(w, monDate) === 'annual') : [];
+  const subs = {}; // `${업무id}|${대신 맡는 사람}` → 휴가인 사람
+  let dayItems = viewMode === 'day' ? boardTasksOn(board, staff, monDate, !!monHolidays[monDate], dayOpts()) : null;
+  if (dayItems && absent.length > 0 && absent.length < staff.length) {
+    const present = staff.filter(w => !absent.includes(w));
+    const load = Object.fromEntries(present.map(w => [w, 0]));
+    dayItems.forEach(i => i.workers.forEach(w => { if (load[w] !== undefined) load[w]++; }));
+    dayItems = dayItems.map(i => {
+      if (i.kind === '' || !i.workers.some(w => absent.includes(w))) return i; // 기타 업무는 그대로 둔다
+      const stay = i.workers.filter(w => !absent.includes(w));
+      if (stay.length > 0) return { ...i, workers: stay }; // 이미 다른 담당자가 같이 맡고 있으면 그대로
+      const task = taskById.get(i.id);
+      const poolPresent = task?.rotation?.on ? rotationPool(task, staff).filter(w => present.includes(w)) : [];
+      const cands = poolPresent.length ? poolPresent : present;
+      const pick = cands.reduce((best, w) => (load[w] < load[best] ? w : best), cands[0]);
+      load[pick]++;
+      subs[`${i.id}|${pick}`] = i.workers[0];
+      return { ...i, workers: [pick] };
+    });
+  }
   const shownIds = (who) => (dayItems ? dayItems.filter(i => i.workers.includes(who)).map(i => i.id) : idsOf(who));
   const groups = KIND_ORDER.map(k => ({ kind: k, tasks: board.tasks.filter(t => (t.kind || '') === k) })).filter(g => g.tasks.length > 0);
   // 로테이션 설정 입력 폼(업무 상세 창 안) — d: 로테이션 초안, set: 일부 값 변경
@@ -585,6 +617,8 @@ export default function TestBoard({ adminUnlocked }) {
               const tracked = ids.filter(id => !taskById.get(id)?.kind);
               const doneCnt = tracked.filter(id => prOf(taskById.get(id), who, rotOf(taskById.get(id))).status === 'done').length;
               const over = overCol === who;
+              const lv = viewMode === 'day' ? leaveOf(who, monDate) : '';
+              const away = lv === 'annual';
               return (
                 <div key={who}
                   onDragOver={e => { if (adminUnlocked) { e.preventDefault(); setOverCol(who); } }}
@@ -593,7 +627,7 @@ export default function TestBoard({ adminUnlocked }) {
                   style={{ gridRow: 'span 4', gridTemplateRows: 'subgrid' }}
                   className={`rounded-xl border-2 grid mb-4 transition-colors ${over ? c.over : c.col}`}>
                   <div className={`px-3 py-2.5 rounded-t-[10px] flex items-center justify-between ${c.head}`}>
-                    <span className="font-semibold">👤 {who}</span>
+                    <span className="font-semibold">👤 {who}{lv && <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-white/90 text-red-600 font-bold align-middle" title="이 날 휴가 — 달력의 연차·반차 기록 기준">{away ? '✕ ' : ''}{LEAVE_TEXT[lv]}</span>}</span>
                     <span className="text-xs opacity-90">{ids.length === 0 && emIds.length === 0 ? '0건' : ids.length === 0 ? `EM ${emIds.length}건` : tracked.length ? `${doneCnt}/${tracked.length} 완료${ids.length > tracked.length ? ` · ${ids.length}건` : ''}` : `${ids.length}건`}</span>
                   </div>
                   <div className="px-2.5 pt-2.5">
@@ -615,7 +649,8 @@ export default function TestBoard({ adminUnlocked }) {
                       { key: 'o', title: '📌 비주기적 업무', box: 'border-dashed border-black/20 bg-white/30', head: 'text-gray-600', list: ids.filter(id => !taskById.get(id)?.kind) },
                     ].map(sec => (
                     <div key={sec.key} className="px-2.5 pt-2 pb-0.5 last:pb-2.5">
-                    <div className={`rounded-lg border p-1.5 space-y-2 h-full ${sec.box}`}>
+                    <div className={`relative overflow-hidden rounded-lg border p-1.5 space-y-2 h-full ${sec.box}`}>
+                    {away && sec.key === 'p' && <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-8xl font-black text-red-300/50 select-none" aria-hidden="true">✕</span>}
                       <p className={`text-[11px] font-bold px-1 ${sec.head}`}>{sec.title}</p>
                     {sec.list.map(id => {
                       const t = taskById.get(id);
@@ -632,6 +667,7 @@ export default function TestBoard({ adminUnlocked }) {
                           className={`rounded-lg border px-2.5 py-2 shadow-sm cursor-pointer ${c.chip} ${adminUnlocked ? 'active:cursor-grabbing' : ''}`}>
                           <div className="flex items-center gap-1.5">
                             <span className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[t.kind || '']}`}>{KIND_SHORT[t.kind || '']}</span>
+                            {subs[`${id}|${who}`] && <span className="shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border bg-red-50 border-red-200 text-red-600" title={`${subs[`${id}|${who}`]}님 휴가로 대신 맡음`}>{subs[`${id}|${who}`]} 대신</span>}
                             <span className={`flex-1 text-sm font-medium break-words ${pr.status === 'done' ? 'line-through opacity-60' : ''}`}>{t.name}</span>
                             {rs && <span className="text-indigo-500 text-xs leading-none">🔄</span>}
                             {track && dl && <span className={`shrink-0 text-[11px] leading-none font-bold px-1.5 py-1 rounded border ${dl.cls}`} title={`마감 ${pr.due}`}>{dl.text}</span>}
@@ -648,7 +684,7 @@ export default function TestBoard({ adminUnlocked }) {
                         </div>
                       );
                     })}
-                    {sec.list.length === 0 && <p className="text-[11px] text-gray-300 px-1 py-1">{viewMode === 'day' ? '이 날 해당 없음' : '없음'}</p>}
+                    {sec.list.length === 0 && <p className="text-[11px] text-gray-300 px-1 py-1">{away && sec.key === 'p' ? '휴가 · 업무 분배됨' : viewMode === 'day' ? '이 날 해당 없음' : '없음'}</p>}
                     </div>
                     </div>
                     ))}
