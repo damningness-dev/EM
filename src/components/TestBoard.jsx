@@ -717,7 +717,7 @@ export default function TestBoard({ adminUnlocked }) {
                         <span>{t.name}</span>
                         {t.kind ? <span className="text-[10px] text-gray-400 whitespace-nowrap" title="주기">⏰{scheduleLabel(t)}</span> : t.due ? <span className="text-[10px] text-gray-400 whitespace-nowrap" title="마감기한">📅마감 {t.due.slice(5).replace('-', '/')}</span> : null}
                         {t.note && <span className="text-[10px]" title={t.note}>📝</span>}
-                        {t.showOnCalendar === false && <span className="text-[10px] opacity-60" title="월별 모니터링 일정에 표시하지 않음">📆✕</span>}
+                        {t.showOnCalendar !== false && <span className="text-[11px]" title="월별 모니터링 일정에 표시됩니다">📆</span>}
                         {/* 배치된 근무자를 그 사람의 색 점으로 표시 */}
                         {ws.length > 0 && (
                           <span className="inline-flex items-center gap-0.5" title={`배치: ${ws.join(', ')}`}>
