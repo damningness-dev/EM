@@ -763,10 +763,6 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                           </span>
                         )}
                         {t.rotation?.on && <span className="text-[10px] px-1 rounded bg-indigo-100 text-indigo-700 font-semibold" title={`로테이션: ${rotationLabel(t.rotation)}`}>🔄 {rotationLabel(t.rotation)}</span>}
-                        {adminUnlocked && (
-                          <button onClick={e => { e.stopPropagation(); openTask(t); }} title="로테이션 설정 — 정한 주기마다 다른 인원에게 자동으로 넘어갑니다"
-                            className={`text-xs leading-none px-0.5 ${t.rotation?.on ? 'text-indigo-600' : 'text-gray-300 hover:text-indigo-500'}`}>🔄</button>
-                        )}
                         {adminUnlocked && <button onClick={e => { e.stopPropagation(); removeTask(t.id); }} className="text-gray-400 hover:text-red-500 text-xs leading-none px-0.5" title="업무 버튼 삭제">✕</button>}
                       </div>
                     );
