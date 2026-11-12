@@ -47,14 +47,14 @@ function dutyTasksOf(duty) {
   return [...pick(duty.dailyTasks, 'daily'), ...pick(duty.weeklyTasks, 'weekly'), ...pick(duty.monthlyTasks, 'monthly')];
 }
 
-// 마감까지 남은 날: D-3 / D-DAY / D+2(지남). 완료한 업무는 회색으로.
+// 마감까지 남은 날: D-3 / D-DAY / D+2(지남). 7일 이내 노랑, 마감일·지남 빨강, 완료는 회색.
 function dueLabel(due, status) {
   if (!due) return null;
   const diff = Math.round((new Date(due + 'T00:00:00') - new Date(todayStr() + 'T00:00:00')) / 86400000);
   const text = diff === 0 ? 'D-DAY' : diff > 0 ? `D-${diff}` : `D+${-diff}`;
   if (status === 'done') return { text, cls: 'text-gray-400 bg-gray-50 border-gray-200' };
   if (diff <= 0) return { text, cls: 'text-red-600 bg-red-50 border-red-200' };
-  if (diff <= 3) return { text, cls: 'text-orange-600 bg-orange-50 border-orange-200' };
+  if (diff <= 7) return { text, cls: 'text-yellow-700 bg-yellow-100 border-yellow-300' }; // 일주일 전부터 노랑
   return { text, cls: 'text-gray-500 bg-white/70 border-gray-300' };
 }
 
@@ -772,7 +772,7 @@ export default function TestBoard({ adminUnlocked }) {
                 </span>
               ) : <span className="text-gray-400">배치 없음</span>}
             </Row>
-            {t.kind ? <Row label="주기">{scheduleLabel(t)}</Row> : <Row label="마감">{due ? <>{due}{dl && <span className={`ml-1.5 font-semibold ${dl.cls.includes('red') ? 'text-red-300' : dl.cls.includes('orange') ? 'text-orange-300' : 'text-gray-400'}`}>{dl.text}</span>}</> : <span className="text-gray-400">없음</span>}</Row>}
+            {t.kind ? <Row label="주기">{scheduleLabel(t)}</Row> : <Row label="마감">{due ? <>{due}{dl && <span className={`ml-1.5 font-semibold ${dl.cls.includes('red') ? 'text-red-300' : dl.cls.includes('yellow') ? 'text-yellow-300' : 'text-gray-400'}`}>{dl.text}</span>}</> : <span className="text-gray-400">없음</span>}</Row>}
             {pr && <Row label="상태">{STATUS.find(x => x[0] === pr.status)?.[1]}</Row>}
             {rs && (
               <>
