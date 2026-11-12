@@ -125,6 +125,7 @@ export const workerDot = (staff, who) => WORKER_DOTS[Math.max(0, staff.indexOf(w
 // "직접 추가" 업무는 정해진 요일이 없으므로 기한(due)을 입력한 날에만 나온다. 기한은 '기타' 업무에만 입력할 수 있다.
 // 담당자는 그 날짜 기준(로테이션이면 그 주기의 담당). 담당자가 없는 업무는 건너뛴다.
 // 반환: [{ id, name, kind, workers: [이름], due: boolean, status?: 'todo'|'doing'|'done' }]
+// opts.untilDue + opts.today: '기타' 업무는 마감기한 날까지 매일 계속 나오고, 마감이 지났는데 아직 완료하지 않았으면 오늘까지 계속 나온다(TEST 화면의 일별 보기)
 // opts.ignoreFlag: '월별 일정에 표시' 설정과 상관없이 모두 / opts.includeUndated: 마감기한이 없는 '기타' 업무도 매일 포함(TEST 화면의 일별 보기)
 export function boardTasksOn(board, staff, dateStr, isHoliday = false, opts = {}) {
   if (!board || !Array.isArray(board.tasks)) return [];
@@ -158,17 +159,22 @@ export function boardTasksOn(board, staff, dateStr, isHoliday = false, opts = {}
     }
     if (workers.length === 0) continue;
     // '기타' 업무: 상세창에서 정한 마감기한(task.due) 또는 예전에 칸에서 입력한 기한이 그 날이면 나온다
-    let dueStatus = null, hasDue = !!t.due;
+    let dueStatus = null, hasDue = !!t.due, stillOn = false;
     if (!t.kind) {
       for (const w of workers) {
         const e = board.progress?.[w]?.[t.id];
         const cur = e && (period == null || e.period === period) ? e : null;
         if (cur?.due) hasDue = true;
-        if ((t.due || cur?.due) === dateStr) { dueStatus = cur?.status || 'todo'; break; }
+        const dueDate = t.due || cur?.due || '';
+        if (dueDate === dateStr) { dueStatus = cur?.status || 'todo'; break; }
+        if (opts.untilDue && dueDate) {
+          if (dateStr < dueDate) stillOn = true; // 마감일 전까지 계속
+          else if (dateStr <= (opts.today || dueDate) && (cur?.status || 'todo') !== 'done') stillOn = true; // 마감이 지났는데 미완료 → 오늘까지 계속
+        }
       }
     }
     const isDue = dueStatus != null && !t.kind; // 기한·완료표시는 '기타' 업무만
-    if (!(isScheduled(t) || isDue || (opts.includeUndated && !t.kind && !hasDue))) continue;
+    if (!(isScheduled(t) || isDue || stillOn || (opts.includeUndated && !t.kind && !hasDue))) continue;
     out.push({ id: t.id, name: t.name, kind: t.kind || '', time: t.alarmTime || '', workers, due: isDue, ...(isDue ? { status: dueStatus } : {}) });
   }
   return out;

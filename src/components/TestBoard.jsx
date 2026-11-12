@@ -29,7 +29,8 @@ const KIND_SHORT = { daily: '일일', weekly: '주간', monthly: '월간', '': '
 const KIND_BADGE = { daily: 'bg-sky-100 text-sky-700 border-sky-300', weekly: 'bg-violet-100 text-violet-700 border-violet-300', monthly: 'bg-rose-100 text-rose-700 border-rose-300', '': 'bg-gray-100 text-gray-500 border-gray-300' };
 const DOW_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
 const DOW = DOW_NAMES;
-const DAY_OPTS = { ignoreFlag: true, includeUndated: true }; // 일별 보기: 달력 표시 설정과 무관하게, 마감기한 없는 기타 업무는 매일
+// 일별 보기: 달력 표시 설정과 무관하게, 마감기한 없는 기타 업무는 매일, 마감기한이 있는 기타 업무는 마감일까지 계속(미완료면 지난 뒤에도 오늘까지)
+const dayOpts = () => ({ ignoreFlag: true, includeUndated: true, untilDue: true, today: todayStr() });
 const KIND_ORDER = ['daily', 'weekly', 'monthly', ''];
 const STATUS = [['todo', '대기'], ['doing', '진행중'], ['done', '완료']];
 const STATUS_CLS = { todo: 'bg-white text-gray-500 border-gray-300', doing: 'bg-blue-600 text-white border-blue-600', done: 'bg-green-600 text-white border-green-600' };
@@ -46,14 +47,15 @@ function dutyTasksOf(duty) {
   return [...pick(duty.dailyTasks, 'daily'), ...pick(duty.weeklyTasks, 'weekly'), ...pick(duty.monthlyTasks, 'monthly')];
 }
 
+// 마감까지 남은 날: D-3 / D-DAY / D+2(지남). 완료한 업무는 회색으로.
 function dueLabel(due, status) {
   if (!due) return null;
-  if (status === 'done') return { text: due.slice(5).replace('-', '/'), cls: 'text-gray-400' };
   const diff = Math.round((new Date(due + 'T00:00:00') - new Date(todayStr() + 'T00:00:00')) / 86400000);
-  if (diff < 0) return { text: `마감 ${-diff}일 지남`, cls: 'text-red-600 font-semibold' };
-  if (diff === 0) return { text: '오늘 마감', cls: 'text-red-600 font-semibold' };
-  if (diff <= 3) return { text: `D-${diff}`, cls: 'text-orange-600 font-semibold' };
-  return { text: `D-${diff}`, cls: 'text-gray-500' };
+  const text = diff === 0 ? 'D-DAY' : diff > 0 ? `D-${diff}` : `D+${-diff}`;
+  if (status === 'done') return { text, cls: 'text-gray-400 bg-gray-50 border-gray-200' };
+  if (diff <= 0) return { text, cls: 'text-red-600 bg-red-50 border-red-200' };
+  if (diff <= 3) return { text, cls: 'text-orange-600 bg-orange-50 border-orange-200' };
+  return { text, cls: 'text-gray-500 bg-white/70 border-gray-300' };
 }
 
 export default function TestBoard({ adminUnlocked }) {
@@ -320,7 +322,7 @@ export default function TestBoard({ adminUnlocked }) {
     assignments[who] = cur.includes(d.taskId) ? cur : [...cur, d.taskId];
     const next = { ...board, assignments, progress };
     commit(next);
-    if (viewMode === 'day' && !boardTasksOn(next, staff, monDate, !!monHolidays[monDate], DAY_OPTS).some(i => i.id === d.taskId && i.workers.includes(who))) {
+    if (viewMode === 'day' && !boardTasksOn(next, staff, monDate, !!monHolidays[monDate], dayOpts()).some(i => i.id === d.taskId && i.workers.includes(who))) {
       flash('배치했습니다. 이 날짜에는 해당하지 않아 일별 보기에서는 보이지 않습니다(전체 보기에서 확인).');
     }
   }
@@ -361,7 +363,7 @@ export default function TestBoard({ adminUnlocked }) {
     ...(board.assignments[who] || []).filter(id => taskById.has(id) && !taskById.get(id).rotation?.on),
     ...board.tasks.filter(t => rotOf(t)?.worker === who).map(t => t.id),
   ];
-  const dayItems = viewMode === 'day' ? boardTasksOn(board, staff, monDate, !!monHolidays[monDate], DAY_OPTS) : null;
+  const dayItems = viewMode === 'day' ? boardTasksOn(board, staff, monDate, !!monHolidays[monDate], dayOpts()) : null;
   const shownIds = (who) => (dayItems ? dayItems.filter(i => i.workers.includes(who)).map(i => i.id) : idsOf(who));
   const groups = KIND_ORDER.map(k => ({ kind: k, tasks: board.tasks.filter(t => (t.kind || '') === k) })).filter(g => g.tasks.length > 0);
   // 로테이션 설정 입력 폼(업무 상세 창 안) — d: 로테이션 초안, set: 일부 값 변경
@@ -471,7 +473,7 @@ export default function TestBoard({ adminUnlocked }) {
       ...(monTempByDate[ds] || []).flatMap(t => monitoringButtons(t, { suffix: '[임시]' }).map(b => ({ ...b, mkey: `t${t.id}:${b.key}`, cls: 'bg-orange-50 text-orange-700 border-orange-300', tip: '임시일정' }))),
     ];
   };
-  const dayCount = (ds) => boardTasksOn(board, staff, ds, !!monHolidays[ds], DAY_OPTS).length + emItemsOf(ds).length;
+  const dayCount = (ds) => boardTasksOn(board, staff, ds, !!monHolidays[ds], dayOpts()).length + emItemsOf(ds).length;
 
   function dayBar() {
     const weekStartMon = (() => { try { return localStorage.getItem('em-week-start') === 'mon'; } catch { return false; } })();
@@ -628,6 +630,7 @@ export default function TestBoard({ adminUnlocked }) {
                             <span className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[t.kind || '']}`}>{KIND_SHORT[t.kind || '']}</span>
                             <span className={`flex-1 text-sm font-medium break-words ${pr.status === 'done' ? 'line-through opacity-60' : ''}`}>{t.name}</span>
                             {rs && <span className="text-indigo-500 text-xs leading-none">🔄</span>}
+                            {track && dl && <span className={`shrink-0 text-[11px] leading-none font-bold px-1.5 py-1 rounded border ${dl.cls}`} title={`마감 ${pr.due}`}>{dl.text}</span>}
                             {track && (adminUnlocked ? (
                               <select value={pr.status} onChange={e => setProgress(who, id, { status: e.target.value })}
                                 onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()} draggable={false}
@@ -638,10 +641,7 @@ export default function TestBoard({ adminUnlocked }) {
                               <span className={`shrink-0 text-[11px] font-semibold rounded border px-1.5 py-0.5 ${STATUS_CLS[pr.status]}`}>{STATUS.find(s => s[0] === pr.status)?.[1]}</span>
                             ))}
                           </div>
-                          {track && (pr.due || dl) && <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                            {pr.due && <span className="text-[11px] text-gray-600">마감 {pr.due.slice(5).replace('-', '/')}</span>}
-                            {dl && <span className={`text-[10px] ${dl.cls}`}>{dl.text}</span>}
-                          </div>}
+                          {track && pr.due && <div className="mt-1 text-[11px] text-gray-600">마감 {pr.due.slice(5).replace('-', '/')}</div>}
                         </div>
                       );
                     })}
