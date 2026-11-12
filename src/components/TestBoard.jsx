@@ -642,7 +642,14 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                   onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setOverCol(null); }}
                   onDrop={e => dropOnStaff(e, who)}
                   style={{ gridRow: 'span 4', gridTemplateRows: 'subgrid' }}
-                  className={`rounded-xl border-2 grid mb-4 transition-colors ${over ? c.over : c.col}`}>
+                  className={`relative rounded-xl border-2 grid mb-4 transition-colors ${over ? c.over : c.col}`}>
+                  {/* 연차인 근무자: 칸 전체에 큰 X */}
+                  {away && (
+                    <svg className="pointer-events-none absolute inset-0 w-full h-full z-10" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                      <line x1="0" y1="0" x2="100" y2="100" stroke="#fca5a5" strokeOpacity="0.7" strokeWidth="5" vectorEffect="non-scaling-stroke" />
+                      <line x1="100" y1="0" x2="0" y2="100" stroke="#fca5a5" strokeOpacity="0.7" strokeWidth="5" vectorEffect="non-scaling-stroke" />
+                    </svg>
+                  )}
                   <div className={`px-3 py-2.5 rounded-t-[10px] flex items-center justify-between ${c.head}`}>
                     <span className="font-semibold">👤 {who}{lv && <span className="ml-2 text-[11px] px-1.5 py-0.5 rounded bg-white/90 text-red-600 font-bold align-middle" title="이 날 휴가 — 달력의 연차·반차 기록 기준">{away ? '✕ ' : ''}{LEAVE_TEXT[lv]}</span>}</span>
                     <span className="text-xs opacity-90">{ids.length === 0 && emIds.length === 0 ? '0건' : ids.length === 0 ? `EM ${emIds.length}건` : tracked.length ? `${doneCnt}/${tracked.length} 완료${ids.length > tracked.length ? ` · ${ids.length}건` : ''}` : `${ids.length}건`}</span>
@@ -667,7 +674,6 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                     ].map(sec => (
                     <div key={sec.key} className="px-2.5 pt-2 pb-0.5 last:pb-2.5">
                     <div className={`relative overflow-hidden rounded-lg border p-1.5 space-y-2 h-full ${sec.box}`}>
-                    {away && sec.key === 'p' && <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-8xl font-black text-red-300/50 select-none" aria-hidden="true">✕</span>}
                       <p className={`text-[11px] font-bold px-1 ${sec.head}`}>{sec.title}</p>
                     {sec.list.map(id => {
                       const t = taskById.get(id);
