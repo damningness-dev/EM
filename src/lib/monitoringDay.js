@@ -1,7 +1,7 @@
 // 월별 모니터링 일정(구역별 측정 일정)을 날짜별로 계산하는 공용 함수.
 // 달력(CalendarView)과 TEST 업무 배치판의 [환경모니터링] 구역이 같은 규칙으로 같은 결과를 보게 하려고 한곳에 둔다.
 import { format } from 'date-fns';
-import { calcMeasurements, GRADE_PRIORITY, DEFAULT_SCHEDULE_SPECS } from './schedule';
+import { calcMeasurements, GRADE_PRIORITY, DEFAULT_SCHEDULE_SPECS, getMajorCat } from './schedule';
 
 // 저장된 주기 설정을 기본 설정 위에 합친다(기본 분류 + 사용자가 추가한 소분류, __major 같은 메타 키 보존).
 export function mergeScheduleConfig(backend) {
@@ -71,10 +71,19 @@ export function buildScheduleByDate(zones, scheduleAvoid, zoneOrderRank) {
 
 // 하루 일정을 버튼 목록으로: 구역(또는 임시일정) 하나가 측정 종류별로 나뉜다.
 //   "AHU-31 부유균,낙하균" / "AHU-31 부유입자" / "AHU-31 표면균" / "005-B-05-2 부유균" …
+// 공조는 항상 위 세 가지, 그 밖의 분류(질소가스·압축공기 등)는 포인트가 있는 종류만 버튼으로 만들고,
 // 측정포인트가 하나도 없는 구역(예: 용수)은 이름만 있는 버튼 하나.
 export function monitoringButtons(zoneOrTemp, extra = {}) {
   const z = zoneOrTemp;
   const name = extra.suffix ? `${z.name}${extra.suffix}` : z.name;
+  // 공조(소분류 포함)는 포인트 입력 여부와 관계없이 항상 세 가지로 나눈다: 부유균,낙하균 / 부유입자 / 표면균
+  if (z.category && getMajorCat(z.category) === '공조') {
+    return [
+      { key: 'air', label: `${name} 부유균,낙하균`, types: ['부유균', '낙하균'] },
+      { key: 'particle', label: `${name} 부유입자`, types: ['부유입자'] },
+      { key: 'surface', label: `${name} 표면균`, types: ['표면균'] },
+    ];
+  }
   const air = [];
   if ((z.points_float || 0) > 0) air.push('부유균');
   if ((z.points_fall || 0) > 0) air.push('낙하균');
