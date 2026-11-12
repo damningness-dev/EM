@@ -27,6 +27,23 @@ const WORKER_COLORS = [
 const KIND_LABEL = { daily: '매일', weekly: '주간', monthly: '월간', '': '직접 추가' };
 const KIND_SHORT = { daily: '일일', weekly: '주간', monthly: '월간', '': '기타' };
 const KIND_BADGE = { daily: 'bg-sky-100 text-sky-700 border-sky-300', weekly: 'bg-violet-100 text-violet-700 border-violet-300', monthly: 'bg-rose-100 text-rose-700 border-rose-300', '': 'bg-gray-100 text-gray-500 border-gray-300' };
+// 환경모니터링 측정 종류별 색 — 월별 모니터링 일정 달력의 포인트 칩(부·낙·표·입자·질소·압축·용수)과 같은 색
+const TONE_CLS = {
+  float: 'bg-blue-50 text-blue-700', fall: 'bg-orange-50 text-orange-700', surface: 'bg-green-50 text-green-700', particle: 'bg-pink-50 text-pink-700',
+  gas: 'bg-purple-100 text-purple-700', comp: 'bg-yellow-100 text-yellow-700', water: 'bg-teal-100 text-teal-700', name: 'bg-gray-100 text-gray-700',
+};
+// 환경모니터링 버튼 내용: 구역 이름 + 측정 종류별 색 칩("부유균 7개" 파랑, "낙하균 5개" 주황 …)
+function EmLabel({ b }) {
+  if (!b.segs || b.segs.length === 0) {
+    return b.tone && b.tone !== 'name' ? <span className={`px-1.5 py-0.5 rounded text-[13px] ${TONE_CLS[b.tone]}`}>{b.name || b.label}</span> : <>{b.name || b.label}</>;
+  }
+  return (
+    <>
+      <span>{b.name}</span>
+      {b.segs.map((x, i) => <span key={i} className={`px-1.5 py-0.5 rounded text-[12px] font-semibold ${TONE_CLS[x.tone] || TONE_CLS.name}`}>{x.text}</span>)}
+    </>
+  );
+}
 const DOW_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
 const DOW = DOW_NAMES;
 // 일별 보기: 달력 표시 설정과 무관하게, 마감기한 없는 기타 업무는 매일, 마감기한이 있는 기타 업무는 마감일까지 계속(미완료면 지난 뒤에도 오늘까지)
@@ -499,14 +516,14 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   // 위쪽 날짜 막대에서 고른 날짜(monDate)가 화면 전체의 기준이다. '일별' 보기에서는 근무자 칸에 그 날 해야 하는 업무만
   // (매일·주간·월간 주기와 마감기한, 로테이션은 그 날짜의 담당 기준) 나오고, '전체' 보기에서는 배치된 업무가 모두 나온다.
   const emItemsOf = (ds) => {
-    const BTN = { air: 'bg-emerald-100 text-emerald-800 border-emerald-300', particle: 'bg-violet-100 text-violet-800 border-violet-300', surface: 'bg-amber-100 text-amber-800 border-amber-300', name: 'bg-gray-100 text-gray-700 border-gray-300' };
     return [
-      ...(monByDate[ds] || []).flatMap(({ zone, measurement }) => monitoringButtons(zone).map(b => ({ ...b, mkey: `${zone.id}:${b.key}`, cls: BTN[b.key], tip: `${zone.category} · ${zone.grade || ''} ${measurement.num}/${totalCount(zone)}회차` }))),
-      ...(monTempByDate[ds] || []).flatMap(t => monitoringButtons(t, { suffix: '[임시]' }).map(b => ({ ...b, mkey: `t${t.id}:${b.key}`, cls: 'bg-orange-50 text-orange-700 border-orange-300', tip: '임시일정' }))),
+      ...(monByDate[ds] || []).flatMap(({ zone, measurement }) => monitoringButtons(zone).map(b => ({ ...b, mkey: `${zone.id}:${b.key}`, tip: `${zone.category} · ${zone.grade || ''} ${measurement.num}/${totalCount(zone)}회차` }))),
+      ...(monTempByDate[ds] || []).flatMap(t => monitoringButtons(t, { suffix: '[임시]' }).map(b => ({ ...b, mkey: `t${t.id}:${b.key}`, tip: '임시일정' }))),
     ];
   };
   // 환경모니터링 건수는 달력의 '측정일정(N건)'과 같게 구역 일정 수로 센다(측정 종류별 버튼 수가 아니라)
   const emCount = (ds) => (monByDate[ds] || []).length;
+  const emMap = Object.fromEntries(emItemsOf(monDate).map(b => [b.mkey, b])); // 근무자 칸의 EM 칩을 같은 색으로 그리기 위함
   const dayCount = (ds) => boardTasksOn(board, staff, ds, !!monHolidays[ds], dayOpts()).length + emCount(ds);
 
   function dayBar() {
@@ -571,9 +588,9 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                 <span key={b.mkey} title={b.tip + (who ? ` · 배치: ${who}` : '')}
                   draggable={adminUnlocked}
                   onDragStart={e => startDrag(e, { kind: 'mon', date: monDate, mkey: b.mkey, label: b.label, tip: b.tip })}
-                  className={`inline-flex items-center gap-1.5 pl-1.5 pr-2.5 py-1 rounded-lg border text-sm font-medium shadow-sm select-none ${b.cls} ${adminUnlocked ? 'cursor-grab active:cursor-grabbing' : ''}`}>
+                  className={`inline-flex items-center gap-1.5 pl-1.5 pr-2.5 py-1 rounded-lg border text-sm font-medium shadow-sm select-none bg-white border-gray-300 text-gray-800 ${adminUnlocked ? 'cursor-grab active:cursor-grabbing' : ''}`}>
                   <span className="text-[10px] leading-none font-bold px-1.5 py-1 rounded border bg-white/70 border-emerald-300 text-emerald-700">EM</span>
-                  {b.label}
+                  <EmLabel b={b} />
                   {who && <span className={`w-2.5 h-2.5 rounded-full ${colorOf(who).dot}`} />}
                 </span>
               );
@@ -638,7 +655,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                             onDragStart={e => startDrag(e, { kind: 'mon-placed', date: monDate, mkey, label: v.label, tip: v.tip })}
                             className={`rounded-lg border px-2.5 py-1.5 shadow-sm flex items-center gap-1.5 ${c.chip} ${adminUnlocked ? 'cursor-grab active:cursor-grabbing' : ''}`}>
                             <span className="shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border bg-emerald-100 border-emerald-300 text-emerald-700">EM</span>
-                            <span className="flex-1 text-sm font-medium break-words">{v.label}</span>
+                            <span className="flex-1 text-sm font-medium break-words flex flex-wrap items-center gap-1"><EmLabel b={emMap[mkey] || { name: v.label, segs: [] }} /></span>
                           </div>
                         ))}
                         {emIds.length === 0 && <p className="text-[11px] text-gray-300 px-1 py-1">없음</p>}
