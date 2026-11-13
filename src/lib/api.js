@@ -340,6 +340,13 @@ export async function fetchWeeklyBoard() {
 export async function saveWeeklyBoard(board) {
   return api.invoke('weeklyBoard:set', board);
 }
+// TEST 업무표 완료 표시(더블클릭) — 본인 업무만, 관리자는 전체
+export async function fetchBoardDone() {
+  return api.invoke('boardDone:list');
+}
+export async function setBoardDone(entry) {
+  return api.invoke('boardDone:set', entry);
+}
 export async function syncWeeklyDutyTodosNow() {
   return api.invoke('weeklyDuty:syncTodosNow');
 }

@@ -971,7 +971,7 @@ function explainGistError(err) {
 // 건드리지 않는다.
 // 팀 설정(teams)과 팀 공유 기록(teamRecords)도 여러 PC가 함께 쓰는 항목이다 — 각 팀원 PC가 자기 기록을
 // 올리고 서로의 것을 내려받는다.
-const COLLAB_KEYS = ['usagePoints', 'sops', 'sopTags', 'memberAccounts', 'teams', 'teamRecords'];
+const COLLAB_KEYS = ['usagePoints', 'sops', 'sopTags', 'memberAccounts', 'teams', 'teamRecords', 'boardDone'];
 
 // 일반 PC가 올릴 내용을 만든다 — 원격(기준 PC가 올린 내용)을 그대로 두고,
 // 함께 쓰는 항목만 이 PC 내용을 합쳐 넣는다. 이렇게 해야 일반 PC가 사용점을
@@ -2373,6 +2373,26 @@ function registerHandlers() {
     const stamp = tomb && tomb >= now ? new Date(Date.parse(tomb) + 1).toISOString() : now;
     rest.push({ id, username, teamId: target.teamId, date, leave, byAdmin: true, enteredBy: admin.username, updatedAt: stamp });
     data.teamRecords = rest;
+    saveData(data);
+    return { ok: true };
+  });
+
+  // TEST 업무표의 완료 표시. 각자 본인 업무를 더블클릭으로 표시하므로 관리자가 아니어도 쓸 수 있다(관리자는 누구 것이든).
+  // 항목 = { id: '날짜|업무|근무자', date('yyyy-MM-dd' 또는 비주기 업무의 '*'), taskId, who, done, updatedAt } — 다른 PC와 항목별로 합쳐진다.
+  ipcMain.handle('boardDone:list', () => (Array.isArray(loadData().boardDone) ? loadData().boardDone : []));
+  ipcMain.handle('boardDone:set', (_e, { date, taskId, who, done } = {}) => {
+    const data = loadData();
+    const me = (data.memberAccounts || []).find(m => m.id === currentMemberId);
+    if (!me) return { ok: false, error: '로그인한 뒤에 완료 표시를 할 수 있습니다' };
+    if (!me.isAdmin && me.username !== who) return { ok: false, error: '본인의 업무만 완료 표시할 수 있습니다' };
+    if (!(date === '*' || /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')))) return { ok: false, error: '날짜가 올바르지 않습니다' };
+    const tid = String(taskId || ''), w = String(who || '');
+    if (!tid || tid.length > 100 || !w || w.length > 40) return { ok: false, error: '업무 정보가 올바르지 않습니다' };
+    const id = `${date}|${tid}|${w}`;
+    const keepFrom = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
+    const list = (Array.isArray(data.boardDone) ? data.boardDone : []).filter(x => x.id !== id && (x.date === '*' || x.date >= keepFrom));
+    list.push({ id, date, taskId: tid, who: w, done: !!done, by: me.username, updatedAt: new Date().toISOString() });
+    data.boardDone = list;
     saveData(data);
     return { ok: true };
   });
