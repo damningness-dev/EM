@@ -134,6 +134,7 @@ export default function MemberManager({ menu, onClose }) {
                           {m.isAdmin ? '👑' : '👤'} {m.username}
                           {m.isAdmin && <span className="ml-1.5 text-[10px] font-normal text-amber-600">관리자</span>}
                           {m.hasToken && <span className="ml-1.5 text-[10px] font-normal text-green-600" title="GitHub 토큰이 등록되어 있습니다">🔑 토큰</span>}
+                          {members.filter(x => x.username === m.username).length > 1 && <span className="ml-1.5 text-[10px] font-semibold text-red-600" title="같은 이름의 계정이 여러 개 있습니다. 권한이 서로 다를 수 있으니 하나만 남기고 삭제하세요.">⚠ 같은 이름 계정 {members.filter(x => x.username === m.username).length}개</span>}
                         </p>
                         <p className="text-[11px] text-gray-400 mt-0.5">
                           {(m.allowedTabs || []).length === 0 ? '허용된 메뉴 없음'

@@ -2491,7 +2491,10 @@ function registerHandlers() {
       } catch { syncFailed = true; }
     }
     const data = loadData();
-    const m = (data.memberAccounts || []).find(m => m.username === String(username || '').trim());
+    // 같은 이름의 계정이 둘 이상이면(여러 PC에서 따로 만든 계정이 합쳐진 경우) 비밀번호가 맞는 것 중 가장 최근에
+    // 고친 계정을 쓴다 — 첫 번째 것만 보면 권한을 고친 쪽이 아닌 오래된 사본으로 로그인될 수 있다.
+    const sameName = (data.memberAccounts || []).filter(x => x.username === String(username || '').trim());
+    const m = sameName.filter(x => hashPassword(password) === x.passwordHash).sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0] || sameName[0];
     // 기본 비밀번호로 시도했는데 저장된 것과 다르면, 공유 데이터를 받아오면서
     // 임시 기본 계정이 팀의 실제 계정으로 교체된 경우다. 그냥 "비밀번호가 틀렸다"고만
     // 하면 "처음엔 됐는데 왜 갑자기 안 되지"로 남는다.

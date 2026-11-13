@@ -272,7 +272,7 @@ export default function App() {
         <div className="px-4 pt-1.5 pb-3">
           {currentMember ? (
             <div className="flex items-center gap-2">
-              <span className="flex-1 text-xs text-gray-300 truncate">
+              <span className="flex-1 text-xs text-gray-300 truncate" title={`허용된 메뉴: ${currentMember.isAdmin ? '관리자(TEST 포함) · ' : ''}${(currentMember.allowedTabs || []).map(t => MENU.find(x => x.id === t)?.label || t).join(', ') || '없음'}`}>
                 {currentMember.isAdmin ? '👑' : '👤'} {currentMember.username}
               </span>
               <button onClick={() => setShowMemberChangePassword(true)} title="비밀번호 변경"
