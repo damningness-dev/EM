@@ -133,18 +133,32 @@ export default function App() {
   // 권한 설정에서 지금 로그인한 계정 자신의 allowedTabs/isAdmin을 바꿔도, 로그인할
   // 때 저장해둔 currentMember는 자동으로 갱신되지 않아 메뉴가 그대로였다 —
   // "권한 설정" 창을 닫을 때마다 서버 최신 값으로 다시 맞춰준다.
-  function refreshCurrentMember() {
+  // auto: 다른 PC에서 바뀐 권한이 동기화로 내려온 것을 자동으로 따라갈 때 — 이 PC의 계정 목록에 아직 없어도(동기화 전)
+  // 로그아웃시키지 않고, 값이 실제로 달라졌을 때만 갱신한다.
+  function refreshCurrentMember(auto = false) {
     if (!currentMember) return;
     fetchMembers().then(list => {
       const fresh = (list || []).find(m => m.id === currentMember.id);
-      if (!fresh) { handleLogout(); return; } // 계정이 삭제된 경우
+      if (!fresh) { if (!auto) handleLogout(); return; } // 계정이 삭제된 경우
       const updated = { id: fresh.id, username: fresh.username, allowedTabs: fresh.allowedTabs || [], isAdmin: !!fresh.isAdmin };
+      if (auto && JSON.stringify(updated) === JSON.stringify({ id: currentMember.id, username: currentMember.username, allowedTabs: currentMember.allowedTabs || [], isAdmin: !!currentMember.isAdmin })) return;
       setCurrentMember(updated);
       try {
         if (localStorage.getItem('em-current-member')) localStorage.setItem('em-current-member', JSON.stringify(updated));
       } catch { /* ignore */ }
     }).catch(() => {});
   }
+  // 관리자가 다른 PC에서 권한(TEST 메뉴 등)을 바꾸면 동기화로 이 PC의 계정 정보는 바뀌는데, 로그인할 때 저장해 둔
+  // 내 권한은 그대로라 메뉴가 안 보였다 — 데이터가 바뀔 때마다, 그리고 주기적으로 최신 권한으로 맞춘다.
+  useEffect(() => {
+    if (!currentMember) return;
+    const refresh = () => refreshCurrentMember(true);
+    refresh();
+    const off = window.electronAPI?.onDataChanged?.(refresh);
+    const t = setInterval(refresh, 30000);
+    return () => { off?.(); clearInterval(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentMember?.id, JSON.stringify(currentMember?.allowedTabs || []), !!currentMember?.isAdmin]);
 
   // 지금 보이는 메뉴(로그인 계정 권한 또는 비로그인 시 게스트 제한)에 현재 페이지가
   // 없으면 허용된 첫 메뉴로 보정한다 — 앱 시작 시 재수화, 로그인·로그아웃, 관리자가
