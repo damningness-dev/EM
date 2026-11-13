@@ -78,7 +78,7 @@ function dueLabel(due, status) {
 export default function TestBoard({ adminUnlocked, currentMember }) {
   const [staff, setStaff] = useState(null);
   const [duty, setDuty] = useState(null);
-  const [board, setBoard] = useState({ tasks: [], assignments: {}, progress: {}, monAssign: {} });
+  const [board, setBoard] = useState({ tasks: [], assignments: {}, progress: {}, monAssign: {}, order: {} });
   const [overCol, setOverCol] = useState(null);
   const [overPalette, setOverPalette] = useState(false);
   const [notice, setNotice] = useState(null);
@@ -126,7 +126,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     Promise.all([fetchWeeklyDuty().catch(() => null), fetchWeeklyBoard().catch(() => null)]).then(([d, b]) => {
       setDuty(d || null);
       setStaff(Array.isArray(d?.staff) ? d.staff : []);
-      const loadedBoard = { tasks: b?.tasks || [], assignments: b?.assignments || {}, progress: b?.progress || {}, monAssign: b?.monAssign || {} };
+      const loadedBoard = { tasks: b?.tasks || [], assignments: b?.assignments || {}, progress: b?.progress || {}, monAssign: b?.monAssign || {}, order: b?.order || {} };
       // 처음 열었는데 업무 버튼이 하나도 없으면(관리자) 주간근무 업무를 자동으로 채워 저장한다.
       if (!seeded.current && adminRef.current && loadedBoard.tasks.length === 0 && dutyTasksOf(d).length > 0) {
         seeded.current = true;
@@ -439,6 +439,34 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     });
   }
   const doneMap = new Map(doneList.map(x => [x.id, x]));
+  // 근무자 칸 안의 업무 순서: 기본은 시간순(시간이 없는 업무는 뒤), 수동으로 옮긴 업무는 그 순서가 앞선다.
+  const orderIds = (who, list) => {
+    const manual = board.order?.[who] || [];
+    const mi = (id) => manual.indexOf(id);
+    const tk = (id) => { const t = taskById.get(id); return t?.kind ? (t.alarmTime || '99:99') : ''; };
+    return list.map((id, i) => ({ id, i })).sort((a, b) => {
+      const ma = mi(a.id), mb = mi(b.id);
+      if (ma >= 0 && mb >= 0) return ma - mb;
+      if (ma >= 0) return -1;
+      if (mb >= 0) return 1;
+      const ta = tk(a.id), tb = tk(b.id);
+      return ta < tb ? -1 : ta > tb ? 1 : a.i - b.i;
+    }).map(x => x.id);
+  };
+  // 같은 근무자 칸 안에서 칩을 다른 칩 자리로 끌어 놓아 순서를 바꾼다(현재 보이는 순서 전체를 수동 순서로 저장)
+  function reorderChip(who, dragId, targetId, shown) {
+    if (!guard() || dragId === targetId) return;
+    const sec = (id) => (taskById.get(id)?.kind ? 'p' : 'o');
+    if (sec(dragId) !== sec(targetId)) return; // 주기적↔비주기적 구역 사이는 옮기지 않는다
+    const arr = shown.filter(x => x !== dragId);
+    arr.splice(arr.indexOf(targetId), 0, dragId);
+    commit({ ...board, order: { ...(board.order || {}), [who]: arr } });
+  }
+  function resetOrder(who) {
+    if (!guard()) return;
+    const { [who]: _d, ...rest } = board.order || {}; // eslint-disable-line no-unused-vars
+    commit({ ...board, order: rest });
+  }
   // 업무배분 '완료' 필터용: 고른 날짜(기타는 날짜와 무관) 기준으로 누군가 완료 표시한 업무
   const taskDone = (t) => {
     const dk = t.kind ? monDate : '*';
@@ -660,7 +688,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
           <div className="grid gap-x-4" style={{ gridTemplateColumns: `repeat(${staff.length}, minmax(240px, 1fr))`, gridTemplateRows: 'auto auto auto minmax(60px, 1fr)' }}>
             {staff.map(who => {
               const c = colorOf(who);
-              const ids = shownIds(who);
+              const ids = orderIds(who, shownIds(who));
               const emIds = Object.entries(board.monAssign?.[monDate] || {}).filter(([, v]) => v.who === who);
               // 완료 표시: 매일·주간·월간은 고른 날짜 기준, 기타는 날짜와 관계없이, EM은 그 날짜 기준
               const isDoneTask = (tid) => { const t = taskById.get(tid); const e = doneMap.get(`${t?.kind ? monDate : '*'}|${tid}|${who}`); return e ? e.done : (!t?.kind && prOf(t, who, rotOf(t)).status === 'done'); };
@@ -709,7 +737,11 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                     ].map(sec => (
                     <div key={sec.key} className="px-2.5 pt-2 pb-0.5 last:pb-2.5">
                     <div className={`relative overflow-hidden rounded-lg border p-1.5 space-y-2 h-full ${sec.box}`}>
-                      <p className={`text-[11px] font-bold px-1 ${sec.head}`}>{sec.title}</p>
+                      <p className={`text-[11px] font-bold px-1 flex items-center ${sec.head}`}>{sec.title}
+                        {sec.key === 'p' && adminUnlocked && (board.order?.[who] || []).length > 0 && (
+                          <button type="button" onClick={() => resetOrder(who)} className="ml-auto text-[10px] font-medium text-gray-400 hover:text-blue-600" title="수동으로 바꾼 순서를 지우고 시간순으로 되돌립니다">↺ 시간순</button>
+                        )}
+                      </p>
                     {sec.list.map(id => {
                       const t = taskById.get(id);
                       const rs = rotOf(t);
@@ -723,6 +755,11 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                         <div key={id}
                           draggable={adminUnlocked}
                           onDragStart={e => startDrag(e, { kind: 'placed', taskId: id, from: who })}
+                          onDragOver={e => { if (adminUnlocked) e.preventDefault(); }}
+                          onDrop={e => {
+                            const d = readDrag(e);
+                            if (d?.kind === 'placed' && d.from === who && d.taskId !== id) { e.preventDefault(); e.stopPropagation(); setOverCol(null); reorderChip(who, d.taskId, id, ids); }
+                          }}
                           onClick={() => chipClick(() => openTask(t))}
                           onDoubleClick={() => chipDouble(() => toggleDone(who, t.kind ? monDate : '*', id, done))}
                           onMouseEnter={e => showTip(e, t, who)} onMouseLeave={() => setTip(null)}

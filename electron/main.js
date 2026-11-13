@@ -2564,7 +2564,7 @@ function registerHandlers() {
   //     updatedAt }
   ipcMain.handle('weeklyBoard:get', () => {
     const b = loadData().weeklyBoard;
-    return b && typeof b === 'object' ? b : { tasks: [], assignments: {}, progress: {}, monAssign: {}, updatedAt: '' };
+    return b && typeof b === 'object' ? b : { tasks: [], assignments: {}, progress: {}, monAssign: {}, order: {}, updatedAt: '' };
   });
   ipcMain.handle('weeklyBoard:set', (_e, board) => {
     if (!computeAdminUnlocked()) return { ok: false, error: '관리자만 수정할 수 있습니다' };
@@ -2639,8 +2639,14 @@ function registerHandlers() {
         (monAssign[date] = monAssign[date] || {})[key] = { who, label: String(v?.label || '').slice(0, 120), tip: String(v?.tip || '').slice(0, 80) };
       }
     }
+    // 근무자별 수동 순서: { '<직원>': [taskId, ...] } — 없으면 시간순
+    const order = {};
+    for (const [who, list] of Object.entries(board?.order && typeof board.order === 'object' ? board.order : {})) {
+      const ids2 = [...new Set((Array.isArray(list) ? list : []).map(String))].filter(id => ids.has(id)).slice(0, 300);
+      if (who && ids2.length) order[who] = ids2;
+    }
     const data = loadData();
-    data.weeklyBoard = { tasks, assignments, progress, monAssign, updatedAt: new Date().toISOString() };
+    data.weeklyBoard = { tasks, assignments, progress, monAssign, order, updatedAt: new Date().toISOString() };
     saveData(data);
     return { ok: true, updatedAt: data.weeklyBoard.updatedAt };
   });
