@@ -74,7 +74,7 @@ export function buildScheduleByDate(zones, scheduleAvoid, zoneOrderRank) {
 // 각 버튼 = { key, label, name, segs: [{ text, tone }], types, count }. segs의 tone은 달력의 포인트 칩 색과 같은 종류
 // (float 부=파랑, fall 낙=주황, surface 표=초록, particle 입자=분홍, gas 질소=보라, comp 압축=노랑, water 용수=청록).
 // 공조(소분류 포함)는 포인트가 없어도 항상 부유균,낙하균 / 부유입자 / 표면균 세 가지,
-// 질소가스·압축공기는 항상 부유균 / 부유입자 두 가지, 그 밖의 분류는 포인트가 있는 종류만,
+// 질소가스·압축공기는 항상 부유균 / 부유입자 두 가지(숫자는 같게), 그 밖의 분류는 포인트가 있는 종류만,
 // 측정포인트가 하나도 없는 비공조 구역(예: 용수)은 이름만 있는 버튼 하나.
 export function monitoringButtons(zoneOrTemp, extra = {}) {
   const z = zoneOrTemp;
@@ -89,7 +89,8 @@ export function monitoringButtons(zoneOrTemp, extra = {}) {
   const out = [];
   if (isGas) {
     out.push(mk('air', [seg('부유균', f, gasTone)], ['부유균'], f));
-    out.push(mk('particle', [seg('부유입자', p, gasTone)], ['부유입자'], p));
+    // 질소가스·압축공기는 부유균과 부유입자를 같은 지점에서 함께 측정하므로 두 버튼의 숫자는 항상 같다(달력의 질소·압축 칩과 같은 부유균 포인트 수 기준)
+    out.push(mk('particle', [seg('부유입자', f, gasTone)], ['부유입자'], f));
     return out;
   }
   if (isAir || f > 0 || l > 0) {
