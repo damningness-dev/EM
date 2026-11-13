@@ -733,6 +733,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                             <span className={`flex-1 text-sm font-medium break-words ${done ? 'line-through opacity-70' : ''}`}>{t.name}</span>
                             {done && <span className="shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded bg-green-600 text-white">✓ 완료</span>}
                             {rs && <span className="text-indigo-500 text-xs leading-none">🔄</span>}
+                            {!track && t.alarmTime && <span className="shrink-0 ml-auto text-xs font-bold tabular-nums text-gray-600 bg-white/70 border border-black/10 rounded px-1.5 py-0.5" title="시간">{t.alarmTime}</span>}
                             {track && dl && <span className={`shrink-0 text-[11px] leading-none font-bold px-1.5 py-1 rounded border ${dl.cls}`} title={`마감 ${pr.due}`}>{dl.text}</span>}
                             {track && (adminUnlocked ? (
                               <select value={effStatus} onChange={e => setProgress(who, id, { status: e.target.value })}
