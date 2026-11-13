@@ -636,9 +636,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
         {!adminUnlocked && <span className="text-xs text-gray-400">🔒 보기 전용 — 관리자로 로그인하면 업무를 배치할 수 있습니다</span>}
         {notice && <span className={`text-xs font-medium ${notice.isError ? 'text-red-500' : 'text-green-600'}`}>{notice.text}</span>}
       </div>
-      <p className="text-xs text-gray-400 mb-4">
-        기존 "주간근무" 메뉴는 그대로 두었습니다. 직원 목록과 업무는 주간근무에서 가져온 것이고, 업무 버튼을 근무자 칸으로 끌어다 놓아 배치하세요. 마감기한·완료표시는 구분이 '기타'인 업무만 입력할 수 있습니다.
-      </p>
+      <div className="mb-3" />
 
       {/* 날짜 막대 — 화면 전체(근무자 칸·환경모니터링)의 기준 날짜와 일별/전체 보기 */}
       {dayBar()}
