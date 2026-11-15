@@ -181,6 +181,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
       id: task?.id || null,
       draft: {
         name: task?.name || '', kind: task?.kind || '', alarmTime: task?.alarmTime || '', note: task?.note || '',
+        backups: [...(task?.backups || [])],
         showCal: task ? task.showOnCalendar !== false : false, // 새 업무는 월별 일정 표시를 끈 상태가 기본
         curWorker: '',
         assign: task ? staff.filter(w => (board.assignments[w] || []).includes(task.id)) : [],
@@ -198,6 +199,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     const fields = {
       name, kind: draft.kind, alarmTime: draft.kind && draft.alarmTime ? draft.alarmTime : undefined, due: !draft.kind && draft.due ? draft.due : undefined, note: draft.note.trim() ? draft.note : undefined,
       // 구분에 맞는 주기 값만 남긴다(기본값이면 저장하지 않는다)
+      backups: draft.backups?.length ? draft.backups : undefined,
       showOnCalendar: draft.showCal === false ? false : undefined, // 기본은 표시
       dow: draft.kind === 'weekly' && draft.dow != null && draft.dow !== 1 ? draft.dow : undefined,
       monthDay: draft.kind === 'monthly' && draft.monthDay != null && draft.monthDay !== 'edge' ? draft.monthDay : undefined,
@@ -444,6 +446,9 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
       const stay = i.workers.filter(w => !absent.includes(w));
       if (stay.length > 0) return { ...i, workers: stay }; // 이미 다른 담당자가 같이 맡고 있으면 그대로
       const task = taskById.get(i.id);
+      // 부(대체 담당)가 지정돼 있고 휴가가 아니면 그 사람이 대신 맡는다(앞에 적은 사람 우선)
+      const backup = (task?.backups || []).find(w => present.includes(w) && !i.workers.includes(w));
+      if (backup) { load[backup]++; subs[`${i.id}|${backup}`] = i.workers[0]; return { ...i, workers: [backup] }; }
       const poolPresent = task?.rotation?.on ? rotationPool(task, staff).filter(w => present.includes(w)) : [];
       const cands = poolPresent.length ? poolPresent : present;
       const pick = cands.reduce((best, w) => (load[w] < load[best] ? w : best), cands[0]);
@@ -779,7 +784,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                           className={`rounded-lg border px-2.5 py-2 shadow-sm cursor-pointer select-none ${done ? 'bg-green-200 border-green-500 text-green-900' : c.chip} ${adminUnlocked ? 'active:cursor-grabbing' : ''}`}>
                           <div className="flex items-center gap-1.5">
                             <span className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[t.kind || '']}`}>{KIND_SHORT[t.kind || '']}</span>
-                            {subs[`${id}|${who}`] && <span className="shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border bg-red-50 border-red-200 text-red-600" title={`${subs[`${id}|${who}`]}님 휴가로 대신 맡음`}>{subs[`${id}|${who}`]} 대신</span>}
+                            {subs[`${id}|${who}`] && <span className="shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border bg-red-50 border-red-200 text-red-600" title={`${subs[`${id}|${who}`]}님(정)이 휴가라 대신 맡음${(taskById.get(id)?.backups || []).includes(who) ? ' — 부 담당' : ''}`}>{(taskById.get(id)?.backups || []).includes(who) ? '부 · ' : ''}{subs[`${id}|${who}`]} 대신</span>}
                             <span className={`flex-1 text-sm font-medium break-words ${done ? 'line-through opacity-70' : ''}`}>{t.name}</span>
                             {done && <span className="shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded bg-green-600 text-white">✓ 완료</span>}
                             {rs && <span className="text-indigo-500 text-xs leading-none">🔄</span>}
@@ -892,6 +897,11 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                             {ws.map(w => <span key={w} className={`w-2.5 h-2.5 rounded-full ${colorOf(w).dot}`} />)}
                           </span>
                         )}
+                        {(t.backups || []).length > 0 && (
+                          <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-gray-500" title={`부(대체 담당): ${t.backups.join(', ')}`}>부
+                            {t.backups.map(w => <span key={w} className={`w-2 h-2 rounded-full ${colorOf(w).dot} opacity-70`} />)}
+                          </span>
+                        )}
                         {t.rotation?.on && <span className="text-[10px] px-1 rounded bg-indigo-100 text-indigo-700 font-semibold" title={`로테이션: ${rotationLabel(t.rotation)}`}>🔄 {rotationLabel(t.rotation)}</span>}
                         {adminUnlocked && <button onClick={e => { e.stopPropagation(); removeTask(t.id); }} className="text-gray-400 hover:text-red-500 text-xs leading-none px-0.5" title="업무 버튼 삭제">✕</button>}
                       </div>
@@ -931,13 +941,20 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
               <span className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[t.kind || '']}`}>{KIND_SHORT[t.kind || '']}</span>
               <span className="text-sm font-semibold break-words min-w-0">{t.name}</span>
             </div>
-            <Row label="담당">
+            <Row label="정 담당">
               {ws.length ? (
                 <span className="inline-flex flex-wrap gap-x-2.5 gap-y-0.5">
                   {ws.map(w => <span key={w} className="inline-flex items-center gap-1"><span className={`w-2 h-2 rounded-full ${colorOf(w).dot}`} />{w}</span>)}
                 </span>
               ) : <span className="text-gray-400">배치 없음</span>}
             </Row>
+            {(t.backups || []).length > 0 && (
+              <Row label="부 담당">
+                <span className="inline-flex flex-wrap gap-x-2.5 gap-y-0.5">
+                  {t.backups.map(w => <span key={w} className="inline-flex items-center gap-1"><span className={`w-2 h-2 rounded-full ${colorOf(w).dot}`} />{w}</span>)}
+                </span>
+              </Row>
+            )}
             {t.kind ? <Row label="주기">{scheduleLabel(t)}</Row> : <Row label="마감">{due ? <>{due}{dl && <span className={`ml-1.5 font-semibold ${dl.cls.includes('red') ? 'text-red-300' : dl.cls.includes('yellow') ? 'text-yellow-300' : 'text-gray-400'}`}>{dl.text}</span>}</> : <span className="text-gray-400">없음</span>}</Row>}
             {pr && <Row label="상태">{STATUS.find(x => x[0] === pr.status)?.[1]}</Row>}
             {rs && (
@@ -1092,7 +1109,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
               <textarea value={d.note} disabled={ro} rows={4} spellCheck={false} onChange={e => set({ note: e.target.value })}
                 placeholder="업무 내용·주의사항 등" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-gray-50" />
               <div className="mt-3">
-                <p className="text-xs text-gray-500 mb-1">배치 <span className="text-gray-400">— 체크한 근무자에게 배정됩니다 (끌어다 놓아도 됩니다)</span></p>
+                <p className="text-xs text-gray-500 mb-1"><b className="text-gray-700">정</b> 배치 <span className="text-gray-400">— 체크한 근무자가 주 담당입니다 (끌어다 놓아도 됩니다)</span></p>
                 <div className="flex flex-wrap gap-x-4 gap-y-1.5">
                   {staff.map(w => (
                     <label key={w} className={`inline-flex items-center gap-1.5 text-sm select-none ${ro ? 'opacity-50' : 'cursor-pointer'}`}>
@@ -1104,6 +1121,23 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                   ))}
                 </div>
                 {d.rot.on && <p className="text-[11px] text-indigo-500 mt-1">{cur?.rotation?.on ? '로테이션 중에는 이번 주기 담당 한 명만 고를 수 있고, 바꾸면 다음 순서가 그 사람부터 이어집니다.' : '로테이션을 켜면 주기마다 담당이 자동으로 정해집니다(체크한 첫 사람이 1주기 담당).'}</p>}
+              </div>
+              <div className="mt-3">
+                <p className="text-xs text-gray-500 mb-1"><b className="text-gray-700">부</b> 대체 담당 <span className="text-gray-400">— 정 담당자가 연차일 때 이 업무를 대신 맡습니다 (먼저 체크한 사람 우선)</span></p>
+                <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+                  {staff.map(w => {
+                    const isMain = d.assign.includes(w) || (cur?.rotation?.on && workersOf(cur.id).includes(w) && d.rot.on);
+                    const idx = (d.backups || []).indexOf(w);
+                    return (
+                      <label key={w} className={`inline-flex items-center gap-1.5 text-sm select-none ${ro || isMain ? 'opacity-40' : 'cursor-pointer'}`} title={isMain ? '정 담당자는 부로 지정할 수 없습니다' : ''}>
+                        <input type="checkbox" disabled={ro || isMain} checked={idx >= 0}
+                          onChange={e => set({ backups: e.target.checked ? [...(d.backups || []), w] : (d.backups || []).filter(x => x !== w) })} />
+                        <span className={`w-2.5 h-2.5 rounded-full ${colorOf(w).dot}`} />{w}
+                        {idx >= 0 && <span className="text-[10px] font-bold text-gray-500">{idx + 1}순위</span>}
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
               <div className="mt-3 pt-3 border-t border-gray-100">
                 <p className="text-sm font-semibold text-gray-700 mb-2">🔄 로테이션</p>

@@ -2603,6 +2603,9 @@ function registerHandlers() {
         if (t?.monthDay === 'last') item.monthDay = 'last';
         else if (Number.isInteger(t?.monthDay) && t.monthDay >= 1 && t.monthDay <= 31) item.monthDay = t.monthDay;
         if (t?.weekdaysOnly === false) item.weekdaysOnly = false;
+        // 부(대체 담당): 정 담당자가 휴가일 때 그 업무를 대신 맡을 사람(앞에 있는 사람이 우선)
+        const backups = [...new Set((Array.isArray(t?.backups) ? t.backups : []).map(x => String(x).slice(0, 40)).filter(Boolean))].slice(0, 8);
+        if (backups.length) item.backups = backups;
         if (t?.showOnCalendar === false) item.showOnCalendar = false; // 월별 일정 표시 끔(기본은 표시)
         const note = String(t?.note || '').slice(0, 1000);
         if (note.trim()) item.note = note;
