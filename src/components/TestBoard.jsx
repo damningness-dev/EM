@@ -83,6 +83,9 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   const [overPalette, setOverPalette] = useState(false);
   const [notice, setNotice] = useState(null);
   const [tip, setTip] = useState(null); // { id, who, x, y, up } — 업무 칩 위에 마우스를 올렸을 때의 안내
+  // 확인 창: 브라우저 기본 confirm()은 Electron(Windows)에서 닫힌 뒤 입력칸이 먹통이 되는 일이 있어 화면 안의 확인 창을 쓴다
+  const [confirmDlg, setConfirmDlg] = useState(null); // { message, onYes }
+  const askConfirm = (message, onYes) => setConfirmDlg({ message, onYes });
   const [staffDlg, setStaffDlg] = useState(null); // { input } — 직원 관리 창
   const [kindMenu, setKindMenu] = useState(null); // { id, x, y } — 업무 버튼 구분 선택 메뉴
   const [taskDlg, setTaskDlg] = useState(null); // { id|null(새 업무), draft } — 업무 상세 창
@@ -289,21 +292,23 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     if (!guard()) return;
     const who = workersOf(t.id);
     if (who.length === 0) { flash('배정된 근무자가 없습니다.'); return; }
-    if (!confirm(`"${t.name}"의 배정(${who.join(', ')})을 모두 해제할까요?${t.rotation?.on ? '\n로테이션도 함께 꺼집니다.' : ''}\n업무 버튼은 그대로 남습니다.`)) return;
-    const assignments = {}, progress = {};
-    Object.entries(board.assignments).forEach(([w, ids]) => { assignments[w] = ids.filter(x => x !== t.id); });
-    Object.entries(board.progress).forEach(([w, per]) => { const { [t.id]: _drop, ...rest } = per || {}; progress[w] = rest; }); // eslint-disable-line no-unused-vars
-    const tasks = t.rotation?.on ? board.tasks.map(x => { if (x.id !== t.id) return x; const { rotation: _r, ...rest } = x; return rest; }) : board.tasks; // eslint-disable-line no-unused-vars
-    commit({ ...board, tasks, assignments, progress });
-    flash('배정을 모두 해제했습니다.');
+    askConfirm(`"${t.name}"의 배정(${who.join(', ')})을 모두 해제할까요?${t.rotation?.on ? '\n로테이션도 함께 꺼집니다.' : ''}\n업무 버튼은 그대로 남습니다.`, () => {
+      const assignments = {}, progress = {};
+      Object.entries(board.assignments).forEach(([w, ids]) => { assignments[w] = ids.filter(x => x !== t.id); });
+      Object.entries(board.progress).forEach(([w, per]) => { const { [t.id]: _drop, ...rest } = per || {}; progress[w] = rest; }); // eslint-disable-line no-unused-vars
+      const tasks = t.rotation?.on ? board.tasks.map(x => { if (x.id !== t.id) return x; const { rotation: _r, ...rest } = x; return rest; }) : board.tasks; // eslint-disable-line no-unused-vars
+      commit({ ...board, tasks, assignments, progress });
+      flash('배정을 모두 해제했습니다.');
+    });
   }
   function removeTask(id) {
     if (!guard()) return;
-    if (!confirm('이 업무 버튼을 삭제할까요? 근무자에게 배치된 것과 기한·진행상태도 함께 사라집니다.')) return;
-    const assignments = {}, progress = {};
-    Object.entries(board.assignments).forEach(([who, ids]) => { assignments[who] = ids.filter(x => x !== id); });
-    Object.entries(board.progress).forEach(([who, per]) => { const { [id]: _drop, ...rest } = per || {}; progress[who] = rest; }); // eslint-disable-line no-unused-vars
-    commit({ ...board, tasks: board.tasks.filter(t => t.id !== id), assignments, progress });
+    askConfirm('이 업무 버튼을 삭제할까요? 근무자에게 배치된 것과 기한·진행상태도 함께 사라집니다.', () => {
+      const assignments = {}, progress = {};
+      Object.entries(board.assignments).forEach(([who, ids]) => { assignments[who] = ids.filter(x => x !== id); });
+      Object.entries(board.progress).forEach(([who, per]) => { const { [id]: _drop, ...rest } = per || {}; progress[who] = rest; }); // eslint-disable-line no-unused-vars
+      commit({ ...board, tasks: board.tasks.filter(t => t.id !== id), assignments, progress });
+    });
   }
   // 기한·진행상태 입력. 로테이션 업무는 "이번 주기" 기록으로 남기고(주기가 바뀌면 자동으로 새로 시작), 같은
   // 업무의 다른 사람 기록은 정리한다.
@@ -601,9 +606,10 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   // 모든 업무의 월별 일정 표시를 한 번에 끄기/켜기
   function setAllCalendar(on) {
     if (!guard()) return;
-    if (!confirm(on ? '모든 업무를 월별 모니터링 일정에 표시할까요?' : '모든 업무의 월별 모니터링 일정 표시를 끌까요?\n(업무별로 상세창에서 다시 켤 수 있습니다)')) return;
-    commit({ ...board, tasks: board.tasks.map(t => { const { showOnCalendar: _s, ...rest } = t; return on ? rest : { ...rest, showOnCalendar: false }; }) }); // eslint-disable-line no-unused-vars
-    flash(on ? '모든 업무를 달력에 표시합니다.' : '모든 업무의 달력 표시를 껐습니다.');
+    askConfirm(on ? '모든 업무를 월별 모니터링 일정에 표시할까요?' : '모든 업무의 월별 모니터링 일정 표시를 끌까요?\n(업무별로 상세창에서 다시 켤 수 있습니다)', () => {
+      commit({ ...board, tasks: board.tasks.map(t => { const { showOnCalendar: _s, ...rest } = t; return on ? rest : { ...rest, showOnCalendar: false }; }) }); // eslint-disable-line no-unused-vars
+      flash(on ? '모든 업무를 달력에 표시합니다.' : '모든 업무의 달력 표시를 껐습니다.');
+    });
   }
   const calOnCount = board.tasks.filter(t => t.showOnCalendar !== false).length;
 
@@ -798,8 +804,9 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                           className={`rounded-lg border px-2.5 py-2 shadow-sm cursor-pointer select-none ${done ? 'bg-green-200 border-green-500 text-green-900' : c.chip} ${adminUnlocked ? 'active:cursor-grabbing' : ''}`}>
                           <div className="flex items-center gap-1.5">
                             <span className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[t.kind || '']}`}>{KIND_SHORT[t.kind || '']}</span>
-                            {subs[`${id}|${who}`] && <span className="shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border bg-red-50 border-red-200 text-red-600" title={`${subs[`${id}|${who}`]}님(정)이 휴가라 대신 맡음${(taskById.get(id)?.backups || []).includes(who) ? ' — 부 담당' : ''}`}>{(taskById.get(id)?.backups || []).includes(who) ? '부 · ' : ''}{subs[`${id}|${who}`]} 대신</span>}
-                            <span className={`flex-1 text-sm font-medium break-words ${done ? 'line-through opacity-70' : ''}`}>{t.name}</span>
+                            <span className={`min-w-0 text-sm font-medium break-words ${done ? 'line-through opacity-70' : ''}`}>{t.name}</span>
+                            {subs[`${id}|${who}`] && <span className="shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border bg-red-50 border-red-200 text-red-600" title={`${subs[`${id}|${who}`]}님(정)이 휴가라 대신 맡음${(taskById.get(id)?.backups || []).includes(who) ? ' — 부 담당' : ''}`}>{(taskById.get(id)?.backups || []).includes(who) ? '부' : '대신'}</span>}
+                            <span className="flex-1" />
                             {done && <span className="shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded bg-green-600 text-white">✓ 완료</span>}
                             {rs && <span className="text-indigo-500 text-xs leading-none">🔄</span>}
                             {!track && t.alarmTime && <span className="shrink-0 ml-auto text-xs font-bold tabular-nums text-gray-600 bg-white/70 border border-black/10 rounded px-1.5 py-0.5" title="시간">{t.alarmTime}</span>}
@@ -993,6 +1000,19 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
         );
       })()}
 
+      {/* 확인 창 */}
+      {confirmDlg && (
+        <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/40" onClick={() => setConfirmDlg(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[24rem] max-w-[95vw] p-5" onClick={e => e.stopPropagation()}>
+            <p className="text-sm text-gray-800 whitespace-pre-line mb-4">{confirmDlg.message}</p>
+            <div className="flex gap-2 justify-end">
+              <button type="button" onClick={() => setConfirmDlg(null)} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>
+              <button type="button" autoFocus onClick={() => { const f = confirmDlg.onYes; setConfirmDlg(null); f(); }} className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700">확인</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 직원 관리 창 */}
       {staffDlg && (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40" onClick={() => setStaffDlg(null)}>
@@ -1004,7 +1024,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                 <span key={n} className="inline-flex items-center gap-1 pl-2.5 pr-1.5 py-1 rounded-full bg-gray-100 border border-gray-200 text-sm text-gray-700">
                   {n}
                   <button type="button" className="text-gray-400 hover:text-red-500 text-xs leading-none px-0.5" title="삭제"
-                    onClick={() => { if (confirm(`"${n}"님을 직원 목록에서 삭제할까요? 이미 배치된 업무는 그대로 남지만 칸은 없어집니다.`)) saveStaff(staff.filter(x => x !== n), `${n}님을 삭제했습니다.`); }}>✕</button>
+                    onClick={() => askConfirm(`"${n}"님을 직원 목록에서 삭제할까요? 이미 배치된 업무는 그대로 남지만 칸은 없어집니다.`, () => saveStaff(staff.filter(x => x !== n), `${n}님을 삭제했습니다.`))}>✕</button>
                 </span>
               ))}
               {staff.length === 0 && <span className="text-xs text-gray-300">등록된 직원이 없습니다.</span>}
