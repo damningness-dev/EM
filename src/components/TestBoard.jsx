@@ -283,6 +283,20 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     if (!guard()) return;
     commit({ ...board, tasks: board.tasks.map(x => x.id === id ? { ...x, kind } : x) });
   }
+  // 업무 버튼 오른쪽 ✕: 업무를 지우지 않고 근무자에게 배정된 것을 모두 뺀다(로테이션 업무는 로테이션도 함께 끈다).
+  // 업무 자체를 지우려면 업무 상세창의 '삭제'를 쓴다.
+  function clearAssignments(t) {
+    if (!guard()) return;
+    const who = workersOf(t.id);
+    if (who.length === 0) { flash('배정된 근무자가 없습니다.'); return; }
+    if (!confirm(`"${t.name}"의 배정(${who.join(', ')})을 모두 해제할까요?${t.rotation?.on ? '\n로테이션도 함께 꺼집니다.' : ''}\n업무 버튼은 그대로 남습니다.`)) return;
+    const assignments = {}, progress = {};
+    Object.entries(board.assignments).forEach(([w, ids]) => { assignments[w] = ids.filter(x => x !== t.id); });
+    Object.entries(board.progress).forEach(([w, per]) => { const { [t.id]: _drop, ...rest } = per || {}; progress[w] = rest; }); // eslint-disable-line no-unused-vars
+    const tasks = t.rotation?.on ? board.tasks.map(x => { if (x.id !== t.id) return x; const { rotation: _r, ...rest } = x; return rest; }) : board.tasks; // eslint-disable-line no-unused-vars
+    commit({ ...board, tasks, assignments, progress });
+    flash('배정을 모두 해제했습니다.');
+  }
   function removeTask(id) {
     if (!guard()) return;
     if (!confirm('이 업무 버튼을 삭제할까요? 근무자에게 배치된 것과 기한·진행상태도 함께 사라집니다.')) return;
@@ -903,7 +917,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                           </span>
                         )}
                         {t.rotation?.on && <span className="text-[10px] px-1 rounded bg-indigo-100 text-indigo-700 font-semibold" title={`로테이션: ${rotationLabel(t.rotation)}`}>🔄 {rotationLabel(t.rotation)}</span>}
-                        {adminUnlocked && <button onClick={e => { e.stopPropagation(); removeTask(t.id); }} className="text-gray-400 hover:text-red-500 text-xs leading-none px-0.5" title="업무 버튼 삭제">✕</button>}
+                        {adminUnlocked && ws.length > 0 && <button onClick={e => { e.stopPropagation(); clearAssignments(t); }} className="text-gray-400 hover:text-red-500 text-xs leading-none px-0.5" title="배정 모두 해제 (업무 버튼은 남습니다)">✕</button>}
                       </div>
                     );
                   })}
