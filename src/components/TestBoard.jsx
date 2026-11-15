@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { fetchWeeklyDuty, fetchWeeklyBoard, saveWeeklyBoard, syncAfterChange, fetchZones, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchTempSchedules, fetchTeamRecords, fetchBoardDone, setBoardDone } from '../lib/api';
+import { fetchWeeklyDuty, fetchWeeklyBoard, saveWeeklyBoard, syncAfterChange, fetchZones, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchTempSchedules, fetchTeamRecords, fetchBoardDone, setBoardDone, saveWeeklyDuty } from '../lib/api';
 import { buildHolidayMap, setScheduleConfig, totalCount } from '../lib/schedule';
 import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, monitoringButtons } from '../lib/monitoringDay';
 import { boardTasksOn, scheduleLabel, ROTATION_UNITS, rotationState, rotationPool, rotationLabel, fmtDate } from '../lib/boardRotation';
 
-// TEST 메뉴 — 업무 배치판. 기존 "주간근무" 메뉴는 그대로 두고, 같은 직원 목록을 가로 칸으로 펼친 뒤
+// 개인별 업무표(예전 TEST 메뉴) — 직원 목록을 가로 칸으로 펼친 뒤
 // 업무 버튼을 끌어다(드래그 앤 드롭) 근무자에게 배치한다. 배치된 업무마다 기한과 진행상태를 입력하고,
 // 근무자마다 색이 달라 누구 업무인지 한눈에 보인다. 나중에 주간근무와 합치거나 바꿀 수 있도록
 // 배치 내용은 따로(weeklyBoard) 저장한다. 수정은 관리자만 할 수 있고, 나머지 계정은 보기만 한다.
@@ -83,6 +83,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   const [overPalette, setOverPalette] = useState(false);
   const [notice, setNotice] = useState(null);
   const [tip, setTip] = useState(null); // { id, who, x, y, up } — 업무 칩 위에 마우스를 올렸을 때의 안내
+  const [staffDlg, setStaffDlg] = useState(null); // { input } — 직원 관리 창
   const [kindMenu, setKindMenu] = useState(null); // { id, x, y } — 업무 버튼 구분 선택 메뉴
   const [taskDlg, setTaskDlg] = useState(null); // { id|null(새 업무), draft } — 업무 상세 창
   const [doneList, setDoneList] = useState([]); // 완료 표시 [{ id:'날짜|업무|근무자', date, taskId, who, done }]
@@ -260,6 +261,19 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   function showTip(e, t, who) {
     const r = e.currentTarget.getBoundingClientRect();
     setTip({ id: t.id, who, x: Math.max(8, Math.min(r.left, window.innerWidth - 308)), y: r.bottom + 8, top: r.top - 8, up: r.bottom + 280 > window.innerHeight });
+  }
+  // 직원(근무자) 목록 저장 — 예전 주간근무 메뉴가 쓰던 같은 목록(weeklyDuty.staff)을 그대로 고친다.
+  async function saveStaff(names, okMsg) {
+    if (!guard()) return;
+    if (!duty) { flash('직원 목록을 아직 불러오지 못했습니다. 잠시 후 다시 시도하세요.', true); return; }
+    const next = { ...duty, staff: names };
+    try {
+      const r = await saveWeeklyDuty(next);
+      if (r && r.ok === false) { flash(r.error || '저장하지 못했습니다', true); return; }
+      setDuty(next); setStaff(names);
+      syncAfterChange().catch(() => {});
+      if (okMsg) flash(okMsg);
+    } catch { flash('직원 목록을 저장하지 못했습니다', true); }
   }
   // 구분 변경(업무 버튼 앞 배지에서 고른다). 주기·마감기한 값은 지우지 않고 남겨 두어 되돌리면 그대로 쓸 수 있다.
   function setKind(id, kind) {
@@ -667,8 +681,8 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   return (
     <div className="p-6 max-w-[1600px] mx-auto">
       <div className="flex items-center gap-3 mb-1 flex-wrap">
-        <h1 className="text-2xl font-bold text-gray-800">TEST <span className="text-base font-medium text-gray-400">업무 배치</span></h1>
-        <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold">시험용</span>
+        <h1 className="text-2xl font-bold text-gray-800">👥 개인별 업무표</h1>
+        {adminUnlocked && <button type="button" onClick={() => setStaffDlg({ input: '' })} className="text-xs px-2.5 py-1 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50" title="근무자(직원) 추가·삭제">👥 직원 관리</button>}
         {!adminUnlocked && <span className="text-xs text-gray-400">🔒 보기 전용 — 관리자로 로그인하면 업무를 배치할 수 있습니다</span>}
         {notice && <span className={`text-xs font-medium ${notice.isError ? 'text-red-500' : 'text-green-600'}`}>{notice.text}</span>}
       </div>
@@ -678,10 +692,9 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
       {dayBar()}
 
       {/* 개인별 업무표 */}
-      <h2 className="text-base font-bold text-gray-700 mb-2">👥 개인별 업무표</h2>
       {/* 근무자 칸 — 인원수만큼 가로로, 사람마다 다른 색 */}
       {staff.length === 0 ? (
-        <p className="text-sm text-gray-400 py-8 text-center">직원이 없습니다. "주간근무" 메뉴의 직원 목록에서 직원을 먼저 추가하세요.</p>
+        <p className="text-sm text-gray-400 py-8 text-center">직원이 없습니다. 위의 '직원 관리'에서 근무자를 먼저 추가하세요.</p>
       ) : (
         <div className="overflow-x-auto pb-2">
           {/* 근무자 칸은 위→아래로 [이름 / 환경모니터링 / 주기적 / 비주기적] 4개 행을 같이 쓴다 → 모든 근무자의 같은 구역 제목이 한 줄에 맞춰진다 */}
@@ -948,6 +961,37 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
           </div>
         );
       })()}
+
+      {/* 직원 관리 창 */}
+      {staffDlg && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40" onClick={() => setStaffDlg(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[24rem] max-w-[95vw] p-5" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-gray-900 mb-1">👥 직원 관리</h3>
+            <p className="text-xs text-gray-500 mb-3">개인별 업무표에 칸으로 나오는 근무자입니다. 이름은 로그인 아이디와 같게 적어야 본인 업무로 인식됩니다.</p>
+            <div className="flex flex-wrap gap-1.5 mb-3 min-h-[2rem]">
+              {staff.map(n => (
+                <span key={n} className="inline-flex items-center gap-1 pl-2.5 pr-1.5 py-1 rounded-full bg-gray-100 border border-gray-200 text-sm text-gray-700">
+                  {n}
+                  <button type="button" className="text-gray-400 hover:text-red-500 text-xs leading-none px-0.5" title="삭제"
+                    onClick={() => { if (confirm(`"${n}"님을 직원 목록에서 삭제할까요? 이미 배치된 업무는 그대로 남지만 칸은 없어집니다.`)) saveStaff(staff.filter(x => x !== n), `${n}님을 삭제했습니다.`); }}>✕</button>
+                </span>
+              ))}
+              {staff.length === 0 && <span className="text-xs text-gray-300">등록된 직원이 없습니다.</span>}
+            </div>
+            <div className="flex gap-2">
+              <input autoFocus value={staffDlg.input} onChange={e => setStaffDlg({ input: e.target.value })} placeholder="추가할 직원 이름" spellCheck={false}
+                onKeyDown={e => { if (e.key === 'Enter' && staffDlg.input.trim()) { const nm = staffDlg.input.trim(); if (!staff.includes(nm)) saveStaff([...staff, nm], `${nm}님을 추가했습니다.`); setStaffDlg({ input: '' }); } }}
+                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+              <button type="button" disabled={!staffDlg.input.trim() || staff.includes(staffDlg.input.trim())}
+                onClick={() => { const nm = staffDlg.input.trim(); saveStaff([...staff, nm], `${nm}님을 추가했습니다.`); setStaffDlg({ input: '' }); }}
+                className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40">추가</button>
+            </div>
+            <div className="flex justify-end mt-4">
+              <button type="button" onClick={() => setStaffDlg(null)} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">닫기</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 구분 선택 메뉴 */}
       {kindMenu && (() => {

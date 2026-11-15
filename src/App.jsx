@@ -3,7 +3,6 @@ import Dashboard from './components/Dashboard';
 import Sop from './components/Sop';
 import Calibration from './components/Calibration';
 import UsagePoints from './components/UsagePoints';
-import WeeklyDuty from './components/WeeklyDuty';
 import TestBoard from './components/TestBoard';
 import AnnualPlan from './components/AnnualPlan';
 import ZoneStatus from './components/ZoneStatus';
@@ -32,9 +31,9 @@ const MENU = [
   { id: 'annual', label: '연간 계획 (AHU)', icon: '🔧' },
   { id: 'calibration', label: '교정 관리', icon: '⚙️' },
   { id: 'usagepoints', label: '업무별 진행상황', icon: '📍' },
-  { id: 'weeklyduty', label: '주간근무', icon: '🗓️' },
-  // adminAlways: 시험용 메뉴 — 관리자는 허용 목록에 체크하지 않아도 항상 보이고, 다른 계정은 권한 설정에서 허용해야 보인다.
-  { id: 'test', label: 'TEST', icon: '🧪', adminAlways: true },
+  // 개인별 업무표(예전 TEST 메뉴, id는 권한 호환을 위해 'test' 그대로) — 관리자는 허용 목록에 체크하지 않아도 항상 보이고, 다른 계정은 권한 설정에서 허용해야 보인다.
+  // 예전 '주간근무' 메뉴는 없앴다(직원 관리와 업무 배치는 이 화면에서 한다).
+  { id: 'test', label: '개인별 업무표', icon: '👥', adminAlways: true },
   // requiresLogin: 게스트 메뉴 제한을 꺼둔(전체 공개) PC에서도 로그인하지 않으면
   // 절대 보이지 않는다 — 권한 설정의 "로그인하지 않았을 때" 허용 목록과 무관하게
   // 아래 visibleMenu에서 항상 걸러진다.
@@ -272,7 +271,7 @@ export default function App() {
         <div className="px-4 pt-1.5 pb-3">
           {currentMember ? (
             <div className="flex items-center gap-2">
-              <span className="flex-1 text-xs text-gray-300 truncate" title={`허용된 메뉴: ${currentMember.isAdmin ? '관리자(TEST 포함) · ' : ''}${(currentMember.allowedTabs || []).map(t => MENU.find(x => x.id === t)?.label || t).join(', ') || '없음'}`}>
+              <span className="flex-1 text-xs text-gray-300 truncate" title={`허용된 메뉴: ${currentMember.isAdmin ? '관리자(개인별 업무표 포함) · ' : ''}${(currentMember.allowedTabs || []).map(t => MENU.find(x => x.id === t)?.label || t).join(', ') || '없음'}`}>
                 {currentMember.isAdmin ? '👑' : '👤'} {currentMember.username}
               </span>
               <button onClick={() => setShowMemberChangePassword(true)} title="비밀번호 변경"
@@ -420,7 +419,6 @@ export default function App() {
               jumpTarget={calibJumpTarget} onJumpTargetConsumed={() => setCalibJumpTarget(null)} />
           )}
           {page === 'usagepoints' && <UsagePoints adminUnlocked={adminUnlocked} currentMember={currentMember} />}
-          {page === 'weeklyduty' && <WeeklyDuty adminUnlocked={adminUnlocked} />}
           {page === 'test' && <TestBoard adminUnlocked={adminUnlocked} currentMember={currentMember} />}
           {page === 'sop' && <Sop adminUnlocked={adminUnlocked} currentMember={currentMember} />}
             </ErrorBoundary>

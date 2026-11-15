@@ -138,7 +138,7 @@ export default function MemberManager({ menu, onClose }) {
                         </p>
                         <p className="text-[11px] text-gray-400 mt-0.5">
                           {(m.allowedTabs || []).length === 0 ? '허용된 메뉴 없음'
-                            : m.allowedTabs.map(t => menu.find(x => x.id === t)?.label || t).join(', ')}
+                            : m.allowedTabs.filter(t => menu.some(x => x.id === t)).map(t => menu.find(x => x.id === t).label).join(', ') || '허용된 메뉴 없음'}
                         </p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">

@@ -284,7 +284,7 @@ function SettingsModal({ cfg, onClose, onStatus }) {
             <span>
               <b>이 PC를 기준(관리자) PC로 사용</b>
               <span className="block text-[11px] text-gray-500 mt-0.5 font-normal">
-                월간모니터링·구역별현황·간트차트·연간계획·교정관리·주간근무·계정설정은
+                월간모니터링·구역별현황·간트차트·연간계획·교정관리·개인별업무표·계정설정은
                 <b> 기준 PC의 내용만 공유에 반영</b>됩니다. 기준 PC는 <b>한 대만</b> 지정하세요.
               </span>
             </span>
