@@ -44,6 +44,8 @@ function EmLabel({ b }) {
     </>
   );
 }
+// 완료한 업무 칩의 빗금(대각선 줄무늬) 배경
+const HATCH = { backgroundImage: 'repeating-linear-gradient(135deg, rgba(22,163,74,0.22) 0 5px, transparent 5px 10px)' };
 const DOW_NAMES = ['일', '월', '화', '수', '목', '금', '토'];
 const DOW = DOW_NAMES;
 // 일별 보기: 달력 표시 설정과 무관하게, 마감기한 없는 기타 업무는 매일, 마감기한이 있는 기타 업무는 마감일까지 계속(미완료면 지난 뒤에도 오늘까지)
@@ -735,9 +737,10 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
               const isDoneTask = (tid) => { const t = taskById.get(tid); const e = doneMap.get(`${t?.kind ? monDate : '*'}|${tid}|${who}`); return e ? e.done : (!t?.kind && prOf(t, who, rotOf(t)).status === 'done'); };
               const doneCnt = ids.filter(isDoneTask).length + emIds.filter(([mk]) => doneMap.get(`${monDate}|em:${mk}|${who}`)?.done).length;
               const totalCnt = ids.length + emIds.length;
-              // 완료한 업무는 표에서 없애고(아래 '완료 목록'에 날짜와 함께 남는다) 남은 것만 보여준다
-              const visIds = ids.filter(id => !isDoneTask(id));
-              const visEm = emIds.filter(([mk]) => !doneMap.get(`${monDate}|em:${mk}|${who}`)?.done);
+              // 비주기(기타) 업무는 완료하면 표에서 없애고(아래 '완료 목록'에 날짜와 함께 남는다), 일일·주간·월간·환경모니터링은
+              // 지우지 않고 그 자리에 빗금(취소선) 처리만 한다.
+              const visIds = ids.filter(id => taskById.get(id)?.kind || !isDoneTask(id));
+              const visEm = emIds;
               const over = overCol === who;
               const lv = viewMode === 'day' ? leaveOf(who, monDate) : '';
               const away = lv === 'annual';
@@ -766,6 +769,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                           <div key={mkey} draggable={adminUnlocked} title={`${v.tip || ''}${v.tip ? ' · ' : ''}더블클릭: 완료 표시`}
                             onDragStart={e => startDrag(e, { kind: 'mon-placed', date: monDate, mkey, label: v.label, tip: v.tip })}
                             onDoubleClick={() => toggleDone(who, monDate, `em:${mkey}`, !!doneMap.get(`${monDate}|em:${mkey}|${who}`)?.done, { name: v.label, kind: 'EM' })}
+                            style={doneMap.get(`${monDate}|em:${mkey}|${who}`)?.done ? HATCH : undefined}
                             className={`rounded-lg border px-2.5 py-1.5 shadow-sm flex items-center gap-1.5 select-none ${doneMap.get(`${monDate}|em:${mkey}|${who}`)?.done ? 'bg-green-200 border-green-500' : c.chip} ${adminUnlocked ? 'cursor-grab active:cursor-grabbing' : ''}`}>
                             <span className="shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border bg-emerald-100 border-emerald-300 text-emerald-700">EM</span>
                             <span className={`flex-1 text-sm font-medium break-words flex flex-wrap items-center gap-1 ${doneMap.get(`${monDate}|em:${mkey}|${who}`)?.done ? 'line-through opacity-70' : ''}`}><EmLabel b={emMap[mkey] || { name: v.label, segs: [] }} /></span>
@@ -807,6 +811,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                           onClick={() => chipClick(() => openTask(t))}
                           onDoubleClick={() => chipDouble(() => toggleDone(who, t.kind ? monDate : '*', id, done, { name: t.name, kind: t.kind || '' }))}
                           onMouseEnter={e => showTip(e, t, who)} onMouseLeave={() => setTip(null)}
+                          style={done ? HATCH : undefined}
                           className={`rounded-lg border px-2.5 py-2 shadow-sm cursor-pointer select-none ${done ? 'bg-green-200 border-green-500 text-green-900' : c.chip} ${adminUnlocked ? 'active:cursor-grabbing' : ''}`}>
                           <div className="flex items-center gap-1.5">
                             <span className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[t.kind || '']}`}>{KIND_SHORT[t.kind || '']}</span>
