@@ -338,6 +338,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     } catch { flash('완료 표시를 저장하지 못했습니다', true); }
   }
   function toggleDone(who, date, taskId, cur) {
+    if (date === '*' && !adminUnlocked) { flash('비주기적 업무의 완료 표시는 관리자만 할 수 있습니다.', true); return; }
     if (!(adminUnlocked || currentMember?.username === who)) { flash('본인의 업무만 완료 표시할 수 있습니다.', true); return; }
     writeDone(date, taskId, who, !cur);
   }
@@ -995,7 +996,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
               </>
             )}
             {t.note && <Row label="메모"><span className="whitespace-pre-wrap">{t.note.length > 120 ? t.note.slice(0, 120) + '…' : t.note}</span></Row>}
-            <p className="text-[10px] text-gray-500 mt-2 pt-2 border-t border-white/10">클릭: 상세정보 · 더블클릭: 완료 표시{adminUnlocked ? ' · 끌어서 배치' : ''}</p>
+            <p className="text-[10px] text-gray-500 mt-2 pt-2 border-t border-white/10">클릭: 상세정보{t.kind || adminUnlocked ? ' · 더블클릭: 완료 표시' : ''}{adminUnlocked ? ' · 끌어서 배치' : ''}</p>
           </div>
         );
       })()}

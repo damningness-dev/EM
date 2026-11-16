@@ -2385,6 +2385,8 @@ function registerHandlers() {
     const me = (data.memberAccounts || []).find(m => m.id === currentMemberId);
     if (!me) return { ok: false, error: '로그인한 뒤에 완료 표시를 할 수 있습니다' };
     if (!me.isAdmin && me.username !== who) return { ok: false, error: '본인의 업무만 완료 표시할 수 있습니다' };
+    // 비주기적(기타) 업무(date가 '*')의 완료는 관리자만 표시한다
+    if (date === '*' && !me.isAdmin) return { ok: false, error: '비주기적 업무의 완료 표시는 관리자만 할 수 있습니다' };
     if (!(date === '*' || /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')))) return { ok: false, error: '날짜가 올바르지 않습니다' };
     const tid = String(taskId || ''), w = String(who || '');
     if (!tid || tid.length > 100 || !w || w.length > 40) return { ok: false, error: '업무 정보가 올바르지 않습니다' };
