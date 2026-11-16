@@ -2380,7 +2380,7 @@ function registerHandlers() {
   // TEST 업무표의 완료 표시. 각자 본인 업무를 더블클릭으로 표시하므로 관리자가 아니어도 쓸 수 있다(관리자는 누구 것이든).
   // 항목 = { id: '날짜|업무|근무자', date('yyyy-MM-dd' 또는 비주기 업무의 '*'), taskId, who, done, updatedAt } — 다른 PC와 항목별로 합쳐진다.
   ipcMain.handle('boardDone:list', () => (Array.isArray(loadData().boardDone) ? loadData().boardDone : []));
-  ipcMain.handle('boardDone:set', (_e, { date, taskId, who, done } = {}) => {
+  ipcMain.handle('boardDone:set', (_e, { date, taskId, who, done, doneAt, name, kind } = {}) => {
     const data = loadData();
     const me = (data.memberAccounts || []).find(m => m.id === currentMemberId);
     if (!me) return { ok: false, error: '로그인한 뒤에 완료 표시를 할 수 있습니다' };
@@ -2391,9 +2391,11 @@ function registerHandlers() {
     const tid = String(taskId || ''), w = String(who || '');
     if (!tid || tid.length > 100 || !w || w.length > 40) return { ok: false, error: '업무 정보가 올바르지 않습니다' };
     const id = `${date}|${tid}|${w}`;
-    const keepFrom = new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10);
-    const list = (Array.isArray(data.boardDone) ? data.boardDone : []).filter(x => x.id !== id && (x.date === '*' || x.date >= keepFrom));
-    list.push({ id, date, taskId: tid, who: w, done: !!done, by: me.username, updatedAt: new Date().toISOString() });
+    // 완료 목록 보관: 완료 처리한 날(doneAt)이 400일 지난 기록은 정리한다
+    const keepFrom = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
+    const list = (Array.isArray(data.boardDone) ? data.boardDone : []).filter(x => x.id !== id && ((x.doneAt || (x.date === '*' ? x.updatedAt : x.date) || '').slice(0, 10) >= keepFrom));
+    const dAt = /^\d{4}-\d{2}-\d{2}$/.test(String(doneAt || '')) ? doneAt : new Date().toISOString().slice(0, 10); // 완료 표시를 한 날짜(그 PC의 오늘)
+    list.push({ id, date, taskId: tid, who: w, done: !!done, doneAt: dAt, name: String(name || '').slice(0, 120), kind: String(kind || '').slice(0, 12), by: me.username, updatedAt: new Date().toISOString() });
     data.boardDone = list;
     saveData(data);
     return { ok: true };

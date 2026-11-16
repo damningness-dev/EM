@@ -86,6 +86,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   // 확인 창: 브라우저 기본 confirm()은 Electron(Windows)에서 닫힌 뒤 입력칸이 먹통이 되는 일이 있어 화면 안의 확인 창을 쓴다
   const [confirmDlg, setConfirmDlg] = useState(null); // { message, onYes }
   const askConfirm = (message, onYes) => setConfirmDlg({ message, onYes });
+  const [doneOpen, setDoneOpen] = useState(true); // 완료 목록 펼침
   const [staffDlg, setStaffDlg] = useState(null); // { input } — 직원 관리 창
   const [kindMenu, setKindMenu] = useState(null); // { id, x, y } — 업무 버튼 구분 선택 메뉴
   const [taskDlg, setTaskDlg] = useState(null); // { id|null(새 업무), draft } — 업무 상세 창
@@ -323,24 +324,25 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     if (rs) Object.keys(progress).forEach(w => { if (w !== who && progress[w]?.[taskId]) { const { [taskId]: _d, ...rest } = progress[w]; progress[w] = rest; } }); // eslint-disable-line no-unused-vars
     progress[who] = { ...(progress[who] || {}), [taskId]: entry };
     commit({ ...board, progress });
-    if (patch.status && task && !task.kind) writeDone('*', taskId, who, patch.status === 'done'); // 기타 업무의 완료 상태와 함께 맞춘다
+    if (patch.status && task && !task.kind) writeDone('*', taskId, who, patch.status === 'done', { name: task.name, kind: '' }); // 기타 업무의 완료 상태와 함께 맞춘다
   }
   // ── 완료 표시(더블클릭) ──
   // 각자 본인 업무표의 업무를 더블클릭하면 완료/해제된다(관리자는 누구 것이든). 매일·주간·월간 업무는 그 날짜별로,
   // 비주기(기타) 업무는 날짜와 관계없이('*') 한 번 완료하면 완료로 남는다.
-  async function writeDone(date, taskId, who, done) {
+  async function writeDone(date, taskId, who, done, meta = {}) {
     const id = `${date}|${taskId}|${who}`;
-    setDoneList(list => [...list.filter(x => x.id !== id), { id, date, taskId, who, done, updatedAt: new Date().toISOString() }]);
+    const doneAt = todayStr(); // 완료 표시를 한 날짜 — 완료 목록에 남는다
+    setDoneList(list => [...list.filter(x => x.id !== id), { id, date, taskId, who, done, doneAt, name: meta.name || '', kind: meta.kind || '', updatedAt: new Date().toISOString() }]);
     try {
-      const r = await setBoardDone({ date, taskId, who, done });
+      const r = await setBoardDone({ date, taskId, who, done, doneAt, name: meta.name || '', kind: meta.kind || '' });
       if (!r?.ok) { flash(r?.error || '완료 표시를 저장하지 못했습니다', true); fetchBoardDone().then(l => setDoneList(Array.isArray(l) ? l : [])).catch(() => {}); return; }
       syncAfterChange().catch(() => {});
     } catch { flash('완료 표시를 저장하지 못했습니다', true); }
   }
-  function toggleDone(who, date, taskId, cur) {
+  function toggleDone(who, date, taskId, cur, meta) {
     if (date === '*' && !adminUnlocked) { flash('비주기적 업무의 완료 표시는 관리자만 할 수 있습니다.', true); return; }
     if (!(adminUnlocked || currentMember?.username === who)) { flash('본인의 업무만 완료 표시할 수 있습니다.', true); return; }
-    writeDone(date, taskId, who, !cur);
+    writeDone(date, taskId, who, !cur, meta);
   }
   // 한 번 클릭 = 상세 열기(잠깐 기다렸다가), 더블클릭 = 완료 표시
   function chipClick(open) { if (clickTimer.current) clearTimeout(clickTimer.current); clickTimer.current = setTimeout(() => { clickTimer.current = null; open(); }, 260); }
@@ -733,6 +735,9 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
               const isDoneTask = (tid) => { const t = taskById.get(tid); const e = doneMap.get(`${t?.kind ? monDate : '*'}|${tid}|${who}`); return e ? e.done : (!t?.kind && prOf(t, who, rotOf(t)).status === 'done'); };
               const doneCnt = ids.filter(isDoneTask).length + emIds.filter(([mk]) => doneMap.get(`${monDate}|em:${mk}|${who}`)?.done).length;
               const totalCnt = ids.length + emIds.length;
+              // 완료한 업무는 표에서 없애고(아래 '완료 목록'에 날짜와 함께 남는다) 남은 것만 보여준다
+              const visIds = ids.filter(id => !isDoneTask(id));
+              const visEm = emIds.filter(([mk]) => !doneMap.get(`${monDate}|em:${mk}|${who}`)?.done);
               const over = overCol === who;
               const lv = viewMode === 'day' ? leaveOf(who, monDate) : '';
               const away = lv === 'annual';
@@ -757,22 +762,22 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                   <div className="px-2.5 pt-2.5">
                       <div className="rounded-lg border border-emerald-300 bg-emerald-50/70 p-1.5 space-y-1.5">
                         <p className="text-[11px] font-bold px-1 text-emerald-700">🌿 환경모니터링</p>
-                        {emIds.map(([mkey, v]) => (
+                        {visEm.map(([mkey, v]) => (
                           <div key={mkey} draggable={adminUnlocked} title={`${v.tip || ''}${v.tip ? ' · ' : ''}더블클릭: 완료 표시`}
                             onDragStart={e => startDrag(e, { kind: 'mon-placed', date: monDate, mkey, label: v.label, tip: v.tip })}
-                            onDoubleClick={() => toggleDone(who, monDate, `em:${mkey}`, !!doneMap.get(`${monDate}|em:${mkey}|${who}`)?.done)}
+                            onDoubleClick={() => toggleDone(who, monDate, `em:${mkey}`, !!doneMap.get(`${monDate}|em:${mkey}|${who}`)?.done, { name: v.label, kind: 'EM' })}
                             className={`rounded-lg border px-2.5 py-1.5 shadow-sm flex items-center gap-1.5 select-none ${doneMap.get(`${monDate}|em:${mkey}|${who}`)?.done ? 'bg-green-200 border-green-500' : c.chip} ${adminUnlocked ? 'cursor-grab active:cursor-grabbing' : ''}`}>
                             <span className="shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border bg-emerald-100 border-emerald-300 text-emerald-700">EM</span>
                             <span className={`flex-1 text-sm font-medium break-words flex flex-wrap items-center gap-1 ${doneMap.get(`${monDate}|em:${mkey}|${who}`)?.done ? 'line-through opacity-70' : ''}`}><EmLabel b={emMap[mkey] || { name: v.label, segs: [] }} /></span>
                             {doneMap.get(`${monDate}|em:${mkey}|${who}`)?.done && <span className="shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded bg-green-600 text-white">✓ 완료</span>}
                           </div>
                         ))}
-                        {emIds.length === 0 && <p className="text-[11px] text-gray-300 px-1 py-1">없음</p>}
+                        {visEm.length === 0 && <p className="text-[11px] text-gray-300 px-1 py-1">{emIds.length > 0 ? '모두 완료 ✓' : '없음'}</p>}
                       </div>
                   </div>
                     {[
-                      { key: 'p', title: '🔁 주기적 업무', box: 'border-black/10 bg-white/50', head: 'text-sky-700', list: ids.filter(id => taskById.get(id)?.kind) },
-                      { key: 'o', title: '📌 비주기적 업무', box: 'border-dashed border-black/20 bg-white/30', head: 'text-gray-600', list: ids.filter(id => !taskById.get(id)?.kind) },
+                      { key: 'p', title: '🔁 주기적 업무', box: 'border-black/10 bg-white/50', head: 'text-sky-700', list: visIds.filter(id => taskById.get(id)?.kind), all: ids.filter(id => taskById.get(id)?.kind) },
+                      { key: 'o', title: '📌 비주기적 업무', box: 'border-dashed border-black/20 bg-white/30', head: 'text-gray-600', list: visIds.filter(id => !taskById.get(id)?.kind), all: ids.filter(id => !taskById.get(id)?.kind) },
                     ].map(sec => (
                     <div key={sec.key} className="px-2.5 pt-2 pb-0.5 last:pb-2.5">
                     <div className={`relative overflow-hidden rounded-lg border p-1.5 space-y-2 h-full ${sec.box}`}>
@@ -800,7 +805,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                             if (d?.kind === 'placed' && d.from === who && d.taskId !== id) { e.preventDefault(); e.stopPropagation(); setOverCol(null); reorderChip(who, d.taskId, id, ids); }
                           }}
                           onClick={() => chipClick(() => openTask(t))}
-                          onDoubleClick={() => chipDouble(() => toggleDone(who, t.kind ? monDate : '*', id, done))}
+                          onDoubleClick={() => chipDouble(() => toggleDone(who, t.kind ? monDate : '*', id, done, { name: t.name, kind: t.kind || '' }))}
                           onMouseEnter={e => showTip(e, t, who)} onMouseLeave={() => setTip(null)}
                           className={`rounded-lg border px-2.5 py-2 shadow-sm cursor-pointer select-none ${done ? 'bg-green-200 border-green-500 text-green-900' : c.chip} ${adminUnlocked ? 'active:cursor-grabbing' : ''}`}>
                           <div className="flex items-center gap-1.5">
@@ -825,7 +830,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                         </div>
                       );
                     })}
-                    {sec.list.length === 0 && <p className="text-[11px] text-gray-300 px-1 py-1">{away && sec.key === 'p' ? '휴가 · 업무 분배됨' : viewMode === 'day' ? '이 날 해당 없음' : '없음'}</p>}
+                    {sec.list.length === 0 && <p className="text-[11px] text-gray-300 px-1 py-1">{away && sec.key === 'p' ? '휴가 · 업무 분배됨' : sec.all.length > 0 ? '모두 완료 ✓' : viewMode === 'day' ? '이 날 해당 없음' : '없음'}</p>}
                     </div>
                     </div>
                     ))}
@@ -938,6 +943,56 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
           </div>
         )}
       </div>
+
+      {/* 완료 목록 — 완료 표시한 업무는 표에서 빠지고 완료한 날짜와 함께 여기에 남는다 */}
+      {(() => {
+        const rows = doneList.filter(x => x.done)
+          .sort((p, q) => String(q.doneAt || '').localeCompare(String(p.doneAt || '')) || String(q.updatedAt || '').localeCompare(String(p.updatedAt || '')))
+          .slice(0, 200);
+        const md = (d) => (d && d !== '*' ? `${d.slice(5, 7)}/${d.slice(8, 10)}` : '');
+        return (
+          <div className="rounded-xl border border-green-200 bg-white p-4 mb-5">
+            <button type="button" onClick={() => setDoneOpen(o => !o)} className="flex items-center gap-2 text-sm font-semibold text-gray-700 w-full text-left">
+              <span>✅ 완료 목록 ({rows.length})</span>
+              <span className="text-[11px] font-normal text-gray-400">완료 표시한 업무는 표에서 빠지고 완료한 날짜와 함께 여기에 남습니다</span>
+              <span className="ml-auto text-gray-400 text-xs">{doneOpen ? '▲ 접기' : '▼ 펼치기'}</span>
+            </button>
+            {doneOpen && (rows.length === 0 ? (
+              <p className="text-sm text-gray-300 py-3">완료한 업무가 없습니다.</p>
+            ) : (
+              <div className="mt-3 max-h-80 overflow-y-auto rounded-lg border border-gray-100">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 text-[11px] text-gray-500 sticky top-0">
+                    <tr><th className="text-left font-medium px-3 py-1.5 w-28">완료일</th><th className="text-left font-medium px-2 py-1.5">업무</th><th className="text-left font-medium px-2 py-1.5 w-28">근무자</th><th className="text-left font-medium px-2 py-1.5 w-20">해당일</th><th className="w-20" /></tr>
+                  </thead>
+                  <tbody>
+                    {rows.map(x => {
+                      const nm = x.name || taskById.get(x.taskId)?.name || x.taskId;
+                      const k = x.kind ?? (taskById.get(x.taskId)?.kind || '');
+                      return (
+                        <tr key={x.id} className="border-t border-gray-100 hover:bg-gray-50">
+                          <td className="px-3 py-1.5 text-gray-700 tabular-nums">{x.doneAt || (x.updatedAt || '').slice(0, 10)}</td>
+                          <td className="px-2 py-1.5">
+                            {k === 'EM'
+                              ? <span className="mr-1.5 text-[10px] leading-none font-bold px-1.5 py-1 rounded border bg-emerald-100 border-emerald-300 text-emerald-700">EM</span>
+                              : <span className={`mr-1.5 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[k] || KIND_BADGE['']}`}>{KIND_SHORT[k] || KIND_SHORT['']}</span>}
+                            <span className="text-gray-800">{nm}</span>
+                          </td>
+                          <td className="px-2 py-1.5"><span className="inline-flex items-center gap-1"><span className={`w-2 h-2 rounded-full ${colorOf(x.who).dot}`} />{x.who}</span></td>
+                          <td className="px-2 py-1.5 text-gray-500 tabular-nums">{md(x.date) || '—'}</td>
+                          <td className="px-2 py-1.5 text-right">
+                            <button type="button" onClick={() => toggleDone(x.who, x.date, x.taskId, true, { name: nm, kind: k })} className="text-[11px] px-2 py-0.5 rounded border border-gray-300 text-gray-500 hover:bg-white hover:text-blue-600" title="완료를 취소하고 표로 되돌립니다">되돌리기</button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       {/* 업무 칩 툴팁 — 라벨/값을 두 칸으로 맞춰 정리해서 보여준다 */}
       {tip && !taskDlg && !kindMenu && (() => {
