@@ -944,44 +944,39 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
         )}
       </div>
 
-      {/* 완료 목록 — 완료 표시한 업무는 표에서 빠지고 완료한 날짜와 함께 여기에 남는다 */}
-      {(() => {
-        const rows = doneList.filter(x => x.done)
+      {/* 완료 목록 — 비주기(기타) 업무를 완료 표시하면 표에서 빠지고 완료한 날짜와 함께 여기에 남는다(관리자에게만 보인다) */}
+      {adminUnlocked && (() => {
+        const rows = doneList.filter(x => x.done && x.date === '*') // date '*' = 비주기(기타) 업무의 완료
           .sort((p, q) => String(q.doneAt || '').localeCompare(String(p.doneAt || '')) || String(q.updatedAt || '').localeCompare(String(p.updatedAt || '')))
           .slice(0, 200);
-        const md = (d) => (d && d !== '*' ? `${d.slice(5, 7)}/${d.slice(8, 10)}` : '');
         return (
           <div className="rounded-xl border border-green-200 bg-white p-4 mb-5">
             <button type="button" onClick={() => setDoneOpen(o => !o)} className="flex items-center gap-2 text-sm font-semibold text-gray-700 w-full text-left">
-              <span>✅ 완료 목록 ({rows.length})</span>
-              <span className="text-[11px] font-normal text-gray-400">완료 표시한 업무는 표에서 빠지고 완료한 날짜와 함께 여기에 남습니다</span>
+              <span>✅ 비주기적 업무 완료 목록 ({rows.length})</span>
+              <span className="text-[11px] font-normal text-gray-400">완료 표시한 비주기적 업무는 표에서 빠지고 완료한 날짜와 함께 여기에 남습니다 · 관리자에게만 보입니다</span>
               <span className="ml-auto text-gray-400 text-xs">{doneOpen ? '▲ 접기' : '▼ 펼치기'}</span>
             </button>
             {doneOpen && (rows.length === 0 ? (
-              <p className="text-sm text-gray-300 py-3">완료한 업무가 없습니다.</p>
+              <p className="text-sm text-gray-300 py-3">완료한 비주기적 업무가 없습니다.</p>
             ) : (
               <div className="mt-3 max-h-80 overflow-y-auto rounded-lg border border-gray-100">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 text-[11px] text-gray-500 sticky top-0">
-                    <tr><th className="text-left font-medium px-3 py-1.5 w-28">완료일</th><th className="text-left font-medium px-2 py-1.5">업무</th><th className="text-left font-medium px-2 py-1.5 w-28">근무자</th><th className="text-left font-medium px-2 py-1.5 w-20">해당일</th><th className="w-20" /></tr>
+                    <tr><th className="text-left font-medium px-3 py-1.5 w-28">완료일</th><th className="text-left font-medium px-2 py-1.5">업무</th><th className="text-left font-medium px-2 py-1.5 w-28">근무자</th><th className="w-20" /></tr>
                   </thead>
                   <tbody>
                     {rows.map(x => {
                       const nm = x.name || taskById.get(x.taskId)?.name || x.taskId;
-                      const k = x.kind ?? (taskById.get(x.taskId)?.kind || '');
                       return (
                         <tr key={x.id} className="border-t border-gray-100 hover:bg-gray-50">
                           <td className="px-3 py-1.5 text-gray-700 tabular-nums">{x.doneAt || (x.updatedAt || '').slice(0, 10)}</td>
                           <td className="px-2 py-1.5">
-                            {k === 'EM'
-                              ? <span className="mr-1.5 text-[10px] leading-none font-bold px-1.5 py-1 rounded border bg-emerald-100 border-emerald-300 text-emerald-700">EM</span>
-                              : <span className={`mr-1.5 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[k] || KIND_BADGE['']}`}>{KIND_SHORT[k] || KIND_SHORT['']}</span>}
+                            <span className={`mr-1.5 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE['']}`}>{KIND_SHORT['']}</span>
                             <span className="text-gray-800">{nm}</span>
                           </td>
                           <td className="px-2 py-1.5"><span className="inline-flex items-center gap-1"><span className={`w-2 h-2 rounded-full ${colorOf(x.who).dot}`} />{x.who}</span></td>
-                          <td className="px-2 py-1.5 text-gray-500 tabular-nums">{md(x.date) || '—'}</td>
                           <td className="px-2 py-1.5 text-right">
-                            <button type="button" onClick={() => toggleDone(x.who, x.date, x.taskId, true, { name: nm, kind: k })} className="text-[11px] px-2 py-0.5 rounded border border-gray-300 text-gray-500 hover:bg-white hover:text-blue-600" title="완료를 취소하고 표로 되돌립니다">되돌리기</button>
+                            <button type="button" onClick={() => toggleDone(x.who, '*', x.taskId, true, { name: nm, kind: '' })} className="text-[11px] px-2 py-0.5 rounded border border-gray-300 text-gray-500 hover:bg-white hover:text-blue-600" title="완료를 취소하고 표로 되돌립니다">되돌리기</button>
                           </td>
                         </tr>
                       );
