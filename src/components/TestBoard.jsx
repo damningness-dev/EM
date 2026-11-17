@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { fetchWeeklyDuty, fetchWeeklyBoard, saveWeeklyBoard, syncAfterChange, fetchZones, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchTempSchedules, fetchTeamRecords, fetchBoardDone, setBoardDone, saveWeeklyDuty, fetchBoardNotes, setBoardNote } from '../lib/api';
+import { fetchWeeklyDuty, fetchWeeklyBoard, saveWeeklyBoard, syncAfterChange, fetchZones, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchTempSchedules, fetchTeamRecords, fetchBoardDone, setBoardDone, saveWeeklyDuty, fetchBoardNotes, saveBoardNote, deleteBoardNote } from '../lib/api';
 import { buildHolidayMap, setScheduleConfig, totalCount } from '../lib/schedule';
 import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, monitoringButtons } from '../lib/monitoringDay';
 import { boardTasksOn, scheduleLabel, ROTATION_UNITS, rotationState, rotationPool, rotationLabel, fmtDate } from '../lib/boardRotation';
@@ -88,10 +88,9 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   // 확인 창: 브라우저 기본 confirm()은 Electron(Windows)에서 닫힌 뒤 입력칸이 먹통이 되는 일이 있어 화면 안의 확인 창을 쓴다
   const [confirmDlg, setConfirmDlg] = useState(null); // { message, onYes }
   const askConfirm = (message, onYes) => setConfirmDlg({ message, onYes });
-  // 날짜별 특이사항 메모: 저장된 목록 + 쓰는 중인 글(draft = { date, text })
+  // 특이사항 항목들(모든 날짜 공통) + 작성/수정 창 { id|null, text }
   const [notes, setNotes] = useState([]);
-  const [noteDraft, setNoteDraft] = useState(null);
-  const noteTimer = useRef(null);
+  const [noteDlg, setNoteDlg] = useState(null);
   const [doneOpen, setDoneOpen] = useState(true); // 완료 목록 펼침
   const [staffDlg, setStaffDlg] = useState(null); // { input } — 직원 관리 창
   const [kindMenu, setKindMenu] = useState(null); // { id, x, y } — 업무 버튼 구분 선택 메뉴
@@ -102,7 +101,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   // [환경모니터링] 구역: 월별 모니터링 일정(구역별 측정 일정)을 읽어 와서 고른 날짜의 일정을 버튼으로 보여준다.
   const [mon, setMon] = useState({ zones: [], holidayDefs: [], blocked: [], temps: [] });
   const [monDate, setMonDate] = useState(todayStr()); // 화면 전체의 기준 날짜
-  const [distFilter, setDistFilter] = useState('all'); // 업무배분 필터: 'all' 전체보기 / 'none' 미분배만 / 'done' 완료만
+  const [distFilter, setDistFilter] = useState('none'); // 업무배분 필터: 'all' 전체보기 / 'none' 미분배만(기본) / 'done' 완료만
   const [viewMode, setViewMode] = useState('day'); // 'day' 일별 보기 / 'all' 전체 보기
   const monYear = parseInt(monDate.slice(0, 4));
   const monHolidays = useMemo(() => buildHolidayMap(mon.holidayDefs, monYear - 1, monYear + 1), [mon.holidayDefs, monYear]);
@@ -351,21 +350,29 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     if (!(adminUnlocked || currentMember?.username === who)) { flash('본인의 업무만 완료 표시할 수 있습니다.', true); return; }
     writeDone(date, taskId, who, !cur, meta);
   }
-  // 특이사항(모든 날짜 공통, 관리자만 작성) 저장: 입력을 멈추고 잠깐 뒤(또는 칸을 벗어날 때) 저장한다
-  async function saveNote(text) {
-    if (noteTimer.current) { clearTimeout(noteTimer.current); noteTimer.current = null; }
+  // 특이사항 저장/삭제 — 업무처럼 버튼으로 하나씩(관리자만)
+  async function saveNoteItem() {
+    const { id, text } = noteDlg;
+    if (!text.trim()) return;
+    if (!guard()) return;
+    setNoteDlg(null);
     try {
-      const r = await setBoardNote({ text });
+      const r = await saveBoardNote({ id, text });
       if (!r?.ok) { flash(r?.error || '특이사항을 저장하지 못했습니다', true); return; }
-      setNotes([{ id: 'common', text, by: currentMember?.username || '', updatedAt: new Date().toISOString() }]);
-      setNoteDraft(d => (d !== null && d === text ? null : d));
+      fetchBoardNotes().then(l => setNotes(Array.isArray(l) ? l : [])).catch(() => {});
       syncAfterChange().catch(() => {});
     } catch { flash('특이사항을 저장하지 못했습니다', true); }
   }
-  function onNoteChange(text) {
-    setNoteDraft(text);
-    if (noteTimer.current) clearTimeout(noteTimer.current);
-    noteTimer.current = setTimeout(() => saveNote(text), 1000);
+  function removeNoteItem(id) {
+    if (!guard()) return;
+    askConfirm('이 특이사항을 삭제할까요?', async () => {
+      try {
+        const r = await deleteBoardNote(id);
+        if (!r?.ok) { flash(r?.error || '삭제하지 못했습니다', true); return; }
+        setNotes(list => list.filter(x => x.id !== id));
+        syncAfterChange().catch(() => {});
+      } catch { flash('삭제하지 못했습니다', true); }
+    });
   }
   // 한 번 클릭 = 상세 열기(잠깐 기다렸다가), 더블클릭 = 완료 표시
   function chipClick(open) { if (clickTimer.current) clearTimeout(clickTimer.current); clickTimer.current = setTimeout(() => { clickTimer.current = null; open(); }, 260); }
@@ -531,13 +538,9 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     const { [who]: _d, ...rest } = board.order || {}; // eslint-disable-line no-unused-vars
     commit({ ...board, order: rest });
   }
-  // 업무배분 '완료' 필터용: 고른 날짜(기타는 날짜와 무관) 기준으로 누군가 완료 표시한 업무
-  const taskDone = (t) => {
-    const dk = t.kind ? monDate : '*';
-    if (doneList.some(x => x.taskId === t.id && x.date === dk && x.done)) return true;
-    if (!t.kind) return Object.entries(board.progress || {}).some(([w, per]) => per?.[t.id]?.status === 'done' && !doneMap.has(`*|${t.id}|${w}`));
-    return false;
-  };
+  // 업무배분 '완료' 필터용: 고른 날짜에 누군가 완료 표시한 일일·주간·월간 업무. 비주기(기타) 업무는 완료하면 아래 '완료 목록'으로
+  // 옮겨지므로 여기(완료 필터)에는 더 이상 나오지 않는다.
+  const taskDone = (t) => !!t.kind && doneList.some(x => x.taskId === t.id && x.date === monDate && x.done);
   const emDone = (mkey) => { const who = board.monAssign?.[monDate]?.[mkey]?.who; return !!who && !!doneMap.get(`${monDate}|em:${mkey}|${who}`)?.done; };
   const shownIds = (who) => (dayItems ? dayItems.filter(i => i.workers.includes(who)).map(i => i.id) : idsOf(who));
   const groups = KIND_ORDER.map(k => ({ kind: k, tasks: board.tasks.filter(t => (t.kind || '') === k && (distFilter === 'all' || (distFilter === 'none' ? workersOf(t.id).length === 0 : taskDone(t)))) })).filter(g => g.tasks.length > 0);
@@ -867,24 +870,31 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
         </div>
       )}
 
-      {/* 특이사항 — 모든 날짜에 공통으로 보이는 메모(관리자만 작성) */}
+      {/* 특이사항 — 모든 날짜에 공통으로 보이는 항목들(관리자만 추가·수정·삭제), 개인별 업무표 바로 아래 */}
       {(() => {
-        const saved = notes.find(x => x.id === 'common');
-        const text = noteDraft !== null ? noteDraft : (saved?.text || '');
-        if (!adminUnlocked && !text.trim()) return null; // 관리자가 아니면 내용이 있을 때만 보인다
+        const items = [...notes].filter(x => !x.date).sort((p, q) => String(p.createdAt || p.updatedAt || '').localeCompare(String(q.createdAt || q.updatedAt || '')));
+        if (!adminUnlocked && items.length === 0) return null; // 관리자가 아니면 항목이 있을 때만 보인다
         return (
-          <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4 mt-5">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-sm font-semibold text-gray-700">📝 특이사항</span>
-              <span className="text-[11px] text-gray-400">모든 날짜에 공통으로 표시됩니다{adminUnlocked ? '' : ' · 관리자만 작성할 수 있습니다'}</span>
-              {noteDraft !== null && <span className="text-[11px] text-amber-600">저장 중…</span>}
-              {saved?.by && noteDraft === null && <span className="ml-auto text-[11px] text-gray-400">{saved.by} · {(saved.updatedAt || '').slice(5, 10).replace('-', '/')} {new Date(saved.updatedAt || 0).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>}
+          <div className="rounded-xl border border-purple-200 bg-purple-50/60 px-4 py-3 -mt-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-semibold text-purple-800">📝 특이사항</span>
+              {adminUnlocked && <button type="button" onClick={() => setNoteDlg({ id: null, text: '' })} className="px-2.5 py-1 text-xs font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700">+ 특이사항 추가</button>}
+              <span className="text-[11px] text-purple-400">모든 날짜에 공통으로 표시됩니다{adminUnlocked ? ' · 눌러서 수정' : ''}</span>
             </div>
-            <textarea value={text} disabled={!adminUnlocked} rows={3} spellCheck={false}
-              onChange={e => onNoteChange(e.target.value)}
-              onBlur={() => { if (noteDraft !== null) saveNote(noteDraft); }}
-              placeholder="특이사항을 적어 주세요 (예: 장비 점검, 일정 변경, 인수인계 사항)"
-              className="w-full border border-amber-200 rounded-lg px-3 py-2 text-sm bg-white resize-y focus:outline-none focus:ring-2 focus:ring-amber-300 disabled:bg-gray-50 disabled:text-gray-700" />
+            {items.length === 0 ? (
+              <p className="text-xs text-purple-300 mt-2">등록된 특이사항이 없습니다.</p>
+            ) : (
+              <div className="flex flex-wrap gap-2 mt-2.5">
+                {items.map(n => (
+                  <div key={n.id} onClick={() => adminUnlocked && setNoteDlg({ id: n.id, text: n.text })}
+                    title={`${n.by || ''}${n.updatedAt ? ' · ' + n.updatedAt.slice(0, 10) : ''}`}
+                    className={`inline-flex items-start gap-1.5 pl-3 pr-1.5 py-1.5 rounded-lg border border-purple-300 bg-purple-100 text-sm font-medium text-purple-900 shadow-sm max-w-full ${adminUnlocked ? 'cursor-pointer hover:bg-purple-200' : ''}`}>
+                    <span className="whitespace-pre-line break-words min-w-0">{n.text}</span>
+                    {adminUnlocked && <button type="button" onClick={e => { e.stopPropagation(); removeNoteItem(n.id); }} className="text-purple-400 hover:text-red-500 text-xs leading-none px-0.5 mt-0.5" title="삭제">✕</button>}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         );
       })()}
@@ -1098,6 +1108,23 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
           </div>
         );
       })()}
+
+      {/* 특이사항 작성/수정 창 */}
+      {noteDlg && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40" onClick={() => setNoteDlg(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[28rem] max-w-[95vw] p-5" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-purple-800 mb-3">📝 {noteDlg.id ? '특이사항 수정' : '특이사항 추가'}</h3>
+            <textarea autoFocus value={noteDlg.text} rows={5} spellCheck={false} onChange={e => setNoteDlg(d => ({ ...d, text: e.target.value }))}
+              onKeyDown={e => { if (e.key === 'Escape') setNoteDlg(null); }}
+              placeholder="특이사항 내용 (예: 장비 점검, 일정 변경, 인수인계 사항)" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-purple-400" />
+            <div className="flex gap-2 justify-end mt-4">
+              {noteDlg.id && <button type="button" onClick={() => { const id = noteDlg.id; setNoteDlg(null); removeNoteItem(id); }} className="mr-auto px-3 py-2 text-sm text-red-600 bg-red-50 rounded-lg hover:bg-red-100">삭제</button>}
+              <button type="button" onClick={() => setNoteDlg(null)} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>
+              <button type="button" disabled={!noteDlg.text.trim()} onClick={saveNoteItem} className="px-4 py-2 text-sm font-semibold text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-40">저장</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 확인 창 */}
       {confirmDlg && (

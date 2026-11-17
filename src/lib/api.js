@@ -347,12 +347,15 @@ export async function fetchBoardDone() {
 export async function setBoardDone(entry) {
   return api.invoke('boardDone:set', entry);
 }
-// 개인별 업무표 날짜별 특이사항 메모 — 로그인한 누구나 작성
+// 개인별 업무표 특이사항(모든 날짜 공통, 항목별 추가·수정·삭제, 관리자만 작성)
 export async function fetchBoardNotes() {
   return api.invoke('boardNotes:list');
 }
-export async function setBoardNote(entry) {
-  return api.invoke('boardNotes:set', entry);
+export async function saveBoardNote(entry) {
+  return api.invoke('boardNotes:save', entry);
+}
+export async function deleteBoardNote(id) {
+  return api.invoke('boardNotes:delete', { id });
 }
 export async function syncWeeklyDutyTodosNow() {
   return api.invoke('weeklyDuty:syncTodosNow');
