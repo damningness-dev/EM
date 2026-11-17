@@ -2401,18 +2401,14 @@ function registerHandlers() {
     return { ok: true };
   });
 
-  // 개인별 업무표의 날짜별 '특이사항' 메모. 로그인한 누구나 쓸 수 있고(관리자 아니어도), 날짜마다 하나이며
-  // 다른 PC와는 날짜 단위로 합쳐진다(같은 날을 동시에 고치면 나중에 저장한 쪽이 남는다).
+  // 개인별 업무표의 '특이사항' — 날짜와 관계없이 모든 날짜에 공통으로 보이는 메모 하나. 관리자만 쓸 수 있고, 다른 PC와는
+  // 항목(id 'common') 단위로 합쳐진다(동시에 고치면 나중에 저장한 쪽이 남는다).
   ipcMain.handle('boardNotes:list', () => (Array.isArray(loadData().boardNotes) ? loadData().boardNotes : []));
-  ipcMain.handle('boardNotes:set', (_e, { date, text } = {}) => {
+  ipcMain.handle('boardNotes:set', (_e, { text } = {}) => {
     const data = loadData();
     const me = (data.memberAccounts || []).find(m => m.id === currentMemberId);
-    if (!me) return { ok: false, error: '로그인한 뒤에 작성할 수 있습니다' };
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return { ok: false, error: '날짜가 올바르지 않습니다' };
-    const keepFrom = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
-    const list = (Array.isArray(data.boardNotes) ? data.boardNotes : []).filter(x => x.id !== date && x.date >= keepFrom);
-    list.push({ id: date, date, text: String(text || '').slice(0, 3000), by: me.username, updatedAt: new Date().toISOString() });
-    data.boardNotes = list;
+    if (!me?.isAdmin) return { ok: false, error: '특이사항은 관리자만 작성할 수 있습니다' };
+    data.boardNotes = [{ id: 'common', text: String(text || '').slice(0, 5000), by: me.username, updatedAt: new Date().toISOString() }];
     saveData(data);
     return { ok: true };
   });

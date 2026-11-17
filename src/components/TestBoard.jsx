@@ -351,21 +351,21 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     if (!(adminUnlocked || currentMember?.username === who)) { flash('본인의 업무만 완료 표시할 수 있습니다.', true); return; }
     writeDone(date, taskId, who, !cur, meta);
   }
-  // 특이사항 저장: 입력을 멈추고 잠깐 뒤(또는 칸을 벗어날 때) 저장한다
-  async function saveNote(date, text) {
+  // 특이사항(모든 날짜 공통, 관리자만 작성) 저장: 입력을 멈추고 잠깐 뒤(또는 칸을 벗어날 때) 저장한다
+  async function saveNote(text) {
     if (noteTimer.current) { clearTimeout(noteTimer.current); noteTimer.current = null; }
     try {
-      const r = await setBoardNote({ date, text });
+      const r = await setBoardNote({ text });
       if (!r?.ok) { flash(r?.error || '특이사항을 저장하지 못했습니다', true); return; }
-      setNotes(list => [...list.filter(x => x.id !== date), { id: date, date, text, by: currentMember?.username || '', updatedAt: new Date().toISOString() }]);
-      setNoteDraft(d => (d && d.date === date && d.text === text ? null : d));
+      setNotes([{ id: 'common', text, by: currentMember?.username || '', updatedAt: new Date().toISOString() }]);
+      setNoteDraft(d => (d !== null && d === text ? null : d));
       syncAfterChange().catch(() => {});
     } catch { flash('특이사항을 저장하지 못했습니다', true); }
   }
-  function onNoteChange(date, text) {
-    setNoteDraft({ date, text });
+  function onNoteChange(text) {
+    setNoteDraft(text);
     if (noteTimer.current) clearTimeout(noteTimer.current);
-    noteTimer.current = setTimeout(() => saveNote(date, text), 1000);
+    noteTimer.current = setTimeout(() => saveNote(text), 1000);
   }
   // 한 번 클릭 = 상세 열기(잠깐 기다렸다가), 더블클릭 = 완료 표시
   function chipClick(open) { if (clickTimer.current) clearTimeout(clickTimer.current); clickTimer.current = setTimeout(() => { clickTimer.current = null; open(); }, 260); }
@@ -867,24 +867,24 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
         </div>
       )}
 
-      {/* 특이사항 — 고른 날짜의 메모(로그인한 누구나 작성, 날짜별로 저장) */}
+      {/* 특이사항 — 모든 날짜에 공통으로 보이는 메모(관리자만 작성) */}
       {(() => {
-        const saved = notes.find(x => x.id === monDate);
-        const text = noteDraft && noteDraft.date === monDate ? noteDraft.text : (saved?.text || '');
-        const canWrite = !!currentMember;
+        const saved = notes.find(x => x.id === 'common');
+        const text = noteDraft !== null ? noteDraft : (saved?.text || '');
+        if (!adminUnlocked && !text.trim()) return null; // 관리자가 아니면 내용이 있을 때만 보인다
         return (
           <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4 mt-5">
             <div className="flex items-center gap-2 mb-2">
               <span className="text-sm font-semibold text-gray-700">📝 특이사항</span>
-              <span className="text-[11px] text-gray-400">{parseInt(monDate.slice(5, 7))}월 {parseInt(monDate.slice(8))}일 ({DOW[new Date(monDate + 'T00:00:00').getDay()]}) · 날짜별로 저장됩니다</span>
-              {noteDraft && noteDraft.date === monDate && <span className="text-[11px] text-amber-600">저장 중…</span>}
-              {saved?.by && !(noteDraft && noteDraft.date === monDate) && <span className="ml-auto text-[11px] text-gray-400">{saved.by} · {(saved.updatedAt || '').slice(5, 10).replace('-', '/')} {new Date(saved.updatedAt || 0).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>}
+              <span className="text-[11px] text-gray-400">모든 날짜에 공통으로 표시됩니다{adminUnlocked ? '' : ' · 관리자만 작성할 수 있습니다'}</span>
+              {noteDraft !== null && <span className="text-[11px] text-amber-600">저장 중…</span>}
+              {saved?.by && noteDraft === null && <span className="ml-auto text-[11px] text-gray-400">{saved.by} · {(saved.updatedAt || '').slice(5, 10).replace('-', '/')} {new Date(saved.updatedAt || 0).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>}
             </div>
-            <textarea value={text} disabled={!canWrite} rows={3} spellCheck={false}
-              onChange={e => onNoteChange(monDate, e.target.value)}
-              onBlur={() => { if (noteDraft && noteDraft.date === monDate) saveNote(noteDraft.date, noteDraft.text); }}
-              placeholder={canWrite ? '이 날의 특이사항을 적어 주세요 (예: 장비 점검, 일정 변경, 인수인계 사항)' : '로그인하면 특이사항을 작성할 수 있습니다'}
-              className="w-full border border-amber-200 rounded-lg px-3 py-2 text-sm bg-white resize-y focus:outline-none focus:ring-2 focus:ring-amber-300 disabled:bg-gray-50 disabled:text-gray-500" />
+            <textarea value={text} disabled={!adminUnlocked} rows={3} spellCheck={false}
+              onChange={e => onNoteChange(e.target.value)}
+              onBlur={() => { if (noteDraft !== null) saveNote(noteDraft); }}
+              placeholder="특이사항을 적어 주세요 (예: 장비 점검, 일정 변경, 인수인계 사항)"
+              className="w-full border border-amber-200 rounded-lg px-3 py-2 text-sm bg-white resize-y focus:outline-none focus:ring-2 focus:ring-amber-300 disabled:bg-gray-50 disabled:text-gray-700" />
           </div>
         );
       })()}
