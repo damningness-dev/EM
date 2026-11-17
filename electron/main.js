@@ -2601,7 +2601,7 @@ function registerHandlers() {
   //     updatedAt }
   ipcMain.handle('weeklyBoard:get', () => {
     const b = loadData().weeklyBoard;
-    return b && typeof b === 'object' ? b : { tasks: [], assignments: {}, progress: {}, monAssign: {}, order: {}, updatedAt: '' };
+    return b && typeof b === 'object' ? b : { tasks: [], assignments: {}, progress: {}, monAssign: {}, emAssign: {}, order: {}, updatedAt: '' };
   });
   ipcMain.handle('weeklyBoard:set', (_e, board) => {
     if (!computeAdminUnlocked()) return { ok: false, error: '관리자만 수정할 수 있습니다' };
@@ -2685,8 +2685,16 @@ function registerHandlers() {
       const ids2 = [...new Set((Array.isArray(list) ? list : []).map(String))].filter(id => ids.has(id)).slice(0, 300);
       if (who && ids2.length) order[who] = ids2;
     }
+    // 환경모니터링(EM) 일정 배치(일정에 연동): { '<구역id>:<회차>:<종류>': { who, label, tip } } — 날짜가 아니라 일정(회차) 기준이라
+    // 모니터링 일정을 옮기면 배치도 따라간다. (위의 monAssign은 날짜 기준이던 예전 방식으로, 읽기만 하고 점차 이 방식으로 옮겨진다)
+    const emAssign = {};
+    for (const [key, v] of Object.entries(board?.emAssign && typeof board.emAssign === 'object' ? board.emAssign : {}).slice(0, 3000)) {
+      const who = String(v?.who || '').slice(0, 40);
+      if (!key || key.length > 120 || !who) continue;
+      emAssign[key] = { who, label: String(v?.label || '').slice(0, 120), tip: String(v?.tip || '').slice(0, 80) };
+    }
     const data = loadData();
-    data.weeklyBoard = { tasks, assignments, progress, monAssign, order, updatedAt: new Date().toISOString() };
+    data.weeklyBoard = { tasks, assignments, progress, monAssign, emAssign, order, updatedAt: new Date().toISOString() };
     saveData(data);
     return { ok: true, updatedAt: data.weeklyBoard.updatedAt };
   });

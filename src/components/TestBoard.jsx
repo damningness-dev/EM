@@ -80,7 +80,7 @@ function dueLabel(due, status) {
 export default function TestBoard({ adminUnlocked, currentMember }) {
   const [staff, setStaff] = useState(null);
   const [duty, setDuty] = useState(null);
-  const [board, setBoard] = useState({ tasks: [], assignments: {}, progress: {}, monAssign: {}, order: {} });
+  const [board, setBoard] = useState({ tasks: [], assignments: {}, progress: {}, monAssign: {}, emAssign: {}, order: {} });
   const [overCol, setOverCol] = useState(null);
   const [overPalette, setOverPalette] = useState(false);
   const [notice, setNotice] = useState(null);
@@ -137,7 +137,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     Promise.all([fetchWeeklyDuty().catch(() => null), fetchWeeklyBoard().catch(() => null)]).then(([d, b]) => {
       setDuty(d || null);
       setStaff(Array.isArray(d?.staff) ? d.staff : []);
-      const loadedBoard = { tasks: b?.tasks || [], assignments: b?.assignments || {}, progress: b?.progress || {}, monAssign: b?.monAssign || {}, order: b?.order || {} };
+      const loadedBoard = { tasks: b?.tasks || [], assignments: b?.assignments || {}, progress: b?.progress || {}, monAssign: b?.monAssign || {}, emAssign: b?.emAssign || {}, order: b?.order || {} };
       // 처음 열었는데 업무 버튼이 하나도 없으면(관리자) 주간근무 업무를 자동으로 채워 저장한다.
       if (!seeded.current && adminRef.current && loadedBoard.tasks.length === 0 && dutyTasksOf(d).length > 0) {
         seeded.current = true;
@@ -439,12 +439,12 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     }
   }
   // 환경모니터링(EM) 일정 버튼 배치: 날짜·항목별로 한 명에게 배정(다른 사람 칸에 놓으면 이동)
+  // 배치는 날짜가 아니라 모니터링 일정(구역·회차·종류)에 붙어 있어서, 달력에서 일정을 옮기거나 바꾸면 따라간다.
+  // 예전(날짜 기준) 배치는 보이는 대로 일정에 연결해(emAssignAll) 이때 새 방식으로 저장하고 예전 것은 비운다.
   function setMonAssign(date, mkey, value) {
-    const monAssign = { ...(board.monAssign || {}) };
-    const day = { ...(monAssign[date] || {}) };
-    if (value) day[mkey] = value; else delete day[mkey];
-    if (Object.keys(day).length) monAssign[date] = day; else delete monAssign[date];
-    commit({ ...board, monAssign });
+    const emAssign = { ...emAssignAll };
+    if (value) emAssign[mkey] = value; else delete emAssign[mkey];
+    commit({ ...board, emAssign, monAssign: {} });
   }
   function dropOnPalette(e) {
     e.preventDefault(); setOverPalette(false);
@@ -541,7 +541,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   // 업무배분 '완료' 필터용: 고른 날짜에 누군가 완료 표시한 일일·주간·월간 업무. 비주기(기타) 업무는 완료하면 아래 '완료 목록'으로
   // 옮겨지므로 여기(완료 필터)에는 더 이상 나오지 않는다.
   const taskDone = (t) => !!t.kind && doneList.some(x => x.taskId === t.id && x.date === monDate && x.done);
-  const emDone = (mkey) => { const who = board.monAssign?.[monDate]?.[mkey]?.who; return !!who && !!doneMap.get(`${monDate}|em:${mkey}|${who}`)?.done; };
+  const emDone = (mkey) => { const who = emAssignAll[mkey]?.who; return !!who && !!doneMap.get(`${monDate}|em:${mkey}|${who}`)?.done; };
   const shownIds = (who) => (dayItems ? dayItems.filter(i => i.workers.includes(who)).map(i => i.id) : idsOf(who));
   const groups = KIND_ORDER.map(k => ({ kind: k, tasks: board.tasks.filter(t => (t.kind || '') === k && (distFilter === 'all' || (distFilter === 'none' ? workersOf(t.id).length === 0 : taskDone(t)))) })).filter(g => g.tasks.length > 0);
   // 로테이션 설정 입력 폼(업무 상세 창 안) — d: 로테이션 초안, set: 일부 값 변경
@@ -647,12 +647,35 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   // (매일·주간·월간 주기와 마감기한, 로테이션은 그 날짜의 담당 기준) 나오고, '전체' 보기에서는 배치된 업무가 모두 나온다.
   const emItemsOf = (ds) => {
     return [
-      ...(monByDate[ds] || []).flatMap(({ zone, measurement }) => monitoringButtons(zone).map(b => ({ ...b, mkey: `${zone.id}:${b.key}`, tip: `${zone.category} · ${zone.grade || ''} ${measurement.num}/${totalCount(zone)}회차` }))),
+      ...(monByDate[ds] || []).flatMap(({ zone, measurement }) => monitoringButtons(zone).map(b => ({ ...b, mkey: `${zone.id}:${measurement.num}:${b.key}`, tip: `${zone.category} · ${zone.grade || ''} ${measurement.num}/${totalCount(zone)}회차` }))),
       ...(monTempByDate[ds] || []).flatMap(t => monitoringButtons(t, { suffix: '[임시]' }).map(b => ({ ...b, mkey: `t${t.id}:${b.key}`, tip: '임시일정' }))),
     ];
   };
   // 환경모니터링 건수는 달력의 '측정일정(N건)'과 같게 구역 일정 수로 센다(측정 종류별 버튼 수가 아니라)
   const emCount = (ds) => (monByDate[ds] || []).length;
+  // EM 배치 전체(일정에 연동): 새 방식(emAssign) + 예전 날짜 기준(monAssign) 배치를 같은 구역의 가장 가까운(±10일) 일정에 연결
+  const emAssignAll = (() => {
+    const out = { ...(board.emAssign || {}) };
+    const used = new Set(Object.keys(out));
+    const shiftDay = (ds, n) => { const d = new Date(ds + 'T00:00:00'); d.setDate(d.getDate() + n); return fmtDate(d); };
+    const tempIds = new Set(mon.temps.map(t => `t${t.id}`));
+    for (const [date, items] of Object.entries(board.monAssign || {})) {
+      for (const [oldKey, v] of Object.entries(items || {})) {
+        const [zid, ...rest] = oldKey.split(':');
+        if (tempIds.has(zid)) { if (!(oldKey in out)) out[oldKey] = v; continue; } // 임시일정은 아이디 기준이라 그대로
+        const key = rest.join(':');
+        let best = null;
+        for (let off = 0; off <= 10 && !best; off++) {
+          for (const sg of (off === 0 ? [0] : [-1, 1])) {
+            const ev = (monByDate[shiftDay(date, sg * off)] || []).find(e => String(e.zone.id) === zid && !used.has(`${e.zone.id}:${e.measurement.num}:${key}`));
+            if (ev) { best = `${ev.zone.id}:${ev.measurement.num}:${key}`; break; }
+          }
+        }
+        if (best) { out[best] = v; used.add(best); }
+      }
+    }
+    return out;
+  })();
   const emMap = Object.fromEntries(emItemsOf(monDate).map(b => [b.mkey, b])); // 근무자 칸의 EM 칩을 같은 색으로 그리기 위함
   const dayCount = (ds) => boardTasksOn(board, staff, ds, !!monHolidays[ds], dayOpts()).length + emCount(ds);
 
@@ -702,7 +725,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
 
   // [환경모니터링(EM)] 구역 — 고른 날짜의 모니터링 일정이 측정 종류별 버튼으로 나온다. 버튼은 근무자 칸으로 끌어다 배치할 수 있다.
   function monitoringBox() {
-    const assigned = board.monAssign?.[monDate] || {};
+    const assigned = emAssignAll;
     const items = emItemsOf(monDate).filter(b => distFilter === 'all' || (distFilter === 'none' ? !assigned[b.mkey] : emDone(b.mkey)));
     return (
       <div className="rounded-lg border border-emerald-200 bg-emerald-50/40 px-3 py-2.5 mb-3">
@@ -792,7 +815,8 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
             {staff.map(who => {
               const c = colorOf(who);
               const ids = orderIds(who, shownIds(who));
-              const emIds = Object.entries(board.monAssign?.[monDate] || {}).filter(([, v]) => v.who === who);
+              // 지금 모니터링 일정에 실제로 있는 항목만(일정이 바뀌어 없어진 배치는 보이지 않고, 옮겨진 일정은 따라온다)
+              const emIds = emItemsOf(monDate).filter(b => emAssignAll[b.mkey]?.who === who).map(b => [b.mkey, { label: b.label, tip: b.tip }]);
               // 완료 표시: 매일·주간·월간은 고른 날짜 기준, 기타는 날짜와 관계없이, EM은 그 날짜 기준
               const isDoneTask = (tid) => { const t = taskById.get(tid); const e = doneMap.get(`${t?.kind ? monDate : '*'}|${tid}|${who}`); return e ? e.done : (!t?.kind && prOf(t, who, rotOf(t)).status === 'done'); };
               const doneCnt = ids.filter(isDoneTask).length + emIds.filter(([mk]) => doneMap.get(`${monDate}|em:${mk}|${who}`)?.done).length;
@@ -917,7 +941,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
           <span className="text-sm font-semibold text-gray-700">📋 업무배분</span>
           {/* 필터: 전체보기 / 미분배(아직 근무자에게 배치되지 않은 업무·모니터링 일정) */}
           {(() => {
-            const asg = board.monAssign?.[monDate] || {};
+            const asg = emAssignAll;
             const undist = board.tasks.filter(t => workersOf(t.id).length === 0).length + emItemsOf(monDate).filter(b => !asg[b.mkey]).length;
             const total = board.tasks.length + emItemsOf(monDate).length;
             const doneN = board.tasks.filter(taskDone).length + emItemsOf(monDate).filter(b => emDone(b.mkey)).length;
