@@ -2404,7 +2404,7 @@ function registerHandlers() {
   // 개인별 업무표의 '예정업무' — 업무처럼 항목 하나하나를 버튼식으로 추가·수정·삭제한다. 날짜와 관계없이 모든 날짜에 공통으로
   // 보이고, 관리자만 쓸 수 있으며, 다른 PC와는 항목 단위로 합쳐진다(삭제는 묘비로 남겨 되살아나지 않게 한다).
   ipcMain.handle('boardNotes:list', () => (Array.isArray(loadData().boardNotes) ? loadData().boardNotes : []).filter(x => x && !x.date));
-  ipcMain.handle('boardNotes:save', (_e, { id, text } = {}) => {
+  ipcMain.handle('boardNotes:save', (_e, { id, text, due } = {}) => {
     const data = loadData();
     const me = (data.memberAccounts || []).find(m => m.id === currentMemberId);
     if (!me?.isAdmin) return { ok: false, error: '예정업무는 관리자만 작성할 수 있습니다' };
@@ -2413,8 +2413,9 @@ function registerHandlers() {
     const now = new Date().toISOString();
     const list = (Array.isArray(data.boardNotes) ? data.boardNotes : []).filter(x => x && !x.date);
     const idx = id ? list.findIndex(x => x.id === id) : -1;
-    if (idx >= 0) list[idx] = { ...list[idx], text: body, by: me.username, updatedAt: now };
-    else list.push({ id: `n${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, text: body, by: me.username, createdAt: now, updatedAt: now });
+    const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(String(due || '')) ? due : ''; // 예정일(없을 수 있다)
+    if (idx >= 0) list[idx] = { ...list[idx], text: body, due: dueDate, by: me.username, updatedAt: now };
+    else list.push({ id: `n${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, text: body, due: dueDate, by: me.username, createdAt: now, updatedAt: now });
     data.boardNotes = list;
     saveData(data);
     return { ok: true };

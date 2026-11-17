@@ -352,12 +352,12 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   }
   // 예정업무 저장/삭제 — 업무처럼 버튼으로 하나씩(관리자만)
   async function saveNoteItem() {
-    const { id, text } = noteDlg;
+    const { id, text, due } = noteDlg;
     if (!text.trim()) return;
     if (!guard()) return;
     setNoteDlg(null);
     try {
-      const r = await saveBoardNote({ id, text });
+      const r = await saveBoardNote({ id, text, due });
       if (!r?.ok) { flash(r?.error || '예정업무를 저장하지 못했습니다', true); return; }
       fetchBoardNotes().then(l => setNotes(Array.isArray(l) ? l : [])).catch(() => {});
       syncAfterChange().catch(() => {});
@@ -744,13 +744,14 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
 
       {/* 예정업무 — 모든 날짜에 공통으로 보이는 항목들(관리자만 추가·수정·삭제), 화면 맨 위(날짜 막대 위) */}
       {(() => {
-        const items = [...notes].filter(x => !x.date).sort((p, q) => String(p.createdAt || p.updatedAt || '').localeCompare(String(q.createdAt || q.updatedAt || '')));
+        // 예정일이 빠른 순(예정일 없는 항목은 뒤), 같으면 등록 순
+        const items = [...notes].filter(x => !x.date).sort((p, q) => String(p.due || '9999').localeCompare(String(q.due || '9999')) || String(p.createdAt || p.updatedAt || '').localeCompare(String(q.createdAt || q.updatedAt || '')));
         if (!adminUnlocked && items.length === 0) return null; // 관리자가 아니면 항목이 있을 때만 보인다
         return (
           <div className="rounded-xl border border-purple-200 bg-purple-50/60 px-4 py-3 mb-4">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-sm font-semibold text-purple-800">📝 예정업무</span>
-              {adminUnlocked && <button type="button" onClick={() => setNoteDlg({ id: null, text: '' })} className="px-2.5 py-1 text-xs font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700">+ 예정업무 추가</button>}
+              {adminUnlocked && <button type="button" onClick={() => setNoteDlg({ id: null, text: '', due: '' })} className="px-2.5 py-1 text-xs font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700">+ 예정업무 추가</button>}
               {adminUnlocked && <span className="text-[11px] text-purple-400">눌러서 수정</span>}
             </div>
             {items.length === 0 ? (
@@ -758,9 +759,15 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
             ) : (
               <div className="flex flex-wrap gap-2 mt-2.5">
                 {items.map(n => (
-                  <div key={n.id} onClick={() => adminUnlocked && setNoteDlg({ id: n.id, text: n.text })}
-                    title={`${n.by || ''}${n.updatedAt ? ' · ' + n.updatedAt.slice(0, 10) : ''}`}
+                  <div key={n.id} onClick={() => adminUnlocked && setNoteDlg({ id: n.id, text: n.text, due: n.due || '' })}
+                    title={n.due ? `예정일 ${n.due}` : '예정일 없음'}
                     className={`inline-flex items-start gap-1.5 pl-3 pr-1.5 py-1.5 rounded-lg border border-purple-300 bg-purple-100 text-sm font-medium text-purple-900 shadow-sm max-w-full ${adminUnlocked ? 'cursor-pointer hover:bg-purple-200' : ''}`}>
+                    {n.due && (() => { const dl = dueLabel(n.due, 'todo'); return (
+                      <span className="shrink-0 inline-flex items-center gap-1 mt-0.5">
+                        <span className="text-[11px] font-semibold text-purple-600 tabular-nums">{n.due.slice(5, 7)}/{n.due.slice(8, 10)}</span>
+                        <span className={`text-[11px] leading-none font-bold px-1.5 py-1 rounded border ${dl.cls}`}>{dl.text}</span>
+                      </span>
+                    ); })()}
                     <span className="whitespace-pre-line break-words min-w-0">{n.text}</span>
                     {adminUnlocked && <button type="button" onClick={e => { e.stopPropagation(); removeNoteItem(n.id); }} className="text-purple-400 hover:text-red-500 text-xs leading-none px-0.5 mt-0.5" title="삭제">✕</button>}
                   </div>
@@ -1117,6 +1124,12 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
             <textarea autoFocus value={noteDlg.text} rows={5} spellCheck={false} onChange={e => setNoteDlg(d => ({ ...d, text: e.target.value }))}
               onKeyDown={e => { if (e.key === 'Escape') setNoteDlg(null); }}
               placeholder="예정업무 내용 (예: 장비 점검, 일정 변경, 인수인계 사항)" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-purple-400" />
+            <div className="flex items-center gap-2 mt-3">
+              <label className="text-xs text-gray-500">예정일</label>
+              <input type="date" value={noteDlg.due || ''} onChange={e => setNoteDlg(d => ({ ...d, due: e.target.value }))} className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm" />
+              {noteDlg.due && <button type="button" onClick={() => setNoteDlg(d => ({ ...d, due: '' }))} className="text-xs text-gray-500 px-2 py-1 rounded hover:bg-gray-100">지우기</button>}
+              <span className="text-[11px] text-gray-400">정하면 D-day로 표시됩니다</span>
+            </div>
             <div className="flex gap-2 justify-end mt-4">
               {noteDlg.id && <button type="button" onClick={() => { const id = noteDlg.id; setNoteDlg(null); removeNoteItem(id); }} className="mr-auto px-3 py-2 text-sm text-red-600 bg-red-50 rounded-lg hover:bg-red-100">삭제</button>}
               <button type="button" onClick={() => setNoteDlg(null)} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>
