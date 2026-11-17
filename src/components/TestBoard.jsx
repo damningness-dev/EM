@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { fetchWeeklyDuty, fetchWeeklyBoard, saveWeeklyBoard, syncAfterChange, fetchZones, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchTempSchedules, fetchTeamRecords, fetchBoardDone, setBoardDone, saveWeeklyDuty } from '../lib/api';
+import { fetchWeeklyDuty, fetchWeeklyBoard, saveWeeklyBoard, syncAfterChange, fetchZones, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchTempSchedules, fetchTeamRecords, fetchBoardDone, setBoardDone, saveWeeklyDuty, fetchBoardNotes, setBoardNote } from '../lib/api';
 import { buildHolidayMap, setScheduleConfig, totalCount } from '../lib/schedule';
 import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, monitoringButtons } from '../lib/monitoringDay';
 import { boardTasksOn, scheduleLabel, ROTATION_UNITS, rotationState, rotationPool, rotationLabel, fmtDate } from '../lib/boardRotation';
@@ -88,6 +88,10 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   // 확인 창: 브라우저 기본 confirm()은 Electron(Windows)에서 닫힌 뒤 입력칸이 먹통이 되는 일이 있어 화면 안의 확인 창을 쓴다
   const [confirmDlg, setConfirmDlg] = useState(null); // { message, onYes }
   const askConfirm = (message, onYes) => setConfirmDlg({ message, onYes });
+  // 날짜별 특이사항 메모: 저장된 목록 + 쓰는 중인 글(draft = { date, text })
+  const [notes, setNotes] = useState([]);
+  const [noteDraft, setNoteDraft] = useState(null);
+  const noteTimer = useRef(null);
   const [doneOpen, setDoneOpen] = useState(true); // 완료 목록 펼침
   const [staffDlg, setStaffDlg] = useState(null); // { input } — 직원 관리 창
   const [kindMenu, setKindMenu] = useState(null); // { id, x, y } — 업무 버튼 구분 선택 메뉴
@@ -129,6 +133,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   function load() {
     loadMonitoring();
     fetchBoardDone().then(l => setDoneList(Array.isArray(l) ? l : [])).catch(() => {});
+    fetchBoardNotes().then(l => setNotes(Array.isArray(l) ? l : [])).catch(() => {});
     fetchTeamRecords().then(r => setLeaves(Array.isArray(r?.records) ? r.records : [])).catch(() => {});
     Promise.all([fetchWeeklyDuty().catch(() => null), fetchWeeklyBoard().catch(() => null)]).then(([d, b]) => {
       setDuty(d || null);
@@ -345,6 +350,22 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     if (date === '*' && !adminUnlocked) { flash('비주기적 업무의 완료 표시는 관리자만 할 수 있습니다.', true); return; }
     if (!(adminUnlocked || currentMember?.username === who)) { flash('본인의 업무만 완료 표시할 수 있습니다.', true); return; }
     writeDone(date, taskId, who, !cur, meta);
+  }
+  // 특이사항 저장: 입력을 멈추고 잠깐 뒤(또는 칸을 벗어날 때) 저장한다
+  async function saveNote(date, text) {
+    if (noteTimer.current) { clearTimeout(noteTimer.current); noteTimer.current = null; }
+    try {
+      const r = await setBoardNote({ date, text });
+      if (!r?.ok) { flash(r?.error || '특이사항을 저장하지 못했습니다', true); return; }
+      setNotes(list => [...list.filter(x => x.id !== date), { id: date, date, text, by: currentMember?.username || '', updatedAt: new Date().toISOString() }]);
+      setNoteDraft(d => (d && d.date === date && d.text === text ? null : d));
+      syncAfterChange().catch(() => {});
+    } catch { flash('특이사항을 저장하지 못했습니다', true); }
+  }
+  function onNoteChange(date, text) {
+    setNoteDraft({ date, text });
+    if (noteTimer.current) clearTimeout(noteTimer.current);
+    noteTimer.current = setTimeout(() => saveNote(date, text), 1000);
   }
   // 한 번 클릭 = 상세 열기(잠깐 기다렸다가), 더블클릭 = 완료 표시
   function chipClick(open) { if (clickTimer.current) clearTimeout(clickTimer.current); clickTimer.current = setTimeout(() => { clickTimer.current = null; open(); }, 260); }
@@ -845,6 +866,28 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
           </div>
         </div>
       )}
+
+      {/* 특이사항 — 고른 날짜의 메모(로그인한 누구나 작성, 날짜별로 저장) */}
+      {(() => {
+        const saved = notes.find(x => x.id === monDate);
+        const text = noteDraft && noteDraft.date === monDate ? noteDraft.text : (saved?.text || '');
+        const canWrite = !!currentMember;
+        return (
+          <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4 mt-5">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm font-semibold text-gray-700">📝 특이사항</span>
+              <span className="text-[11px] text-gray-400">{parseInt(monDate.slice(5, 7))}월 {parseInt(monDate.slice(8))}일 ({DOW[new Date(monDate + 'T00:00:00').getDay()]}) · 날짜별로 저장됩니다</span>
+              {noteDraft && noteDraft.date === monDate && <span className="text-[11px] text-amber-600">저장 중…</span>}
+              {saved?.by && !(noteDraft && noteDraft.date === monDate) && <span className="ml-auto text-[11px] text-gray-400">{saved.by} · {(saved.updatedAt || '').slice(5, 10).replace('-', '/')} {new Date(saved.updatedAt || 0).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>}
+            </div>
+            <textarea value={text} disabled={!canWrite} rows={3} spellCheck={false}
+              onChange={e => onNoteChange(monDate, e.target.value)}
+              onBlur={() => { if (noteDraft && noteDraft.date === monDate) saveNote(noteDraft.date, noteDraft.text); }}
+              placeholder={canWrite ? '이 날의 특이사항을 적어 주세요 (예: 장비 점검, 일정 변경, 인수인계 사항)' : '로그인하면 특이사항을 작성할 수 있습니다'}
+              className="w-full border border-amber-200 rounded-lg px-3 py-2 text-sm bg-white resize-y focus:outline-none focus:ring-2 focus:ring-amber-300 disabled:bg-gray-50 disabled:text-gray-500" />
+          </div>
+        );
+      })()}
 
       {/* 업무배분 — 업무 버튼·환경모니터링 일정 (개인별 업무표 아래) */}
       <div

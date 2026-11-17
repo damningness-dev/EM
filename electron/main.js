@@ -971,7 +971,7 @@ function explainGistError(err) {
 // 건드리지 않는다.
 // 팀 설정(teams)과 팀 공유 기록(teamRecords)도 여러 PC가 함께 쓰는 항목이다 — 각 팀원 PC가 자기 기록을
 // 올리고 서로의 것을 내려받는다.
-const COLLAB_KEYS = ['usagePoints', 'sops', 'sopTags', 'memberAccounts', 'teams', 'teamRecords', 'boardDone'];
+const COLLAB_KEYS = ['usagePoints', 'sops', 'sopTags', 'memberAccounts', 'teams', 'teamRecords', 'boardDone', 'boardNotes'];
 
 // 일반 PC가 올릴 내용을 만든다 — 원격(기준 PC가 올린 내용)을 그대로 두고,
 // 함께 쓰는 항목만 이 PC 내용을 합쳐 넣는다. 이렇게 해야 일반 PC가 사용점을
@@ -2397,6 +2397,22 @@ function registerHandlers() {
     const dAt = /^\d{4}-\d{2}-\d{2}$/.test(String(doneAt || '')) ? doneAt : new Date().toISOString().slice(0, 10); // 완료 표시를 한 날짜(그 PC의 오늘)
     list.push({ id, date, taskId: tid, who: w, done: !!done, doneAt: dAt, name: String(name || '').slice(0, 120), kind: String(kind || '').slice(0, 12), by: me.username, updatedAt: new Date().toISOString() });
     data.boardDone = list;
+    saveData(data);
+    return { ok: true };
+  });
+
+  // 개인별 업무표의 날짜별 '특이사항' 메모. 로그인한 누구나 쓸 수 있고(관리자 아니어도), 날짜마다 하나이며
+  // 다른 PC와는 날짜 단위로 합쳐진다(같은 날을 동시에 고치면 나중에 저장한 쪽이 남는다).
+  ipcMain.handle('boardNotes:list', () => (Array.isArray(loadData().boardNotes) ? loadData().boardNotes : []));
+  ipcMain.handle('boardNotes:set', (_e, { date, text } = {}) => {
+    const data = loadData();
+    const me = (data.memberAccounts || []).find(m => m.id === currentMemberId);
+    if (!me) return { ok: false, error: '로그인한 뒤에 작성할 수 있습니다' };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return { ok: false, error: '날짜가 올바르지 않습니다' };
+    const keepFrom = new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10);
+    const list = (Array.isArray(data.boardNotes) ? data.boardNotes : []).filter(x => x.id !== date && x.date >= keepFrom);
+    list.push({ id: date, date, text: String(text || '').slice(0, 3000), by: me.username, updatedAt: new Date().toISOString() });
+    data.boardNotes = list;
     saveData(data);
     return { ok: true };
   });

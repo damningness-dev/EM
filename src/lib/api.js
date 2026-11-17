@@ -347,6 +347,13 @@ export async function fetchBoardDone() {
 export async function setBoardDone(entry) {
   return api.invoke('boardDone:set', entry);
 }
+// 개인별 업무표 날짜별 특이사항 메모 — 로그인한 누구나 작성
+export async function fetchBoardNotes() {
+  return api.invoke('boardNotes:list');
+}
+export async function setBoardNote(entry) {
+  return api.invoke('boardNotes:set', entry);
+}
 export async function syncWeeklyDutyTodosNow() {
   return api.invoke('weeklyDuty:syncTodosNow');
 }
