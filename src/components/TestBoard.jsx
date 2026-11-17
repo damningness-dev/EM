@@ -88,7 +88,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   // 확인 창: 브라우저 기본 confirm()은 Electron(Windows)에서 닫힌 뒤 입력칸이 먹통이 되는 일이 있어 화면 안의 확인 창을 쓴다
   const [confirmDlg, setConfirmDlg] = useState(null); // { message, onYes }
   const askConfirm = (message, onYes) => setConfirmDlg({ message, onYes });
-  // 특이사항 항목들(모든 날짜 공통) + 작성/수정 창 { id|null, text }
+  // 예정업무 항목들(모든 날짜 공통) + 작성/수정 창 { id|null, text }
   const [notes, setNotes] = useState([]);
   const [noteDlg, setNoteDlg] = useState(null);
   const [doneOpen, setDoneOpen] = useState(true); // 완료 목록 펼침
@@ -350,7 +350,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     if (!(adminUnlocked || currentMember?.username === who)) { flash('본인의 업무만 완료 표시할 수 있습니다.', true); return; }
     writeDone(date, taskId, who, !cur, meta);
   }
-  // 특이사항 저장/삭제 — 업무처럼 버튼으로 하나씩(관리자만)
+  // 예정업무 저장/삭제 — 업무처럼 버튼으로 하나씩(관리자만)
   async function saveNoteItem() {
     const { id, text } = noteDlg;
     if (!text.trim()) return;
@@ -358,14 +358,14 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     setNoteDlg(null);
     try {
       const r = await saveBoardNote({ id, text });
-      if (!r?.ok) { flash(r?.error || '특이사항을 저장하지 못했습니다', true); return; }
+      if (!r?.ok) { flash(r?.error || '예정업무를 저장하지 못했습니다', true); return; }
       fetchBoardNotes().then(l => setNotes(Array.isArray(l) ? l : [])).catch(() => {});
       syncAfterChange().catch(() => {});
-    } catch { flash('특이사항을 저장하지 못했습니다', true); }
+    } catch { flash('예정업무를 저장하지 못했습니다', true); }
   }
   function removeNoteItem(id) {
     if (!guard()) return;
-    askConfirm('이 특이사항을 삭제할까요?', async () => {
+    askConfirm('이 예정업무를 삭제할까요?', async () => {
       try {
         const r = await deleteBoardNote(id);
         if (!r?.ok) { flash(r?.error || '삭제하지 못했습니다', true); return; }
@@ -742,6 +742,35 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
       </div>
       <div className="mb-3" />
 
+      {/* 예정업무 — 모든 날짜에 공통으로 보이는 항목들(관리자만 추가·수정·삭제), 화면 맨 위(날짜 막대 위) */}
+      {(() => {
+        const items = [...notes].filter(x => !x.date).sort((p, q) => String(p.createdAt || p.updatedAt || '').localeCompare(String(q.createdAt || q.updatedAt || '')));
+        if (!adminUnlocked && items.length === 0) return null; // 관리자가 아니면 항목이 있을 때만 보인다
+        return (
+          <div className="rounded-xl border border-purple-200 bg-purple-50/60 px-4 py-3 mb-4">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm font-semibold text-purple-800">📝 예정업무</span>
+              {adminUnlocked && <button type="button" onClick={() => setNoteDlg({ id: null, text: '' })} className="px-2.5 py-1 text-xs font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700">+ 예정업무 추가</button>}
+              {adminUnlocked && <span className="text-[11px] text-purple-400">눌러서 수정</span>}
+            </div>
+            {items.length === 0 ? (
+              <p className="text-xs text-purple-300 mt-2">등록된 예정업무가 없습니다.</p>
+            ) : (
+              <div className="flex flex-wrap gap-2 mt-2.5">
+                {items.map(n => (
+                  <div key={n.id} onClick={() => adminUnlocked && setNoteDlg({ id: n.id, text: n.text })}
+                    title={`${n.by || ''}${n.updatedAt ? ' · ' + n.updatedAt.slice(0, 10) : ''}`}
+                    className={`inline-flex items-start gap-1.5 pl-3 pr-1.5 py-1.5 rounded-lg border border-purple-300 bg-purple-100 text-sm font-medium text-purple-900 shadow-sm max-w-full ${adminUnlocked ? 'cursor-pointer hover:bg-purple-200' : ''}`}>
+                    <span className="whitespace-pre-line break-words min-w-0">{n.text}</span>
+                    {adminUnlocked && <button type="button" onClick={e => { e.stopPropagation(); removeNoteItem(n.id); }} className="text-purple-400 hover:text-red-500 text-xs leading-none px-0.5 mt-0.5" title="삭제">✕</button>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* 날짜 막대 — 화면 전체(근무자 칸·환경모니터링)의 기준 날짜와 일별/전체 보기 */}
       {dayBar()}
 
@@ -869,35 +898,6 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
           </div>
         </div>
       )}
-
-      {/* 특이사항 — 모든 날짜에 공통으로 보이는 항목들(관리자만 추가·수정·삭제), 개인별 업무표 바로 아래 */}
-      {(() => {
-        const items = [...notes].filter(x => !x.date).sort((p, q) => String(p.createdAt || p.updatedAt || '').localeCompare(String(q.createdAt || q.updatedAt || '')));
-        if (!adminUnlocked && items.length === 0) return null; // 관리자가 아니면 항목이 있을 때만 보인다
-        return (
-          <div className="rounded-xl border border-purple-200 bg-purple-50/60 px-4 py-3 -mt-2">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-sm font-semibold text-purple-800">📝 특이사항</span>
-              {adminUnlocked && <button type="button" onClick={() => setNoteDlg({ id: null, text: '' })} className="px-2.5 py-1 text-xs font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700">+ 특이사항 추가</button>}
-              <span className="text-[11px] text-purple-400">모든 날짜에 공통으로 표시됩니다{adminUnlocked ? ' · 눌러서 수정' : ''}</span>
-            </div>
-            {items.length === 0 ? (
-              <p className="text-xs text-purple-300 mt-2">등록된 특이사항이 없습니다.</p>
-            ) : (
-              <div className="flex flex-wrap gap-2 mt-2.5">
-                {items.map(n => (
-                  <div key={n.id} onClick={() => adminUnlocked && setNoteDlg({ id: n.id, text: n.text })}
-                    title={`${n.by || ''}${n.updatedAt ? ' · ' + n.updatedAt.slice(0, 10) : ''}`}
-                    className={`inline-flex items-start gap-1.5 pl-3 pr-1.5 py-1.5 rounded-lg border border-purple-300 bg-purple-100 text-sm font-medium text-purple-900 shadow-sm max-w-full ${adminUnlocked ? 'cursor-pointer hover:bg-purple-200' : ''}`}>
-                    <span className="whitespace-pre-line break-words min-w-0">{n.text}</span>
-                    {adminUnlocked && <button type="button" onClick={e => { e.stopPropagation(); removeNoteItem(n.id); }} className="text-purple-400 hover:text-red-500 text-xs leading-none px-0.5 mt-0.5" title="삭제">✕</button>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })()}
 
       {/* 업무배분 — 업무 버튼·환경모니터링 일정 (개인별 업무표 아래) */}
       <div
@@ -1109,14 +1109,14 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
         );
       })()}
 
-      {/* 특이사항 작성/수정 창 */}
+      {/* 예정업무 작성/수정 창 */}
       {noteDlg && (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40" onClick={() => setNoteDlg(null)}>
           <div className="bg-white rounded-2xl shadow-2xl w-[28rem] max-w-[95vw] p-5" onClick={e => e.stopPropagation()}>
-            <h3 className="text-base font-bold text-purple-800 mb-3">📝 {noteDlg.id ? '특이사항 수정' : '특이사항 추가'}</h3>
+            <h3 className="text-base font-bold text-purple-800 mb-3">📝 {noteDlg.id ? '예정업무 수정' : '예정업무 추가'}</h3>
             <textarea autoFocus value={noteDlg.text} rows={5} spellCheck={false} onChange={e => setNoteDlg(d => ({ ...d, text: e.target.value }))}
               onKeyDown={e => { if (e.key === 'Escape') setNoteDlg(null); }}
-              placeholder="특이사항 내용 (예: 장비 점검, 일정 변경, 인수인계 사항)" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-purple-400" />
+              placeholder="예정업무 내용 (예: 장비 점검, 일정 변경, 인수인계 사항)" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-purple-400" />
             <div className="flex gap-2 justify-end mt-4">
               {noteDlg.id && <button type="button" onClick={() => { const id = noteDlg.id; setNoteDlg(null); removeNoteItem(id); }} className="mr-auto px-3 py-2 text-sm text-red-600 bg-red-50 rounded-lg hover:bg-red-100">삭제</button>}
               <button type="button" onClick={() => setNoteDlg(null)} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>

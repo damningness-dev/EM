@@ -347,7 +347,7 @@ export async function fetchBoardDone() {
 export async function setBoardDone(entry) {
   return api.invoke('boardDone:set', entry);
 }
-// 개인별 업무표 특이사항(모든 날짜 공통, 항목별 추가·수정·삭제, 관리자만 작성)
+// 개인별 업무표 예정업무(모든 날짜 공통, 항목별 추가·수정·삭제, 관리자만 작성)
 export async function fetchBoardNotes() {
   return api.invoke('boardNotes:list');
 }
