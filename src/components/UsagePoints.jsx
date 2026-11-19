@@ -31,7 +31,6 @@ const PROGRESS_COLOR = {
   '완료': 'bg-emerald-100 text-emerald-700',
   '보류': 'bg-red-100 text-red-700',
 };
-const USAGEPOINT_COLS = 17; // No.(화살표 합침)+제목+담당자+완료기한
 
 // 목록 표 열 너비 — 헤더 사이 구분선을 드래그해 조절할 수 있다(교정관리와 같은 방식).
 // 화살표(펼치기)는 No.와 한 열로 합쳐져 있고, 진행상황은 No. 바로 다음(제목·대분류 앞)에 온다.
@@ -202,6 +201,15 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   const [hqUrl, setHqUrl] = useState(null);
   const [hqLoading, setHqLoading] = useState(false);
   const [expanded, setExpanded] = useState(() => new Set());
+  // 간단히 보기(기본): 번호·진행상황·제목·분류·담당자·완료기한·관리만 보이고, 나머지(작업일·작성자·실명·사용점번호·내용·사진·비고 등)는
+  // 제목을 눌러 상세보기에서 본다. '자세히 보기'를 켜면 예전처럼 모든 열이 나온다.
+  const COMPACT_KEY = 'em-usagepoints-compact';
+  const [compact, setCompact] = useState(() => { try { return localStorage.getItem(COMPACT_KEY) !== '0'; } catch { return true; } });
+  useEffect(() => { try { localStorage.setItem(COMPACT_KEY, compact ? '1' : '0'); } catch { /* ignore */ } }, [compact]);
+  const COMPACT_SHOW = ['no', 'progress', 'title', 'major', 'assignee', 'dueDate', 'manage'];
+  const colVisible = k => !compact || COMPACT_SHOW.includes(k);
+  const hc = k => (colVisible(k) ? '' : 'hidden'); // 숨기는 열의 머리글·칸에 붙이는 클래스
+  const colCount = UP_COL_KEYS.filter(colVisible).length;
   const [assigneeDropdownId, setAssigneeDropdownId] = useState(null); // 목록에서 담당자 드롭다운을 연 항목 id
   const [sharingPhotos, setSharingPhotos] = useState(false);
   const [printing, setPrinting] = useState(false);
@@ -965,6 +973,10 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
             {c === 'all' ? '전체' : c}
           </button>
         ))}
+        <div className="ml-auto inline-flex rounded-lg overflow-hidden border border-gray-200 text-xs font-medium">
+          <button onClick={() => setCompact(true)} className={`px-3 py-1 ${compact ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`} title="핵심 열만 간단히 보기">간단히</button>
+          <button onClick={() => setCompact(false)} className={`px-3 py-1 border-l border-gray-200 ${!compact ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`} title="작업일·작성자·실명·사진 등 모든 열 보기">자세히</button>
+        </div>
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
@@ -972,91 +984,91 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
             비율로 쓰인다 — 열 폭 합계와 무관하게 표는 항상 컨테이너 폭에 맞춰지므로
             칸을 조절해도 가로 스크롤이 생기지 않는다. */}
         <table className="text-sm" style={{ tableLayout: 'fixed', width: '100%' }}>
-          <colgroup>{UP_COL_KEYS.map(k => <col key={k} style={{ width: colWidth(k) }} />)}</colgroup>
+          <colgroup>{UP_COL_KEYS.filter(colVisible).map(k => <col key={k} style={{ width: compact ? undefined : colWidth(k) }} />)}</colgroup>
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200">
               {/* 펼치기 화살표(▶)는 별도 열 없이 No.와 한 열에서 번호 앞에 온다. */}
-              <th className="relative px-2 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+              <th className={`relative px-2 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('no')}`}>
                 No.
                 <span onMouseDown={e => startColResize(e, 'no')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
-              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+              <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('progress')}`}>
                 진행상황
                 <span onMouseDown={e => startColResize(e, 'progress')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
-              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+              <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('title')}`}>
                 제목
                 <span onMouseDown={e => startColResize(e, 'title')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
-              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
-                대분류
+              <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('major')}`}>
+                {compact ? '분류' : '대분류'}
                 <span onMouseDown={e => startColResize(e, 'major')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
-              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+              <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('minor')}`}>
                 소분류
                 <span onMouseDown={e => startColResize(e, 'minor')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
-              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+              <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('workDate')}`}>
                 작업일
                 <span onMouseDown={e => startColResize(e, 'workDate')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
-              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+              <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('author')}`}>
                 작성자
                 <span onMouseDown={e => startColResize(e, 'author')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
-              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+              <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('worker')}`}>
                 작업자
                 <span onMouseDown={e => startColResize(e, 'worker')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
-              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+              <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('room')}`}>
                 실명
                 <span onMouseDown={e => startColResize(e, 'room')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
-              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+              <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('roomNo')}`}>
                 실번호
                 <span onMouseDown={e => startColResize(e, 'roomNo')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
-              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+              <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('point')}`}>
                 사용점번호
                 <span onMouseDown={e => startColResize(e, 'point')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
-              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+              <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('reason')}`}>
                 내용
                 <span onMouseDown={e => startColResize(e, 'reason')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
-              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+              <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('photo')}`}>
                 사진
                 <span onMouseDown={e => startColResize(e, 'photo')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
-              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+              <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('note')}`}>
                 비고
                 <span onMouseDown={e => startColResize(e, 'note')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
-              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+              <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('assignee')}`}>
                 담당자
                 <span onMouseDown={e => startColResize(e, 'assignee')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
-              <th className="relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200">
+              <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('dueDate')}`}>
                 완료기한
                 <span onMouseDown={e => startColResize(e, 'dueDate')} draggable={false} onDragStart={e => e.preventDefault()}
                   className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
-              <th className="px-3 py-3 text-gray-500 font-medium text-center">관리</th>
+              <th className={`px-3 py-3 text-gray-500 font-medium text-center ${hc('manage')}`}>관리</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
@@ -1068,11 +1080,11 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
               return (
                 <FragmentRow key={item.id}>
                   <tr className="hover:bg-gray-50">
-                    <td className="px-2 py-2 text-center text-gray-500 text-xs whitespace-nowrap">
+                    <td className={`px-2 py-2 text-center text-gray-500 text-xs whitespace-nowrap ${hc('no')}`}>
                       <button onClick={() => toggleExpand(item.id)} className={`inline-block mr-1 text-[10px] transition-transform ${isExp ? 'rotate-90 text-blue-500' : 'text-gray-300'}`} title="진행상황 메모">▶</button>
                       <span className="text-gray-400">{idx + 1}</span>
                     </td>
-                    <td className="px-3 py-2 text-center">
+                    <td className={`px-3 py-2 text-center ${hc('progress')}`}>
                       {(() => {
                         const stage = progressOf(item);
                         // 진행상황은 고르는 게 아니라 눌러서 다음 단계로 넘어가는 방식이다.
@@ -1089,7 +1101,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                         );
                       })()}
                     </td>
-                    <td className="px-3 py-2 text-center text-gray-800 text-xs max-w-[140px] truncate">
+                    <td className={`px-3 py-2 text-center text-gray-800 text-xs max-w-[140px] truncate ${hc('title')}`}>
                       {/* 제목을 누르면 작성 팝업(상세보기)이 열린다 — 진행상황·조사내용·조치사항까지
                           함께 보이므로 펼치기 화살표 없이도 전체를 볼 수 있다. */}
                       <button onClick={() => openDetail(item)} className="hover:underline hover:text-blue-600 max-w-full truncate block mx-auto font-medium"
@@ -1097,18 +1109,18 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                         {item.title || '(제목 없음)'}
                       </button>
                     </td>
-                    <td className="px-3 py-2 text-center text-gray-600">{item.major_category || '—'}</td>
-                    <td className="px-3 py-2 text-center text-gray-600">{item.minor_category || '—'}</td>
-                    <td className="px-3 py-2 text-center text-gray-500 text-xs">{formatDate(item.created_date)}</td>
-                    <td className="px-3 py-2 text-center text-gray-600">{item.author_name || '—'}</td>
-                    <td className="px-3 py-2 text-center text-gray-600">{item.worker_name || '—'}</td>
-                    <td className="px-3 py-2 text-center text-gray-600">{item.room_name || '—'}</td>
-                    <td className="px-3 py-2 text-center text-gray-600">{item.room_number || '—'}</td>
-                    <td className="px-3 py-2 text-center font-medium text-gray-800">{item.point_number || '—'}</td>
-                    <td className="px-3 py-2 text-center text-gray-500 text-xs max-w-[160px] truncate" title={item.reason || ''}>
+                    <td className={`px-3 py-2 text-center text-gray-600 ${hc('major')}`}>{item.major_category || '—'}{compact && item.minor_category ? <span className="text-gray-400"> · {item.minor_category}</span> : null}</td>
+                    <td className={`px-3 py-2 text-center text-gray-600 ${hc('minor')}`}>{item.minor_category || '—'}</td>
+                    <td className={`px-3 py-2 text-center text-gray-500 text-xs ${hc('workDate')}`}>{formatDate(item.created_date)}</td>
+                    <td className={`px-3 py-2 text-center text-gray-600 ${hc('author')}`}>{item.author_name || '—'}</td>
+                    <td className={`px-3 py-2 text-center text-gray-600 ${hc('worker')}`}>{item.worker_name || '—'}</td>
+                    <td className={`px-3 py-2 text-center text-gray-600 ${hc('room')}`}>{item.room_name || '—'}</td>
+                    <td className={`px-3 py-2 text-center text-gray-600 ${hc('roomNo')}`}>{item.room_number || '—'}</td>
+                    <td className={`px-3 py-2 text-center font-medium text-gray-800 ${hc('point')}`}>{item.point_number || '—'}</td>
+                    <td className={`px-3 py-2 text-center text-gray-500 text-xs max-w-[160px] truncate ${hc('reason')}`} title={item.reason || ''}>
                       {item.reason || '—'}
                     </td>
-                    <td className="px-3 py-2 text-center">
+                    <td className={`px-3 py-2 text-center ${hc('photo')}`}>
                       {(() => {
                         const photos = photosOf(item);
                         if (!photos.length) return <span className="text-gray-300 text-xs">—</span>;
@@ -1125,8 +1137,8 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                         );
                       })()}
                     </td>
-                    <td className="px-3 py-2 text-center text-gray-500 text-xs max-w-[140px] truncate" title={item.note || ''}>{item.note || '—'}</td>
-                    <td className="px-3 py-2 text-center text-gray-600 text-xs">
+                    <td className={`px-3 py-2 text-center text-gray-500 text-xs max-w-[140px] truncate ${hc('note')}`} title={item.note || ''}>{item.note || '—'}</td>
+                    <td className={`px-3 py-2 text-center text-gray-600 text-xs ${hc('assignee')}`}>
                       {canAssign ? (
                         <div className="relative inline-block assignee-dropdown">
                           <button type="button" onClick={() => setAssigneeDropdownId(id => id === item.id ? null : item.id)}
@@ -1154,7 +1166,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                         <span className="truncate max-w-[100px] block mx-auto" title={assigneesOf(item).join(', ')}>{assigneesOf(item).join(', ') || '—'}</span>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-center text-xs">
+                    <td className={`px-3 py-2 text-center text-xs ${hc('dueDate')}`}>
                       {canAssign ? (
                         <div className="flex flex-col items-center gap-0.5">
                           <input type="date" value={item.due_date || ''} onChange={e => quickPatch(item, { due_date: e.target.value })}
@@ -1171,7 +1183,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                         );
                       })() : <span className="text-gray-300">—</span>}
                     </td>
-                    <td className="px-3 py-2 text-center whitespace-nowrap">
+                    <td className={`px-3 py-2 text-center whitespace-nowrap ${hc('manage')}`}>
                       {editable && (
                         <>
                           <button onClick={() => openEdit(item)} className="px-2 py-1 text-blue-600 hover:bg-blue-50 rounded text-xs mr-1">수정</button>
@@ -1182,7 +1194,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
                   </tr>
                   {isExp && (
                     <tr>
-                      <td colSpan={USAGEPOINT_COLS} className="p-0 bg-gray-50/60">
+                      <td colSpan={colCount} className="p-0 bg-gray-50/60">
                         <ProgressNotePanel item={item} adminUnlocked={adminUnlocked} currentMember={currentMember}
                           isAssignee={isAssigneeOf(item)}
                           onAppend={text => appendProgressLog(item, text)}
@@ -1195,7 +1207,7 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
               );
             })}
             {sorted.length === 0 && (
-              <tr><td colSpan={USAGEPOINT_COLS} className="px-3 py-10 text-center text-gray-400 text-sm">등록된 사용점이 없습니다.</td></tr>
+              <tr><td colSpan={colCount} className="px-3 py-10 text-center text-gray-400 text-sm">등록된 사용점이 없습니다.</td></tr>
             )}
           </tbody>
         </table>
