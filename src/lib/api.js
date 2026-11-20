@@ -370,6 +370,22 @@ export async function deleteWaterPlanItem(id) {
 export async function seedWaterPlan(items) {
   return api.invoke('waterPlan:seed', items);
 }
+// 개인별 업무표: 진행 단계(적격성평가·청구서, 각자 입력)와 개인 업무(각자 추가)
+export async function fetchBoardStages() {
+  return api.invoke('boardStage:list');
+}
+export async function setBoardStage(entry) {
+  return api.invoke('boardStage:set', entry);
+}
+export async function fetchMyTasks() {
+  return api.invoke('boardMy:list');
+}
+export async function saveMyTask(entry) {
+  return api.invoke('boardMy:save', entry);
+}
+export async function deleteMyTask(id) {
+  return api.invoke('boardMy:delete', { id });
+}
 export async function syncWeeklyDutyTodosNow() {
   return api.invoke('weeklyDuty:syncTodosNow');
 }

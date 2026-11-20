@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { fetchWeeklyDuty, fetchWeeklyBoard, saveWeeklyBoard, syncAfterChange, fetchZones, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchTempSchedules, fetchTeamRecords, fetchBoardDone, setBoardDone, saveWeeklyDuty, fetchBoardNotes, saveBoardNote, deleteBoardNote } from '../lib/api';
+import { fetchWeeklyDuty, fetchWeeklyBoard, saveWeeklyBoard, syncAfterChange, fetchZones, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchTempSchedules, fetchTeamRecords, fetchBoardDone, setBoardDone, saveWeeklyDuty, fetchBoardNotes, saveBoardNote, deleteBoardNote, fetchBoardStages, setBoardStage, fetchMyTasks, saveMyTask, deleteMyTask } from '../lib/api';
 import { buildHolidayMap, setScheduleConfig, totalCount } from '../lib/schedule';
 import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, monitoringButtons } from '../lib/monitoringDay';
 import { boardTasksOn, scheduleLabel, ROTATION_UNITS, rotationState, rotationPool, rotationLabel, fmtDate } from '../lib/boardRotation';
@@ -51,6 +51,17 @@ const DOW = DOW_NAMES;
 // 일별 보기: 달력 표시 설정과 무관하게, 마감기한 없는 기타 업무는 매일, 마감기한이 있는 기타 업무는 마감일까지 계속(미완료면 지난 뒤에도 오늘까지)
 const dayOpts = () => ({ ignoreFlag: true, includeUndated: true, untilDue: true, today: todayStr() });
 const KIND_ORDER = ['daily', 'weekly', 'monthly', ''];
+// 비주기 업무의 세부 구분과 진행 단계 — 적격성평가·청구서는 각자(담당자) 단계를 고르고, 마지막 단계에 이르면 끝난 것으로 본다
+const CAT_LABEL = { qual: '적격성평가', calib: '교정', bill: '청구서' };
+const CAT_BADGE = { qual: 'bg-indigo-100 text-indigo-700 border-indigo-300', calib: 'bg-teal-100 text-teal-700 border-teal-300', bill: 'bg-pink-100 text-pink-700 border-pink-300' };
+const CAT_STAGES = {
+  qual: ['계획서 작성', '계획서 완료', '시험 대기중', '보고서 작성', '보고서 완료'],
+  bill: ['견적서 발행', '청구서 작성', '교정/발송 대기', '계산서 발행', '지불품의서 작성'],
+};
+const badgeShort = (t) => (t.kind ? KIND_SHORT[t.kind] : t.cat ? CAT_LABEL[t.cat] : KIND_SHORT['']);
+const badgeCls = (t) => (t.kind ? KIND_BADGE[t.kind] : t.cat ? CAT_BADGE[t.cat] : KIND_BADGE['']);
+const stFinalCls = (stage, cat) => (stage === CAT_STAGES[cat][CAT_STAGES[cat].length - 1] ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-700 border-gray-300');
+const kindValue = (t) => t.kind || (t.cat ? `cat:${t.cat}` : '');
 const STATUS = [['todo', '대기'], ['doing', '진행중'], ['done', '완료']];
 const STATUS_CLS = { todo: 'bg-white text-gray-500 border-gray-300', doing: 'bg-blue-600 text-white border-blue-600', done: 'bg-green-600 text-white border-green-600' };
 let uid = 0;
@@ -92,6 +103,9 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   const [notes, setNotes] = useState([]);
   const [noteDlg, setNoteDlg] = useState(null);
   const [doneOpen, setDoneOpen] = useState(true); // 완료 목록 펼침
+  const [stages, setStages] = useState([]); // 진행 단계 [{ id:'업무|근무자', taskId, who, stage }]
+  const [myTasks, setMyTasks] = useState([]); // 개인이 직접 추가한 업무 [{ id, who, name, cat, due, note }]
+  const [myDlg, setMyDlg] = useState(null); // { id|null, who, draft } — 개인 업무 추가/수정 창
   const [staffDlg, setStaffDlg] = useState(null); // { input } — 직원 관리 창
   const [kindMenu, setKindMenu] = useState(null); // { id, x, y } — 업무 버튼 구분 선택 메뉴
   const [taskDlg, setTaskDlg] = useState(null); // { id|null(새 업무), draft } — 업무 상세 창
@@ -133,6 +147,8 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     loadMonitoring();
     fetchBoardDone().then(l => setDoneList(Array.isArray(l) ? l : [])).catch(() => {});
     fetchBoardNotes().then(l => setNotes(Array.isArray(l) ? l : [])).catch(() => {});
+    fetchBoardStages().then(l => setStages(Array.isArray(l) ? l : [])).catch(() => {});
+    fetchMyTasks().then(l => setMyTasks(Array.isArray(l) ? l : [])).catch(() => {});
     fetchTeamRecords().then(r => setLeaves(Array.isArray(r?.records) ? r.records : [])).catch(() => {});
     Promise.all([fetchWeeklyDuty().catch(() => null), fetchWeeklyBoard().catch(() => null)]).then(([d, b]) => {
       setDuty(d || null);
@@ -190,7 +206,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     setTaskDlg({
       id: task?.id || null,
       draft: {
-        name: task?.name || '', kind: task?.kind || '', alarmTime: task?.alarmTime || '', note: task?.note || '',
+        name: task?.name || '', kind: task?.kind || '', cat: task?.cat || '', alarmTime: task?.alarmTime || '', note: task?.note || '',
         backups: [...(task?.backups || [])],
         showCal: task ? task.showOnCalendar !== false : false, // 새 업무는 월별 일정 표시를 끈 상태가 기본
         curWorker: '',
@@ -207,7 +223,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     const cur = id ? board.tasks.find(t => t.id === id) : null;
     const taskId = id || newTaskId();
     const fields = {
-      name, kind: draft.kind, alarmTime: draft.kind && draft.alarmTime ? draft.alarmTime : undefined, due: !draft.kind && draft.due ? draft.due : undefined, note: draft.note.trim() ? draft.note : undefined,
+      name, kind: draft.kind, cat: !draft.kind && draft.cat ? draft.cat : undefined, alarmTime: draft.kind && draft.alarmTime ? draft.alarmTime : undefined, due: !draft.kind && draft.due ? draft.due : undefined, note: draft.note.trim() ? draft.note : undefined,
       // 구분에 맞는 주기 값만 남긴다(기본값이면 저장하지 않는다)
       backups: draft.backups?.length ? draft.backups : undefined,
       showOnCalendar: draft.showCal === false ? false : undefined, // 기본은 표시
@@ -291,7 +307,9 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   function setKind(id, kind) {
     setKindMenu(null);
     if (!guard()) return;
-    commit({ ...board, tasks: board.tasks.map(x => x.id === id ? { ...x, kind } : x) });
+    // 'cat:qual' 처럼 오면 비주기 업무의 세부 구분(적격성평가·교정·청구서)
+    const patch = kind.startsWith('cat:') ? { kind: '', cat: kind.slice(4) } : { kind, cat: undefined };
+    commit({ ...board, tasks: board.tasks.map(x => x.id === id ? { ...x, ...patch } : x) });
   }
   // 업무 버튼 오른쪽 ✕: 업무를 지우지 않고 근무자에게 배정된 것을 모두 뺀다(로테이션 업무는 로테이션도 함께 끈다).
   // 업무 자체를 지우려면 업무 상세창의 '삭제'를 쓴다.
@@ -346,10 +364,59 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     } catch { flash('완료 표시를 저장하지 못했습니다', true); }
   }
   function toggleDone(who, date, taskId, cur, meta) {
-    if (date === '*' && !adminUnlocked) { flash('비주기적 업무의 완료 표시는 관리자만 할 수 있습니다.', true); return; }
+    // 비주기적 업무의 완료 표시는 관리자만, 단 본인이 직접 추가한 개인 업무는 본인도 할 수 있다
+    const pt = taskById.get(taskId);
+    if (date === '*' && !adminUnlocked && !(pt?.personal && pt.owner === currentMember?.username)) { flash('비주기적 업무의 완료 표시는 관리자만 할 수 있습니다.', true); return; }
     if (!(adminUnlocked || currentMember?.username === who)) { flash('본인의 업무만 완료 표시할 수 있습니다.', true); return; }
     writeDone(date, taskId, who, !cur, meta);
   }
+  // ── 진행 단계(적격성평가·청구서)와 개인 업무 ──
+  // 단계는 담당자 각자가 고른다(관리자는 누구 것이든). 마지막 단계에 이르면 끝난 것으로 보고 칩에 완료 표시(빗금)만 한다.
+  const stageOf = (taskId, who, cat) => stages.find(x => x.id === `${taskId}|${who}`)?.stage || CAT_STAGES[cat]?.[0] || '';
+  async function changeStage(who, taskId, stage) {
+    if (!(adminUnlocked || currentMember?.username === who)) { flash('본인의 업무만 진행 단계를 바꿀 수 있습니다.', true); return; }
+    const id = `${taskId}|${who}`;
+    setStages(list => [...list.filter(x => x.id !== id), { id, taskId, who, stage, updatedAt: new Date().toISOString() }]);
+    try {
+      const r = await setBoardStage({ taskId, who, stage });
+      if (!r?.ok) { flash(r?.error || '진행 단계를 저장하지 못했습니다', true); fetchBoardStages().then(l => setStages(Array.isArray(l) ? l : [])).catch(() => {}); return; }
+      syncAfterChange().catch(() => {});
+    } catch { flash('진행 단계를 저장하지 못했습니다', true); }
+  }
+  // 개인 업무 추가/수정/삭제 — 각자 자기 업무를(관리자는 누구 것이든)
+  function openMy(t, who) {
+    setTip(null);
+    if (t) {
+      const p = myTasks.find(x => x.id === t.id);
+      if (!p || !(adminUnlocked || currentMember?.username === p.who)) return;
+      setMyDlg({ id: p.id, who: p.who, draft: { name: p.name, cat: p.cat || '', due: p.due || '', note: p.note || '' } });
+    } else {
+      if (!(adminUnlocked || currentMember?.username === who)) return;
+      setMyDlg({ id: null, who, draft: { name: '', cat: '', due: '', note: '' } });
+    }
+  }
+  async function saveMy() {
+    const { id, who, draft } = myDlg;
+    if (!draft.name.trim()) return;
+    setMyDlg(null);
+    try {
+      const r = await saveMyTask({ id, who, ...draft });
+      if (!r?.ok) { flash(r?.error || '업무를 저장하지 못했습니다', true); return; }
+      fetchMyTasks().then(l => setMyTasks(Array.isArray(l) ? l : [])).catch(() => {});
+      syncAfterChange().catch(() => {});
+    } catch { flash('업무를 저장하지 못했습니다', true); }
+  }
+  function removeMy(id) {
+    askConfirm('이 업무를 삭제할까요?', async () => {
+      try {
+        const r = await deleteMyTask(id);
+        if (!r?.ok) { flash(r?.error || '삭제하지 못했습니다', true); return; }
+        setMyTasks(list => list.filter(x => x.id !== id));
+        syncAfterChange().catch(() => {});
+      } catch { flash('삭제하지 못했습니다', true); }
+    });
+  }
+
   // 예정업무 저장/삭제 — 업무처럼 버튼으로 하나씩(관리자만)
   async function saveNoteItem() {
     const { id, text, due } = noteDlg;
@@ -461,7 +528,10 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   }
 
   if (staff === null) return <div className="p-6 text-sm text-gray-400">불러오는 중...</div>;
-  const taskById = new Map(board.tasks.map(t => [t.id, t]));
+  // 개인이 직접 추가한 업무도 업무표에서는 보통 업무처럼 다룬다(비주기 업무, 담당은 만든 사람)
+  const viewTasks = [...board.tasks, ...myTasks.map(p => ({ id: p.id, name: p.name, kind: '', cat: p.cat || '', due: p.due || '', note: p.note || '', owner: p.who, personal: true, showOnCalendar: false }))];
+  const taskById = new Map(viewTasks.map(t => [t.id, t]));
+  const viewBoard = { ...board, tasks: viewTasks, assignments: (() => { const a = { ...board.assignments }; myTasks.forEach(p => { a[p.who] = [...(a[p.who] || []), p.id]; }); return a; })() };
   const colorOf = (who) => WORKER_COLORS[Math.max(0, staff.indexOf(who)) % WORKER_COLORS.length];
   // 일별 보기에서는 고른 날짜 기준으로 로테이션 주기·담당을 계산한다
   const viewD = viewMode === 'day' ? new Date(monDate + 'T00:00:00') : undefined;
@@ -469,9 +539,11 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   // 일반 배치 + 로테이션으로 이번 주기에 그 사람이 맡은 업무
   const workersOf = (id) => {
     const t = taskById.get(id); const rs = rotOf(t);
+    if (t?.personal) return [t.owner];
     return rs ? [rs.worker] : staff.filter(w => (board.assignments[w] || []).includes(id));
   };
   const idsOf = (who) => [
+    ...myTasks.filter(p => p.who === who).map(p => p.id),
     ...(board.assignments[who] || []).filter(id => taskById.has(id) && !taskById.get(id).rotation?.on),
     ...board.tasks.filter(t => rotOf(t)?.worker === who).map(t => t.id),
   ];
@@ -488,7 +560,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   // 나눈다(대상 인원이 정해진 로테이션은 그 안에서, 그때그때 업무가 가장 적은 사람에게 순서대로).
   const absent = viewMode === 'day' ? staff.filter(w => leaveOf(w, monDate) === 'annual') : [];
   const subs = {}; // `${업무id}|${대신 맡는 사람}` → 휴가인 사람
-  let dayItems = viewMode === 'day' ? boardTasksOn(board, staff, monDate, !!monHolidays[monDate], dayOpts()) : null;
+  let dayItems = viewMode === 'day' ? boardTasksOn(viewBoard, staff, monDate, !!monHolidays[monDate], dayOpts()) : null;
   if (dayItems && absent.length > 0 && absent.length < staff.length) {
     const present = staff.filter(w => !absent.includes(w));
     const load = Object.fromEntries(present.map(w => [w, 0]));
@@ -677,7 +749,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     return out;
   })();
   const emMap = Object.fromEntries(emItemsOf(monDate).map(b => [b.mkey, b])); // 근무자 칸의 EM 칩을 같은 색으로 그리기 위함
-  const dayCount = (ds) => boardTasksOn(board, staff, ds, !!monHolidays[ds], dayOpts()).length + emCount(ds);
+  const dayCount = (ds) => boardTasksOn(viewBoard, staff, ds, !!monHolidays[ds], dayOpts()).length + emCount(ds);
 
   function dayBar() {
     const weekStartMon = (() => { try { return localStorage.getItem('em-week-start') === 'mon'; } catch { return false; } })();
@@ -765,7 +837,10 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
       </div>
       <div className="mb-3" />
 
-      {/* 예정업무 — 모든 날짜에 공통으로 보이는 항목들(관리자만 추가·수정·삭제), 화면 맨 위(날짜 막대 위) */}
+      {/* 날짜 막대 — 화면 전체(근무자 칸·환경모니터링)의 기준 날짜와 일별/전체 보기 */}
+      {dayBar()}
+
+      {/* 예정업무 — 모든 날짜에 공통으로 보이는 항목들(관리자만 추가·수정·삭제), 일별 표시(날짜 막대)와 개인별 업무표 사이 */}
       {(() => {
         // 예정일이 빠른 순(예정일 없는 항목은 뒤), 같으면 등록 순
         const items = [...notes].filter(x => !x.date).sort((p, q) => String(p.due || '9999').localeCompare(String(q.due || '9999')) || String(p.createdAt || p.updatedAt || '').localeCompare(String(q.createdAt || q.updatedAt || '')));
@@ -801,9 +876,6 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
         );
       })()}
 
-      {/* 날짜 막대 — 화면 전체(근무자 칸·환경모니터링)의 기준 날짜와 일별/전체 보기 */}
-      {dayBar()}
-
       {/* 개인별 업무표 */}
       {/* 근무자 칸 — 인원수만큼 가로로, 사람마다 다른 색 */}
       {staff.length === 0 ? (
@@ -818,12 +890,15 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
               // 지금 모니터링 일정에 실제로 있는 항목만(일정이 바뀌어 없어진 배치는 보이지 않고, 옮겨진 일정은 따라온다)
               const emIds = emItemsOf(monDate).filter(b => emAssignAll[b.mkey]?.who === who).map(b => [b.mkey, { label: b.label, tip: b.tip }]);
               // 완료 표시: 매일·주간·월간은 고른 날짜 기준, 기타는 날짜와 관계없이, EM은 그 날짜 기준
-              const isDoneTask = (tid) => { const t = taskById.get(tid); const e = doneMap.get(`${t?.kind ? monDate : '*'}|${tid}|${who}`); return e ? e.done : (!t?.kind && prOf(t, who, rotOf(t)).status === 'done'); };
+              // 적격성평가·청구서는 마지막 진행 단계까지 가면 끝난 것으로 본다
+              const stageFinalOf = (t) => !!(t && CAT_STAGES[t.cat]) && stageOf(t.id, who, t.cat) === CAT_STAGES[t.cat][CAT_STAGES[t.cat].length - 1];
+              const isDoneTask = (tid) => { const t = taskById.get(tid); const e = doneMap.get(`${t?.kind ? monDate : '*'}|${tid}|${who}`); return e ? e.done : (!t?.kind && (stageFinalOf(t) || prOf(t, who, rotOf(t)).status === 'done')); };
               const doneCnt = ids.filter(isDoneTask).length + emIds.filter(([mk]) => doneMap.get(`${monDate}|em:${mk}|${who}`)?.done).length;
               const totalCnt = ids.length + emIds.length;
               // 비주기(기타) 업무는 완료하면 표에서 없애고(아래 '완료 목록'에 날짜와 함께 남는다), 일일·주간·월간·환경모니터링은
               // 지우지 않고 그 자리에 빗금(취소선) 처리만 한다.
-              const visIds = ids.filter(id => taskById.get(id)?.kind || !isDoneTask(id));
+              // (진행 단계가 있는 업무는 마지막 단계여도 칸에 남겨 단계를 되돌릴 수 있게 하고, 관리자가 완료 처리했을 때만 목록으로 옮긴다)
+              const visIds = ids.filter(id => { const t = taskById.get(id); if (t?.kind) return true; if (t && CAT_STAGES[t.cat]) return !doneMap.get(`*|${id}|${who}`)?.done; return !isDoneTask(id); });
               const visEm = emIds;
               const over = overCol === who;
               const lv = viewMode === 'day' ? leaveOf(who, monDate) : '';
@@ -880,25 +955,28 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                       const track = !t.kind; // 기타 업무만 기한·완료표시
                       const pr = track ? prOf(t, who, rs) : { due: '', status: 'todo' };
                       const doneEntry = doneMap.get(`${t.kind ? monDate : '*'}|${id}|${who}`);
-                      const done = doneEntry ? doneEntry.done : (track && pr.status === 'done');
+                      const hasStages = !!CAT_STAGES[t.cat] && !t.kind;
+                      const stage = hasStages ? stageOf(id, who, t.cat) : '';
+                      const canStage = adminUnlocked || currentMember?.username === who;
+                      const done = doneEntry ? doneEntry.done : (hasStages ? stageFinalOf(t) : (track && pr.status === 'done'));
                       const effStatus = track ? (done ? 'done' : pr.status === 'done' ? 'todo' : pr.status) : 'todo';
                       const dl = track ? dueLabel(pr.due, effStatus) : null;
                       return (
                         <div key={id}
-                          draggable={adminUnlocked}
+                          draggable={adminUnlocked && !t.personal}
                           onDragStart={e => startDrag(e, { kind: 'placed', taskId: id, from: who })}
                           onDragOver={e => { if (adminUnlocked) e.preventDefault(); }}
                           onDrop={e => {
                             const d = readDrag(e);
                             if (d?.kind === 'placed' && d.from === who && d.taskId !== id) { e.preventDefault(); e.stopPropagation(); setOverCol(null); reorderChip(who, d.taskId, id, ids); }
                           }}
-                          onClick={() => chipClick(() => openTask(t))}
+                          onClick={() => chipClick(() => (t.personal ? openMy(t) : openTask(t)))}
                           onDoubleClick={() => chipDouble(() => toggleDone(who, t.kind ? monDate : '*', id, done, { name: t.name, kind: t.kind || '' }))}
                           onMouseEnter={e => showTip(e, t, who)} onMouseLeave={() => setTip(null)}
                           style={done ? HATCH : undefined}
                           className={`rounded-lg border px-2.5 py-2 shadow-sm cursor-pointer select-none ${done ? 'bg-green-200 border-green-500 text-green-900' : c.chip} ${adminUnlocked ? 'active:cursor-grabbing' : ''}`}>
                           <div className="flex items-center gap-1.5">
-                            <span className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[t.kind || '']}`}>{KIND_SHORT[t.kind || '']}</span>
+                            <span className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${badgeCls(t)}`}>{badgeShort(t)}</span>
                             <span className={`min-w-0 text-sm font-medium break-words ${done ? 'line-through opacity-70' : ''}`}>{t.name}</span>
                             {subs[`${id}|${who}`] && <span className="shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border bg-red-50 border-red-200 text-red-600" title={`${subs[`${id}|${who}`]}님(정)이 휴가라 대신 맡음${(taskById.get(id)?.backups || []).includes(who) ? ' — 부 담당' : ''}`}>{(taskById.get(id)?.backups || []).includes(who) ? '부' : '대신'}</span>}
                             <span className="flex-1" />
@@ -906,7 +984,14 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                             {rs && <span className="text-indigo-500 text-xs leading-none">🔄</span>}
                             {!track && t.alarmTime && <span className="shrink-0 ml-auto text-xs font-bold tabular-nums text-gray-600 bg-white/70 border border-black/10 rounded px-1.5 py-0.5" title="시간">{t.alarmTime}</span>}
                             {track && dl && <span className={`shrink-0 text-[11px] leading-none font-bold px-1.5 py-1 rounded border ${dl.cls}`} title={`마감 ${pr.due}`}>{dl.text}</span>}
-                            {track && (adminUnlocked ? (
+                            {hasStages ? (
+                              <select value={stage} disabled={!canStage} onChange={e => changeStage(who, id, e.target.value)}
+                                onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()} draggable={false}
+                                title={canStage ? '진행 단계를 고르세요' : '본인의 업무만 바꿀 수 있습니다'}
+                                className={`shrink-0 text-[11px] font-semibold rounded border px-1 py-0.5 ${canStage ? 'cursor-pointer' : 'cursor-default'} ${stFinalCls(stage, t.cat)}`}>
+                                {CAT_STAGES[t.cat].map(st => <option key={st} value={st} className="bg-white text-gray-800">{st}</option>)}
+                              </select>
+                            ) : track && !t.personal && (adminUnlocked ? (
                               <select value={effStatus} onChange={e => setProgress(who, id, { status: e.target.value })}
                                 onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()} draggable={false}
                                 className={`shrink-0 text-[11px] font-semibold rounded border px-1 py-0.5 cursor-pointer ${STATUS_CLS[effStatus]}`}>
@@ -920,6 +1005,10 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                       );
                     })}
                     {sec.list.length === 0 && <p className="text-[11px] text-gray-300 px-1 py-1">{away && sec.key === 'p' ? '휴가 · 업무 분배됨' : sec.all.length > 0 ? '모두 완료 ✓' : viewMode === 'day' ? '이 날 해당 없음' : '없음'}</p>}
+                    {sec.key === 'o' && (adminUnlocked || currentMember?.username === who) && (
+                      <button type="button" onClick={() => openMy(null, who)}
+                        className="w-full py-1.5 text-xs font-medium text-gray-500 border border-dashed border-gray-300 rounded-lg hover:bg-white hover:text-blue-600 hover:border-blue-300">+ 업무추가</button>
+                    )}
                     </div>
                     </div>
                     ))}
@@ -1001,8 +1090,8 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                         className={`inline-flex items-center gap-1.5 pl-3 pr-1.5 py-1.5 rounded-lg border text-sm font-medium select-none shadow-sm ${ws.length > 0 ? 'border-green-400 bg-green-100 text-green-900' : 'border-gray-300 bg-gray-50 text-gray-700'} ${adminUnlocked ? 'cursor-grab active:cursor-grabbing hover:brightness-95' : ''}`}>
                         {/* 구분 버튼 — 누를 때마다 일일 → 주간 → 월간 → 기타 순으로 바뀐다 */}
                         <button type="button" onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setKindMenu({ id: t.id, x: r.left, y: r.bottom + 4 }); }} disabled={!adminUnlocked}
-                          title={adminUnlocked ? '구분 변경 (눌러서 선택)' : KIND_LABEL[t.kind || '']}
-                          className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[t.kind || '']} ${adminUnlocked ? 'hover:brightness-95' : 'cursor-default'}`}>{KIND_SHORT[t.kind || '']}</button>
+                          title={adminUnlocked ? '구분 변경 (눌러서 선택)' : badgeShort(t)}
+                          className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${badgeCls(t)} ${adminUnlocked ? 'hover:brightness-95' : 'cursor-default'}`}>{badgeShort(t)}</button>
                         <span>{t.name}</span>
                         {t.kind ? <span className="text-[10px] text-gray-400 whitespace-nowrap" title="주기">⏰{scheduleLabel(t)}</span> : t.due ? <span className="text-[10px] text-gray-400 whitespace-nowrap" title="마감기한">📅마감 {t.due.slice(5).replace('-', '/')}</span> : null}
                         {t.note && <span className="text-[10px]" title={t.note}>📝</span>}
@@ -1099,7 +1188,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
           <div className="fixed z-[280] w-[18.5rem] pointer-events-none rounded-xl bg-gray-900/95 text-white shadow-2xl ring-1 ring-white/10 backdrop-blur px-3.5 py-3"
             style={{ left: tip.x, ...(tip.up ? { bottom: window.innerHeight - tip.top } : { top: tip.y }) }}>
             <div className="flex items-center gap-2 pb-2 mb-1 border-b border-white/10">
-              <span className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[t.kind || '']}`}>{KIND_SHORT[t.kind || '']}</span>
+              <span className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${badgeCls(t)}`}>{badgeShort(t)}</span>
               <span className="text-sm font-semibold break-words min-w-0">{t.name}</span>
             </div>
             <Row label="정 담당">
@@ -1163,6 +1252,43 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
         </div>
       )}
 
+      {/* 개인 업무 추가/수정 창 — 각자 자기 업무를 추가한다(적격성평가·청구서는 진행 단계를 고를 수 있다) */}
+      {myDlg && (() => {
+        const d = myDlg.draft; const set = (patch) => setMyDlg(p => ({ ...p, draft: { ...p.draft, ...patch } }));
+        return (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40" onClick={() => setMyDlg(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-[26rem] max-w-[95vw] p-5" onClick={e => e.stopPropagation()}>
+              <h3 className="text-base font-bold text-gray-900 mb-0.5">📋 {myDlg.id ? '내 업무 수정' : '업무 추가'}</h3>
+              <p className="text-xs text-gray-500 mb-3">{myDlg.who}님의 개인 업무</p>
+              <label className="block text-xs text-gray-500 mb-1">업무명</label>
+              <input autoFocus value={d.name} onChange={e => set({ name: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') saveMy(); if (e.key === 'Escape') setMyDlg(null); }}
+                placeholder="업무명" spellCheck={false} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+              <div className="flex gap-3 mb-3">
+                <div className="flex-1">
+                  <label className="block text-xs text-gray-500 mb-1">구분</label>
+                  <select value={d.cat} onChange={e => set({ cat: e.target.value })} className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm">
+                    <option value="">기타</option><option value="qual">적격성평가</option><option value="calib">교정</option><option value="bill">청구서</option>
+                  </select>
+                </div>
+                <div className="flex-1">
+                  <label className="block text-xs text-gray-500 mb-1">마감기한 (선택)</label>
+                  <input type="date" value={d.due} onChange={e => set({ due: e.target.value })} className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm" />
+                </div>
+              </div>
+              {CAT_STAGES[d.cat] && <p className="text-[11px] text-gray-400 -mt-1 mb-3">진행 단계: {CAT_STAGES[d.cat].join(' → ')} — 업무 칸에서 직접 고릅니다.</p>}
+              <label className="block text-xs text-gray-500 mb-1">메모</label>
+              <textarea value={d.note} rows={3} onChange={e => set({ note: e.target.value })} placeholder="업무 내용·주의사항 등" spellCheck={false}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-400" />
+              <div className="flex gap-2 justify-end mt-4">
+                {myDlg.id && <button type="button" onClick={() => { const id = myDlg.id; setMyDlg(null); removeMy(id); }} className="mr-auto px-3 py-2 text-sm text-red-600 bg-red-50 rounded-lg hover:bg-red-100">삭제</button>}
+                <button type="button" onClick={() => setMyDlg(null)} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>
+                <button type="button" disabled={!d.name.trim()} onClick={saveMy} className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40">{myDlg.id ? '저장' : '추가'}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* 확인 창 */}
       {confirmDlg && (
         <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/40" onClick={() => setConfirmDlg(null)}>
@@ -1212,14 +1338,21 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
         const mt = taskById.get(kindMenu.id);
         return (
           <div className="fixed inset-0 z-[290]" onClick={() => setKindMenu(null)}>
-            <div className="absolute bg-white rounded-lg shadow-xl border border-gray-200 py-1 w-36" style={{ left: Math.min(kindMenu.x, window.innerWidth - 160), top: kindMenu.y }} onClick={e => e.stopPropagation()}>
-              {KIND_ORDER.map(k => (
-                <button key={k || 'etc'} type="button" onClick={() => setKind(kindMenu.id, k)}
-                  className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-gray-50 ${(mt?.kind || '') === k ? 'font-semibold text-blue-600' : 'text-gray-700'}`}>
-                  <span className={`text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE[k]}`}>{KIND_SHORT[k]}</span>
-                  {k ? { daily: '일일점검', weekly: '주간점검', monthly: '월간점검' }[k] : '비주기(기타)'}{(mt?.kind || '') === k ? ' ✓' : ''}
-                </button>
-              ))}
+            <div className="absolute bg-white rounded-lg shadow-xl border border-gray-200 py-1 w-44" style={{ left: Math.min(kindMenu.x, window.innerWidth - 160), top: kindMenu.y }} onClick={e => e.stopPropagation()}>
+              {[...KIND_ORDER, 'cat:qual', 'cat:calib', 'cat:bill'].map(k => {
+                const isCat = k.startsWith('cat:');
+                const cur = mt ? kindValue(mt) : '';
+                const lbl = isCat ? CAT_LABEL[k.slice(4)] : KIND_SHORT[k];
+                const cls = isCat ? CAT_BADGE[k.slice(4)] : KIND_BADGE[k];
+                const text = isCat ? CAT_LABEL[k.slice(4)] : (k ? { daily: '일일점검', weekly: '주간점검', monthly: '월간점검' }[k] : '비주기(기타)');
+                return (
+                  <button key={k || 'etc'} type="button" onClick={() => setKind(kindMenu.id, k)}
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left hover:bg-gray-50 ${cur === k ? 'font-semibold text-blue-600' : 'text-gray-700'}`}>
+                    <span className={`text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${cls}`}>{lbl}</span>
+                    {text}{cur === k ? ' ✓' : ''}
+                  </button>
+                );
+              })}
             </div>
           </div>
         );
@@ -1241,10 +1374,12 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                 placeholder="업무명" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-gray-50" />
               <div className="mb-3">
                 <label className="block text-xs text-gray-500 mb-1">구분</label>
-                <select value={d.kind} disabled={ro} onChange={e => set({ kind: e.target.value })}
+                <select value={kindValue(d)} disabled={ro} onChange={e => { const v = e.target.value; set(v.startsWith('cat:') ? { kind: '', cat: v.slice(4) } : { kind: v, cat: '' }); }}
                   className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm disabled:bg-gray-50">
                   <option value="">기타</option><option value="daily">일일점검</option><option value="weekly">주간점검</option><option value="monthly">월간점검</option>
+                  <option value="cat:qual">적격성평가</option><option value="cat:calib">교정</option><option value="cat:bill">청구서</option>
                 </select>
+                {CAT_STAGES[d.cat] && !d.kind && <p className="text-[11px] text-gray-400 mt-1">진행 단계: {CAT_STAGES[d.cat].join(' → ')} (담당자가 각자 고릅니다, 마지막 단계면 끝난 것으로 봅니다)</p>}
               </div>
               {/* 구분에 따른 주기 설정: 일일 = 매일 몇 시 / 주간 = 무슨 요일 몇 시 / 월간 = 며칠 몇 시 */}
               {d.kind && (

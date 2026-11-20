@@ -971,7 +971,7 @@ function explainGistError(err) {
 // 건드리지 않는다.
 // 팀 설정(teams)과 팀 공유 기록(teamRecords)도 여러 PC가 함께 쓰는 항목이다 — 각 팀원 PC가 자기 기록을
 // 올리고 서로의 것을 내려받는다.
-const COLLAB_KEYS = ['usagePoints', 'sops', 'sopTags', 'memberAccounts', 'teams', 'teamRecords', 'boardDone', 'boardNotes', 'waterPlan'];
+const COLLAB_KEYS = ['usagePoints', 'sops', 'sopTags', 'memberAccounts', 'teams', 'teamRecords', 'boardDone', 'boardNotes', 'waterPlan', 'boardStage', 'boardMyTasks'];
 
 // 일반 PC가 올릴 내용을 만든다 — 원격(기준 PC가 올린 내용)을 그대로 두고,
 // 함께 쓰는 항목만 이 PC 내용을 합쳐 넣는다. 이렇게 해야 일반 PC가 사용점을
@@ -1563,27 +1563,40 @@ function checkAlarms() {
     }
   } catch { /* ignore */ }
 }
+// ─── 개인별 업무표: 비주기 업무 세부 구분(적격성평가·교정·청구서)과 진행 단계 ───
+const BOARD_CATS = ['qual', 'calib', 'bill'];
+const BOARD_STAGES = {
+  qual: ['계획서 작성', '계획서 완료', '시험 대기중', '보고서 작성', '보고서 완료'],
+  bill: ['견적서 발행', '청구서 작성', '교정/발송 대기', '계산서 발행', '지불품의서 작성'],
+};
+// 마지막 단계에 이른 업무는 끝난 것으로 본다
+const boardStageIsFinal = (cat, stage) => !!BOARD_STAGES[cat] && stage === BOARD_STAGES[cat][BOARD_STAGES[cat].length - 1];
+
 // ─── 개인별 업무표 D-day 알람 ───
-// 아직 완료하지 않은 D-day 업무(비주기적 업무 중 마감기한이 7일 이내이거나 지난 것)가 있으면, 그 담당자가 이 PC에 로그인해 있을 때
-// 오전 8시와 오후 4시에 한 번씩 알린다. 정각을 놓쳤어도(절전·늦게 켠 경우·늦게 로그인) 3시간 안이면 그때 한 번 알린다.
+// 아직 완료하지 않은 비주기적 업무(마감기한이 있는 것)가 마감 7일 전·1일 전·당일이거나 마감이 지났으면(완료할 때까지 매일), 그 담당자가
+// 이 PC에 로그인해 있을 때 오전 8시와 오후 4시에 한 번씩 알린다. 정각을 놓쳤어도(절전·늦게 켠 경우·늦게 로그인) 3시간 안이면 그때 한 번 알린다.
 const BOARD_DDAY_SLOTS = ['08:00', '16:00'];
-const BOARD_DDAY_WINDOW_DAYS = 7;
+const BOARD_DDAY_NOTICE_DAYS = [7, 1]; // 마감 며칠 전에 미리 알릴지(당일·지난 뒤는 항상 알림)
 function boardDdayItemsFor(username, today) {
   const data = loadData();
   const board = data.weeklyBoard;
   if (!board || !Array.isArray(board.tasks)) return [];
   const done = new Map((Array.isArray(data.boardDone) ? data.boardDone : []).map(x => [x.id, x]));
+  const stages = new Map((Array.isArray(data.boardStage) ? data.boardStage : []).map(x => [x.id, x.stage]));
+  // 개인이 직접 추가한 업무도 포함(본인 것)
+  const mine = (Array.isArray(data.boardMyTasks) ? data.boardMyTasks : []).filter(p => p.who === username).map(p => ({ id: p.id, name: p.name, kind: '', cat: p.cat || '', due: p.due || '', personal: true }));
   const out = [];
-  for (const t of board.tasks) {
-    if (t.kind || t.rotation?.on) continue; // 마감기한이 있는 비주기(기타) 업무만, 로테이션은 제외
-    if (!(board.assignments?.[username] || []).includes(t.id)) continue;
+  for (const t of [...board.tasks, ...mine]) {
+    if (t.kind || t.rotation?.on) continue; // 마감기한이 있는 비주기 업무만(기타·적격성평가·교정·청구서), 로테이션은 제외
+    if (!t.personal && !(board.assignments?.[username] || []).includes(t.id)) continue;
     const prog = board.progress?.[username]?.[t.id];
     const due = t.due || prog?.due || '';
     if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) continue;
     const e = done.get(`*|${t.id}|${username}`);
     if (e ? e.done : prog?.status === 'done') continue; // 이미 완료
+    if (boardStageIsFinal(t.cat, stages.get(`${t.id}|${username}`))) continue; // 마지막 단계까지 끝낸 업무
     const diff = Math.round((new Date(due + 'T00:00:00') - new Date(today + 'T00:00:00')) / 86400000);
-    if (diff > BOARD_DDAY_WINDOW_DAYS) continue;
+    if (diff > 0 && !BOARD_DDAY_NOTICE_DAYS.includes(diff)) continue; // 7일 전·1일 전·당일·지남만
     out.push({ name: t.name, due, diff });
   }
   return out.sort((a, b) => a.diff - b.diff);
@@ -2441,7 +2454,8 @@ function registerHandlers() {
     if (!me) return { ok: false, error: '로그인한 뒤에 완료 표시를 할 수 있습니다' };
     if (!me.isAdmin && me.username !== who) return { ok: false, error: '본인의 업무만 완료 표시할 수 있습니다' };
     // 비주기적(기타) 업무(date가 '*')의 완료는 관리자만 표시한다
-    if (date === '*' && !me.isAdmin) return { ok: false, error: '비주기적 업무의 완료 표시는 관리자만 할 수 있습니다' };
+    // 단, 본인이 직접 추가한 개인 업무는 본인이 완료 표시할 수 있다
+    if (date === '*' && !me.isAdmin && !(Array.isArray(data.boardMyTasks) ? data.boardMyTasks : []).some(p => p.id === String(taskId || '') && p.who === me.username)) return { ok: false, error: '비주기적 업무의 완료 표시는 관리자만 할 수 있습니다' };
     if (!(date === '*' || /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')))) return { ok: false, error: '날짜가 올바르지 않습니다' };
     const tid = String(taskId || ''), w = String(who || '');
     if (!tid || tid.length > 100 || !w || w.length > 40) return { ok: false, error: '업무 정보가 올바르지 않습니다' };
@@ -2546,6 +2560,76 @@ function registerHandlers() {
     data.waterPlanSeeded = true;
     saveData(data);
     return { ok: true, count: list.length };
+  });
+
+  // ── 개인별 업무표: 진행 단계(적격성평가·청구서)와 개인 업무 ──
+  // 진행 단계는 각자(본인 업무) 입력하고, 개인 업무는 각자 자기 것을 추가·수정·삭제한다(관리자는 누구 것이든).
+  // 항목별로 다른 PC와 합쳐지도록 공유 목록(boardStage, boardMyTasks)으로 둔다.
+  const taskCatOf = (data, taskId) => {
+    const my = (Array.isArray(data.boardMyTasks) ? data.boardMyTasks : []).find(p => p.id === taskId);
+    if (my) return { cat: my.cat || '', owner: my.who };
+    const t = (data.weeklyBoard?.tasks || []).find(x => x.id === taskId);
+    return t ? { cat: t.cat || '', owner: '' } : null;
+  };
+  ipcMain.handle('boardStage:list', () => (Array.isArray(loadData().boardStage) ? loadData().boardStage : []));
+  ipcMain.handle('boardStage:set', (_e, { taskId, who, stage } = {}) => {
+    const data = loadData();
+    const me = (data.memberAccounts || []).find(m => m.id === currentMemberId);
+    if (!me) return { ok: false, error: '로그인한 뒤에 입력할 수 있습니다' };
+    if (!me.isAdmin && me.username !== who) return { ok: false, error: '본인의 업무만 진행 단계를 바꿀 수 있습니다' };
+    const info = taskCatOf(data, taskId);
+    if (!info || !BOARD_STAGES[info.cat]) return { ok: false, error: '진행 단계가 없는 업무입니다' };
+    if (!BOARD_STAGES[info.cat].includes(stage)) return { ok: false, error: '진행 단계가 올바르지 않습니다' };
+    const id = `${taskId}|${who}`;
+    const list = (Array.isArray(data.boardStage) ? data.boardStage : []).filter(x => x.id !== id);
+    list.push({ id, taskId: String(taskId).slice(0, 100), who: String(who).slice(0, 40), stage, by: me.username, updatedAt: new Date().toISOString() });
+    data.boardStage = list;
+    saveData(data);
+    return { ok: true };
+  });
+  const cleanMyTask = (x) => {
+    const name = String(x?.name || '').trim().slice(0, 120);
+    if (!name) return null;
+    return {
+      name,
+      cat: BOARD_CATS.includes(x?.cat) ? x.cat : '',
+      due: /^\d{4}-\d{2}-\d{2}$/.test(String(x?.due || '')) ? x.due : '',
+      note: String(x?.note || '').trim().slice(0, 500),
+    };
+  };
+  ipcMain.handle('boardMy:list', () => (Array.isArray(loadData().boardMyTasks) ? loadData().boardMyTasks : []));
+  ipcMain.handle('boardMy:save', (_e, { id, who, ...rest } = {}) => {
+    const data = loadData();
+    const me = (data.memberAccounts || []).find(m => m.id === currentMemberId);
+    if (!me) return { ok: false, error: '로그인한 뒤에 추가할 수 있습니다' };
+    const clean = cleanMyTask(rest);
+    if (!clean) return { ok: false, error: '업무 이름을 입력하세요' };
+    const list = Array.isArray(data.boardMyTasks) ? data.boardMyTasks : [];
+    const now = new Date().toISOString();
+    const cur = id ? list.find(p => p.id === id) : null;
+    if (cur) {
+      if (!me.isAdmin && cur.who !== me.username) return { ok: false, error: '본인의 업무만 수정할 수 있습니다' };
+      data.boardMyTasks = list.map(p => p.id === id ? { ...p, ...clean, updatedAt: now } : p);
+    } else {
+      const owner = me.isAdmin && who ? String(who).slice(0, 40) : me.username;
+      if (!me.isAdmin && who && who !== me.username) return { ok: false, error: '본인의 업무만 추가할 수 있습니다' };
+      data.boardMyTasks = [...list, { id: `my${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, who: owner, ...clean, createdAt: now, updatedAt: now }];
+    }
+    saveData(data);
+    return { ok: true };
+  });
+  ipcMain.handle('boardMy:delete', (_e, { id } = {}) => {
+    const data = loadData();
+    const me = (data.memberAccounts || []).find(m => m.id === currentMemberId);
+    if (!me) return { ok: false, error: '로그인한 뒤에 삭제할 수 있습니다' };
+    const list = Array.isArray(data.boardMyTasks) ? data.boardMyTasks : [];
+    const cur = list.find(p => p.id === id);
+    if (!cur) return { ok: true };
+    if (!me.isAdmin && cur.who !== me.username) return { ok: false, error: '본인의 업무만 삭제할 수 있습니다' };
+    data.boardMyTasks = list.filter(p => p.id !== id);
+    recordDeletion(data, 'boardMyTasks', id);
+    saveData(data);
+    return { ok: true };
   });
 
   ipcMain.handle('members:getAll', () => {
@@ -2746,6 +2830,7 @@ function registerHandlers() {
     const tasks = (Array.isArray(board?.tasks) ? board.tasks : [])
       .map(t => {
         const item = { id: String(t?.id || ''), name: String(t?.name || '').trim(), kind: KINDS.includes(t?.kind) ? t.kind : '' };
+        if (!item.kind && BOARD_CATS.includes(t?.cat)) item.cat = t.cat; // 비주기 업무의 세부 구분: 적격성평가·교정·청구서
         // 구분을 바꿨다가 되돌려도 값이 남도록 구분과 상관없이 보관한다(화면·달력은 구분에 맞는 값만 사용)
         if (/^([01]\d|2[0-3]):[0-5]\d$/.test(String(t?.alarmTime || ''))) item.alarmTime = t.alarmTime;
         if (DATE.test(String(t?.due || ''))) item.due = t.due; // 기타 업무의 마감기한
