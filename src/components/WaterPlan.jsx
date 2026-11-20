@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { fetchWaterPlan, saveWaterPlanItem, deleteWaterPlanItem, seedWaterPlan, syncAfterChange, fetchZones, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchCompletions, setCompletion, deleteCompletion } from '../lib/api';
-import { buildHolidayMap, setScheduleConfig, totalCount } from '../lib/schedule';
+import { fetchWaterPlan, saveWaterPlanItem, deleteWaterPlanItem, seedWaterPlan, syncAfterChange, fetchZones, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchCompletions, setCompletion, deleteCompletion, upsertZone } from '../lib/api';
+import { buildHolidayMap, setScheduleConfig, totalCount, calcEndDate } from '../lib/schedule';
+import WaterPlanManager from './WaterPlanManager';
 import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, isWaterZone } from '../lib/monitoringDay';
 import { WATER_PLAN_SEED } from '../data/waterPlanSeed';
-import { WATER_TYPES, WATER_TYPE_KEYS, WATER_FILTER_KEYS, WATER_REPEATS, DOW_KR, fmt, occursOn, itemsOn, groupItems, repeatLabel, monthWeeks } from '../lib/waterPlan';
+import { WATER_TYPES, WATER_TYPE_KEYS, WATER_FILTER_KEYS, PIPE_LEGEND, WATER_REPEATS, DOW_KR, fmt, occursOn, itemsOn, groupItems, repeatLabel, monthWeeks } from '../lib/waterPlan';
 
 // 용수모니터링 일정 — 첨부된 '용수 모니터링 계획' 엑셀(주간용수 WFI·UF / PW / PS / 용수 달력)을 달력으로 옮긴 화면.
 // 날짜 칸에 그 날 채취할 구역(종류별 색)과 개수가 보이고, 날짜를 누르면 사용점 번호까지 자세히 나온다.
@@ -21,6 +22,9 @@ export default function WaterPlan({ adminUnlocked }) {
   const [notice, setNotice] = useState(null);
   // 월별 모니터링 일정에서 옮겨 온 용수 구역의 일정(구역별 측정 주기로 계산)과 완료 표시
   const [zoneEv, setZoneEv] = useState({ byDate: {}, done: new Set() });
+  const [waterZones, setWaterZones] = useState([]); // [{ zone, end }] — 일정 관리 창의 '용수 구역' 탭용
+  const [mgrOpen, setMgrOpen] = useState(false); // 일정 관리 창
+  const [legendOpen, setLegendOpen] = useState(false); // 배관 색상표
   const seeding = useRef(false);
   const monthSet = useRef(false);
   const weekStartMon = (() => { try { return localStorage.getItem('em-week-start') === 'mon'; } catch { return false; } })();
@@ -58,6 +62,8 @@ export default function WaterPlan({ adminUnlocked }) {
       const y = new Date().getFullYear();
       const avoid = { ...buildHolidayMap(holidayDefs || [], y - 1, y + 2) };
       (blocked || []).forEach(d => { if (!avoid[d]) avoid[d] = '일정비우기'; });
+      const fmtD = (d) => (d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '');
+      setWaterZones(water.map(zone => { let end = ''; try { end = fmtD(calcEndDate(zone, avoid)); } catch { /* 종료일을 계산할 수 없으면 비워 둔다 */ } return { zone, end }; }));
       setZoneEv({ byDate: buildScheduleByDate(water, avoid, buildZoneOrderRank(water)), done: new Set((comps || []).map(c => `${c.zoneId}_${c.num}`)) });
     }).catch(() => {});
   }
@@ -94,11 +100,16 @@ export default function WaterPlan({ adminUnlocked }) {
   const goToday = () => { setYm({ y: now.getFullYear(), m: now.getMonth() + 1 }); setSel(todayStr); };
 
   // ── 일정 추가·수정·삭제(관리자) ──
-  function openDlg(it, date) {
+  function openDlg(it, date, type) {
     if (!adminUnlocked) return;
     setDlg(it
       ? { id: it.id, draft: { type: it.type, area: it.area || '', points: it.points || '', count: String(it.count ?? ''), repeat: it.repeat || 'once', date: it.date, note: it.note || '' } }
-      : { id: null, draft: { type: 'WFI', area: '', points: '', count: '', repeat: 'weekly', date: date || sel, note: '' } });
+      : { id: null, draft: { type: type || 'WFI', area: '', points: '', count: '', repeat: type === 'PW' || type === 'PS' ? 'once' : 'weekly', date: date || sel, note: '' } });
+  }
+  // 용수 구역(월별 모니터링에서 옮겨 온 구역)의 등급·시작일 수정 — 달력 일정이 이 값으로 다시 계산된다
+  async function saveZone(zone, patch) {
+    if (!adminUnlocked) return;
+    try { await upsertZone({ ...zone, ...patch }); loadZones(); syncAfterChange().catch(() => {}); flash('용수 구역을 수정했습니다.'); } catch { flash('저장하지 못했습니다', true); }
   }
   async function saveDlg() {
     const { id, draft } = dlg;
@@ -138,6 +149,7 @@ export default function WaterPlan({ adminUnlocked }) {
       <div className="flex items-center gap-3 mb-1 flex-wrap">
         <h1 className="text-2xl font-bold text-gray-800">💧 용수모니터링 일정</h1>
         {adminUnlocked && <button type="button" onClick={() => openDlg(null, sel)} className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">+ 일정 추가</button>}
+        <button type="button" onClick={() => setMgrOpen(true)} className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50" title="용수 일정을 표로 보고 추가·수정·삭제합니다">⚙ 일정 관리</button>
         {!adminUnlocked && <span className="text-xs text-gray-400">🔒 보기 전용 — 관리자로 로그인하면 일정을 수정할 수 있습니다</span>}
         {notice && <span className={`text-xs font-medium ${notice.isError ? 'text-red-500' : 'text-green-600'}`}>{notice.text}</span>}
       </div>
@@ -158,6 +170,29 @@ export default function WaterPlan({ adminUnlocked }) {
             </button>
           ))}
         </div>
+      </div>
+
+      {/* 색상 범례 — 배관 색상표의 색을 그대로 쓴다 */}
+      <div className="mb-3">
+        <div className="flex items-center gap-2 flex-wrap text-xs">
+          <span className="text-gray-500 font-semibold">색상</span>
+          {['WFI', 'PW', 'PS', 'UF'].map(t => (
+            <span key={t} className={`px-2 py-0.5 rounded border font-medium ${WATER_TYPES[t].chip}`}>{t === 'PW' ? 'PW(정제수)' : t === 'PS' ? 'PS(순수증기)' : t} · {WATER_TYPES[t].pipe}</span>
+          ))}
+          <span className={`px-2 py-0.5 rounded border font-medium ${WATER_TYPES['구역'].chip}`}>용수구역 · 청록</span>
+          <button type="button" onClick={() => setLegendOpen(o => !o)} className="text-gray-400 hover:text-blue-600 underline decoration-dotted">{legendOpen ? '배관 색상표 접기' : '배관 색상표 보기'}</button>
+        </div>
+        {legendOpen && (
+          <div className="mt-2 bg-white border border-gray-200 rounded-xl p-3 grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-1.5 text-xs">
+            {PIPE_LEGEND.map((p, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className="inline-block w-7 h-3.5 rounded-sm border border-gray-300 shrink-0" style={{ background: p.hex, clipPath: 'polygon(0 20%, 70% 20%, 70% 0, 100% 50%, 70% 100%, 70% 80%, 0 80%)' }} />
+                <span className="text-gray-700">{p.name}</span><span className="text-gray-400">({p.color})</span>
+                {p.used && <span className="text-[10px] font-semibold text-blue-600" title="용수모니터링 일정에서 이 색으로 표시합니다">일정 {p.used}</span>}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="flex gap-4 items-start">
@@ -247,6 +282,11 @@ export default function WaterPlan({ adminUnlocked }) {
           </div>
         </div>
       </div>
+
+      {mgrOpen && (
+        <WaterPlanManager items={items} waterZones={waterZones} adminUnlocked={adminUnlocked}
+          onAdd={(type) => openDlg(null, sel, type)} onEdit={(it) => openDlg(it)} onRemove={removeItem} onSaveZone={saveZone} onClose={() => setMgrOpen(false)} />
+      )}
 
       {/* 일정 추가/수정 창 */}
       {dlg && (() => {
