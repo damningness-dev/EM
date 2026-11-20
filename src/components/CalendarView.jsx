@@ -227,6 +227,9 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   const [newHolidayDow, setNewHolidayDow] = useState(1);
   const [completions, setCompletions] = useState(new Set());
   const [completionPrompt, setCompletionPrompt] = useState(null); // {zoneId,zoneName,grade,num,dateStr,isCompleted}
+  const [compParts, setCompParts] = useState({}); // 완료된 측정의 소요시간·담당자 기록 { "zoneId_num": [{part, assignee, minutes}] }
+  const [compMinutes, setCompMinutes] = useState({}); // 완료 창에서 입력 중인 소요시간(분) { micro|particle|all: '30' }
+  const [compError, setCompError] = useState('');
   // 일정 담당자 — 완료 표시와 같은 키(zoneId_num). 관리자만 배정할 수 있다.
   const [assignees, setAssignees] = useState({});
   const [memberNames, setMemberNames] = useState([]);
@@ -631,15 +634,15 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   // 마운트 시 한 번만 불러온다. (매번 다시 불러오면 저장하지 않은 일정 초안이 사라지므로)
   // 일정 담당자 배정(관리자 전용) — 완료 표시처럼 "일정 저장하기"를 거치지 않고
   // 바로 저장한 뒤 조용히 공유에 올린다.
-  async function assignSchedule(zoneId, num, name) {
-    const key = `${zoneId}_${num}`;
+  async function assignSchedule(zoneId, num, name, part) {
+    const key = `${zoneId}_${num}${part ? ':' + part : ''}`;
     setAssignees(prev => {
       const next = { ...prev };
       if (name) next[key] = name; else delete next[key];
       return next;
     });
     try {
-      await setScheduleAssignee(zoneId, num, name);
+      await setScheduleAssignee(zoneId, num, name, part);
       silentSyncUpload();
     } catch { /* 저장 실패해도 화면 표시는 되돌리지 않는다 — 다음 동기화 때 정정됨 */ }
   }
@@ -674,6 +677,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
       setGroups(grps);
       setHolidayDefs(hols);
       setCompletions(new Set(comps.map(c => `${c.zoneId}_${c.num}`)));
+      setCompParts(Object.fromEntries(comps.filter(c => Array.isArray(c.parts)).map(c => [`${c.zoneId}_${c.num}`, c.parts])));
       setAssignees(assigns || {});
       setTempSchedules(temps);
       setBlockedDates(blockedSet);
@@ -731,6 +735,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
       setGroups(grps);
       setHolidayDefs(hols);
       setCompletions(new Set(comps.map(c => `${c.zoneId}_${c.num}`)));
+      setCompParts(Object.fromEntries(comps.filter(c => Array.isArray(c.parts)).map(c => [`${c.zoneId}_${c.num}`, c.parts])));
       setAssignees(assigns || {});
       setCalibration(cal);
       setAnnualPlan(plan);
@@ -907,9 +912,24 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   // 로그인한 사람 본인 이름 — 담당자 배정과 대조해 "내 일정"을 가려낸다.
   const myName = currentMember?.username || '';
   const isMine = useCallback(
-    (zoneId, num) => !!myName && assignees[`${zoneId}_${num}`] === myName,
+    (zoneId, num) => !!myName && [`${zoneId}_${num}`, `${zoneId}_${num}:micro`, `${zoneId}_${num}:particle`].some(k => assignees[k] === myName),
     [myName, assignees],
   );
+
+  // 담당자 표시 — 균/부유입자를 따로 배정했으면 "균 A · 입자 B", 같은 사람이면 이름 하나만
+  const assigneeLabel = (zoneId, num) => {
+    const k = `${zoneId}_${num}`;
+    const base = assignees[k], mi = assignees[`${k}:micro`], pa = assignees[`${k}:particle`];
+    const parts = mi && pa && mi === pa ? [mi] : [mi && `균 ${mi}`, pa && `입자 ${pa}`].filter(Boolean);
+    return [base, ...parts].filter(Boolean).join(' · ');
+  };
+  // 완료 창을 열 때: 입력칸을 기록된 소요시간으로 채운다
+  function openCompletion(info) {
+    const rec = compParts[`${info.zoneId}_${info.num}`] || [];
+    setCompMinutes(Object.fromEntries(rec.filter(r => r.minutes).map(r => [r.part, String(r.minutes)])));
+    setCompError('');
+    setCompletionPrompt(info);
+  }
 
   // 이번 달 내 담당 건수 요약 (완료/남음)
   const myMonthStats = useMemo(() => {
@@ -1811,62 +1831,101 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
       )}
 
       {/* Completion confirm modal */}
-      {completionPrompt && (
+      {completionPrompt && (() => {
+        const { zoneId, zoneName, grade, num, isCompleted } = completionPrompt;
+        const base = `${zoneId}_${num}`;
+        const z = zones.find(x => x.id === zoneId);
+        const hasMicro = !!(z && (z.points_float || z.points_fall || z.points_surface));
+        const hasParticle = !!(z && z.points_particle);
+        // 균·부유입자가 모두 있는 구역은 따로 담당자·소요시간을 받는다. 그 외에는 한 줄(구분 없음).
+        const rows = hasMicro && hasParticle
+          ? [{ part: 'micro', label: '🦠 균', key: `${base}:micro` }, { part: 'particle', label: '🔬 부유입자', key: `${base}:particle` }]
+          : [{ part: 'all', label: '', key: base }];
+        const whoOf = (r) => assignees[r.key] || (rows.length > 1 ? assignees[base] : '') || '';
+        const pick = (r, name) => {
+          assignSchedule(zoneId, num, name, r.part === 'all' ? undefined : r.part);
+          // 예전에 구분 없이 배정해 둔 사람은 두 줄에 나눠 옮겨 둔다
+          if (rows.length > 1 && assignees[base]) {
+            const other = rows.find(x => x !== r);
+            if (!assignees[other.key]) assignSchedule(zoneId, num, assignees[base], other.part);
+            assignSchedule(zoneId, num, '');
+          }
+        };
+        const buildParts = () => rows.map(r => ({ part: r.part, assignee: whoOf(r), minutes: Number(compMinutes[r.part]) || null }));
+        const finish = () => { setCompletionPrompt(null); silentSyncUpload(); };
+        const complete = async () => {
+          if (rows.some(r => !(Number(compMinutes[r.part]) > 0))) { setCompError('소요시간(분)을 입력하세요.'); return; }
+          const parts = buildParts();
+          await setCompletion(zoneId, num, parts);
+          setCompletions(prev => new Set([...prev, base]));
+          setCompParts(prev => ({ ...prev, [base]: parts }));
+          // 측정완료는 "일정 저장하기"를 거치지 않으므로 여기서 바로 공유 동기화한다(알림 없이 조용히 업로드).
+          finish();
+        };
+        return (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/40" onClick={() => setCompletionPrompt(null)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-80 p-6" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[22rem] p-6" onClick={e => e.stopPropagation()}>
             <h3 className="text-base font-bold text-gray-900 mb-1">
-              {completionPrompt.isCompleted ? '완료 취소' : '측정 완료 처리'}
+              {isCompleted ? '측정 완료 기록' : '측정 완료 처리'}
             </h3>
             <p className="text-sm text-gray-500 mb-4">
-              <span className="font-semibold text-gray-800">{completionPrompt.zoneName}[{completionPrompt.grade}]</span><br/>
-              {completionPrompt.num}번째 측정을{' '}
-              {completionPrompt.isCompleted ? '완료 취소 하시겠습니까?' : '완료 처리 하시겠습니까?'}
+              <span className="font-semibold text-gray-800">{zoneName}[{grade}]</span><br/>
+              {num}번째 측정{isCompleted ? '은 완료되었습니다. 소요시간을 고치거나 완료를 취소할 수 있습니다.' : '을 완료 처리 하시겠습니까?'}
             </p>
 
-            {/* 담당자 배정 — 관리자만 바꿀 수 있고, 그 외에는 배정된 사람만 보인다. */}
-            <div className="mb-4">
-              <label className="block text-xs font-medium text-gray-500 mb-1">담당자</label>
-              {adminUnlocked ? (
-                <select
-                  value={assignees[`${completionPrompt.zoneId}_${completionPrompt.num}`] || ''}
-                  onChange={e => assignSchedule(completionPrompt.zoneId, completionPrompt.num, e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
-                  <option value="">(배정 안 함)</option>
-                  {memberNames.map(n => <option key={n} value={n}>{n}</option>)}
-                </select>
-              ) : (
-                <p className="text-sm text-gray-700">
-                  {assignees[`${completionPrompt.zoneId}_${completionPrompt.num}`] || '배정 안 됨'}
-                  <span className="ml-1 text-[11px] text-gray-400">(관리자만 배정할 수 있습니다)</span>
-                </p>
-              )}
+            {/* 담당자·소요시간 — 담당자 배정은 관리자만 바꿀 수 있고, 소요시간은 통계용으로 분 단위로 적는다. */}
+            <div className="mb-4 space-y-3">
+              {rows.map(r => (
+                <div key={r.part}>
+                  {r.label && <p className="text-xs font-bold text-gray-700 mb-1">{r.label}</p>}
+                  <div className="flex items-end gap-2">
+                    <div className="flex-1 min-w-0">
+                      <label className="block text-xs font-medium text-gray-500 mb-1">담당자</label>
+                      {adminUnlocked ? (
+                        <select value={whoOf(r)} onChange={e => pick(r, e.target.value)}
+                          className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
+                          <option value="">(배정 안 함)</option>
+                          {memberNames.map(n => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                      ) : (
+                        <p className="text-sm text-gray-700 py-1.5">{whoOf(r) || '배정 안 됨'}</p>
+                      )}
+                    </div>
+                    <div className="w-28 shrink-0">
+                      <label className="block text-xs font-medium text-gray-500 mb-1">소요시간(분)</label>
+                      <input type="number" min="1" max="1440" step="1" inputMode="numeric" value={compMinutes[r.part] ?? ''} placeholder="예: 30"
+                        onChange={e => { setCompMinutes(m => ({ ...m, [r.part]: e.target.value })); setCompError(''); }}
+                        onKeyDown={e => { if (e.key === 'Enter' && !isCompleted) complete(); }}
+                        className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {!adminUnlocked && <p className="text-[11px] text-gray-400">담당자는 관리자만 배정할 수 있습니다.</p>}
+              {compError && <p className="text-xs text-red-500 font-medium">{compError}</p>}
             </div>
 
             <div className="flex gap-2 justify-end">
               <button onClick={() => setCompletionPrompt(null)}
-                className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>
-              <button
-                onClick={async () => {
-                  const { zoneId, num, isCompleted } = completionPrompt;
-                  const key = `${zoneId}_${num}`;
-                  if (isCompleted) {
+                className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">{isCompleted ? '닫기' : '취소'}</button>
+              {isCompleted && (
+                <button
+                  onClick={async () => {
                     await deleteCompletion(zoneId, num);
-                    setCompletions(prev => { const n = new Set(prev); n.delete(key); return n; });
-                  } else {
-                    await setCompletion(zoneId, num);
-                    setCompletions(prev => new Set([...prev, key]));
-                  }
-                  setCompletionPrompt(null);
-                  // 측정완료는 "일정 저장하기"를 거치지 않으므로 여기서 바로 공유 동기화한다.
-                  // 알림 팝업 없이 조용히 백그라운드로 업로드만 한다.
-                  silentSyncUpload();
-                }}
-                className={`px-4 py-2 text-sm text-white rounded-lg ${completionPrompt.isCompleted ? 'bg-red-500 hover:bg-red-600' : 'bg-green-600 hover:bg-green-700'}`}
-              >{completionPrompt.isCompleted ? '완료 취소' : '완료 처리'}</button>
+                    setCompletions(prev => { const n = new Set(prev); n.delete(base); return n; });
+                    setCompParts(prev => { const n = { ...prev }; delete n[base]; return n; });
+                    finish();
+                  }}
+                  className="px-3 py-2 text-sm text-white rounded-lg bg-red-500 hover:bg-red-600">완료 취소</button>
+              )}
+              <button onClick={complete}
+                className={`px-4 py-2 text-sm text-white rounded-lg ${isCompleted ? 'bg-blue-600 hover:bg-blue-700' : 'bg-green-600 hover:bg-green-700'}`}
+              >{isCompleted ? '시간 저장' : '완료 처리'}</button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* 연장기록 (이 PC에만 저장) */}
       {overtimeEdit && (
@@ -2842,7 +2901,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
               adminUnlocked={adminUnlocked} memberNames={memberNames} onAssign={assignSchedule}
               year={year} month={month}
               getChipStyle={getChipStyle} gradeBtnColor={gradeBtnColor}
-              onToggleDone={(zone, m) => { if (requireAdmin()) setCompletionPrompt({ zoneId: zone.id, zoneName: zone.name, grade: zone.grade, num: m.num, dateStr: format(m.date, 'yyyy-MM-dd'), isCompleted: completions.has(`${zone.id}_${m.num}`) }); }}
+              onToggleDone={(zone, m) => { if (requireAdmin()) openCompletion({ zoneId: zone.id, zoneName: zone.name, grade: zone.grade, num: m.num, dateStr: format(m.date, 'yyyy-MM-dd'), isCompleted: completions.has(`${zone.id}_${m.num}`) }); }}
             />
           ) : (
           <>
@@ -3425,7 +3484,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                           style={{
                             borderLeft: measurement.isFirst ? '3px solid #22c55e' : measurement.isLast ? '3px solid #ef4444' : undefined,
                           }}
-                          onDoubleClick={() => { if (requireAdmin()) setCompletionPrompt({ zoneId: zone.id, zoneName: zone.name, grade: zone.grade, num: measurement.num, dateStr: selectedDay, isCompleted: isDone }); }}
+                          onDoubleClick={() => { if (requireAdmin()) openCompletion({ zoneId: zone.id, zoneName: zone.name, grade: zone.grade, num: measurement.num, dateStr: selectedDay, isCompleted: isDone }); }}
                         >
                           <div className="flex items-center justify-between gap-1 mb-1">
                             <div className="flex items-center gap-1">
@@ -3446,11 +3505,11 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                           <p className={`text-sm font-medium break-words ${isDone ? 'text-gray-400 line-through' : 'text-gray-800'}`}>
                             {zone.name}
                           </p>
-                          {assignees[compKey] && (
-                            <p className={`text-xs mt-0.5 ${assignees[compKey] === myName
+                          {assigneeLabel(zone.id, measurement.num) && (
+                            <p className={`text-xs mt-0.5 ${isMine(zone.id, measurement.num)
                               ? 'text-white bg-indigo-600 inline-block px-1.5 py-0.5 rounded font-bold'
                               : 'text-indigo-600 font-medium'}`}>
-                              👤 {assignees[compKey]}{assignees[compKey] === myName ? ' (나)' : ''}
+                              👤 {assigneeLabel(zone.id, measurement.num)}{isMine(zone.id, measurement.num) ? ' (나)' : ''}
                             </p>
                           )}
                           <p className="text-xs text-gray-400 mt-0.5">
@@ -3670,7 +3729,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
 
       {hoverTip && (() => {
         const { zone, measurement, isDone, mine, noPts } = hoverTip;
-        const who = assignees[`${zone.id}_${measurement.num}`];
+        const who = assigneeLabel(zone.id, measurement.num);
         const combined = isCombinedCat(zone.category);
         const major = getMajorCat(zone.category);
         // 포인트 배지는 달력 칸과 같이 2행: 1행 부유균·낙하균·표면균·부유입자, 2행 질소·압축(통합 대분류)
@@ -3900,11 +3959,16 @@ function ScheduleTable({ rows, completions, assignees = {}, adminUnlocked, membe
     if (key === 'zone') return <td key={key} className={`${cellBase} truncate`}><span className={`inline-flex items-center max-w-full px-1 py-0.5 rounded ${done ? 'cal-done line-through opacity-60' : ''}`} style={getChipStyle(zone.category, zone.grade)}><GradeBadge color={gradeBtnColor?.(zone.grade)} grade={zone.grade} /><span className="truncate">{zone.name}</span></span></td>;
     if (key === 'num') { const total = totalCount(zone) || measurement.num; const numCls = measurement.isFirst ? 'text-green-600' : measurement.isLast ? 'text-red-600' : 'text-gray-700'; return <td key={key} className={`${cellBase} text-center font-bold ${numCls}`}>{measurement.num}/{total}회</td>; }
     if (key === 'assignee') {
-      const who = assignees[`${zone.id}_${measurement.num}`] || '';
+      const ak = `${zone.id}_${measurement.num}`;
+      const who = assignees[ak] || '';
+      // 균/부유입자를 따로 배정한 건은 "균 A · 입자 B"로 보여준다(바꾸려면 완료 창에서)
+      const mi = assignees[`${ak}:micro`], pa = assignees[`${ak}:particle`];
+      const split = [mi && `균 ${mi}`, pa && `입자 ${pa}`].filter(Boolean);
+      const label = mi && pa && mi === pa ? mi : [who, ...split].filter(Boolean).join(' · ');
       // 관리자는 표에서 바로 배정할 수 있게 한다 — 한 달치를 하나씩 팝업으로
       // 여는 것은 번거롭기 때문. 그 외에는 배정된 이름만 보인다.
-      if (!adminUnlocked) {
-        return <td key={key} className={`${cellBase} text-center ${who ? 'text-gray-700' : 'text-gray-300'}`}>{who || '—'}</td>;
+      if (!adminUnlocked || split.length > 0) {
+        return <td key={key} className={`${cellBase} text-center text-[11px] leading-tight ${label ? 'text-gray-700' : 'text-gray-300'}`} title={split.length ? '균/부유입자별 담당자는 완료 창(더블클릭)에서 바꿉니다' : undefined}>{label || '—'}</td>;
       }
       return (
         <td key={key} className={`${cellBase} text-center p-0`}>

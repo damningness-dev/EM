@@ -3373,13 +3373,25 @@ function registerHandlers() {
 
   // ── 측정 완료 ──
   ipcMain.handle('completions:getAll', () => loadData().completions);
-  ipcMain.handle('completions:set', (_e, zoneId, num) => {
+  // 측정 완료 + 소요시간·담당자 기록. parts = [{ part: 'micro'(균) | 'particle'(부유입자) | 'all'(구분 없음), assignee, minutes }]
+  // 나중에 통계를 내기 위한 값이라, 이미 완료된 건에 다시 호출하면 완료 시각은 그대로 두고 parts만 바꾼다.
+  const cleanCompletionParts = (parts) => (Array.isArray(parts) ? parts : []).slice(0, 3).map(p => {
+    const m = Number(p?.minutes);
+    return {
+      part: ['micro', 'particle', 'all'].includes(p?.part) ? p.part : 'all',
+      assignee: String(p?.assignee || '').trim().slice(0, 40),
+      minutes: Number.isFinite(m) && m > 0 ? Math.min(1440, Math.round(m)) : null,
+    };
+  });
+  ipcMain.handle('completions:set', (_e, zoneId, num, parts) => {
     const data = loadData();
     const key = `${zoneId}_${num}`;
-    if (!data.completions.some(c => `${c.zoneId}_${c.num}` === key)) {
-      data.completions.push({ zoneId, num, completedAt: new Date().toISOString() });
-    }
+    const clean = cleanCompletionParts(parts);
+    const cur = data.completions.find(c => `${c.zoneId}_${c.num}` === key);
+    if (!cur) data.completions.push({ zoneId, num, completedAt: new Date().toISOString(), ...(clean.length ? { parts: clean } : {}) });
+    else if (clean.length) cur.parts = clean;
     saveData(data);
+    return { ok: true };
   });
   ipcMain.handle('completions:delete', (_e, zoneId, num) => {
     const key = `${zoneId}_${num}`;
@@ -3392,10 +3404,11 @@ function registerHandlers() {
   // 측정 완료와 같은 키(zoneId_num = "그 구역의 몇 번째 측정")로 담당자를 저장한다.
   // 값이 비면 배정 해제로 보고 항목 자체를 지운다(빈 문자열이 쌓이지 않게).
   ipcMain.handle('scheduleAssignees:getAll', () => loadData().scheduleAssignees || {});
-  ipcMain.handle('scheduleAssignees:set', (_e, zoneId, num, assignee) => {
+  // part가 'micro'(균) / 'particle'(부유입자)이면 `${zoneId}_${num}:micro` 처럼 따로 저장한다(구분 없는 배정은 part 없이).
+  ipcMain.handle('scheduleAssignees:set', (_e, zoneId, num, assignee, part) => {
     const data = loadData();
     if (!data.scheduleAssignees) data.scheduleAssignees = {};
-    const key = `${zoneId}_${num}`;
+    const key = `${zoneId}_${num}${part === 'micro' || part === 'particle' ? ':' + part : ''}`;
     const name = String(assignee || '').trim();
     if (name) data.scheduleAssignees[key] = name;
     else delete data.scheduleAssignees[key];

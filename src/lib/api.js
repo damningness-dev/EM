@@ -206,16 +206,18 @@ export async function deleteHoliday(date) {
 export async function fetchScheduleAssignees() {
   return api.invoke('scheduleAssignees:getAll');
 }
-export async function setScheduleAssignee(zoneId, num, assignee) {
-  return api.invoke('scheduleAssignees:set', zoneId, num, assignee);
+// part: 'micro'(균) | 'particle'(부유입자) | 생략(구분 없음)
+export async function setScheduleAssignee(zoneId, num, assignee, part) {
+  return api.invoke('scheduleAssignees:set', zoneId, num, assignee, part);
 }
 
 export async function fetchCompletions() {
   return api.invoke('completions:getAll');
 }
 
-export async function setCompletion(zoneId, num) {
-  return api.invoke('completions:set', zoneId, num);
+// parts: [{ part: 'micro'|'particle'|'all', assignee, minutes }] — 소요시간(분)·담당자 기록(통계용)
+export async function setCompletion(zoneId, num, parts) {
+  return api.invoke('completions:set', zoneId, num, parts);
 }
 
 export async function deleteCompletion(zoneId, num) {
