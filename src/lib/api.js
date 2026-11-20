@@ -357,6 +357,19 @@ export async function saveBoardNote(entry) {
 export async function deleteBoardNote(id) {
   return api.invoke('boardNotes:delete', { id });
 }
+// 용수모니터링 일정(WFI·UF·PW·PS) — 관리자가 추가·수정·삭제
+export async function fetchWaterPlan() {
+  return api.invoke('waterPlan:list');
+}
+export async function saveWaterPlanItem(item) {
+  return api.invoke('waterPlan:save', item);
+}
+export async function deleteWaterPlanItem(id) {
+  return api.invoke('waterPlan:delete', { id });
+}
+export async function seedWaterPlan(items) {
+  return api.invoke('waterPlan:seed', items);
+}
 export async function syncWeeklyDutyTodosNow() {
   return api.invoke('weeklyDuty:syncTodosNow');
 }

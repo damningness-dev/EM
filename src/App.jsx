@@ -4,6 +4,7 @@ import Sop from './components/Sop';
 import Calibration from './components/Calibration';
 import UsagePoints from './components/UsagePoints';
 import TestBoard from './components/TestBoard';
+import WaterPlan from './components/WaterPlan';
 import AnnualPlan from './components/AnnualPlan';
 import ZoneStatus from './components/ZoneStatus';
 import ZoneGantt from './components/ZoneGantt';
@@ -29,6 +30,8 @@ const MENU = [
   // 예전 '주간근무' 메뉴는 없앴다(직원 관리와 업무 배치는 이 화면에서 한다).
   { id: 'test', label: '개인별 업무표', icon: '👥', adminAlways: true },
   { id: 'calendar', label: '월별 모니터링 일정', icon: '📆' },
+  // 용수모니터링 일정(WFI·UF·PW·PS 채취 계획) — 관리자는 항상 보이고, 다른 계정은 권한 설정에서 허용해야 보인다.
+  { id: 'water', label: '용수모니터링 일정', icon: '💧', adminAlways: true },
   { id: 'status', label: '구역별 현황', icon: '📈' },
   { id: 'gantt',  label: '간트 차트',  icon: '📊' },
   { id: 'annual', label: '연간 계획 (AHU)', icon: '🔧' },
@@ -419,6 +422,7 @@ export default function App() {
               jumpTarget={calibJumpTarget} onJumpTargetConsumed={() => setCalibJumpTarget(null)} />
           )}
           {page === 'usagepoints' && <UsagePoints adminUnlocked={adminUnlocked} currentMember={currentMember} />}
+          {page === 'water' && <WaterPlan adminUnlocked={adminUnlocked} />}
           {page === 'test' && <TestBoard adminUnlocked={adminUnlocked} currentMember={currentMember} />}
           {page === 'sop' && <Sop adminUnlocked={adminUnlocked} currentMember={currentMember} />}
             </ErrorBoundary>

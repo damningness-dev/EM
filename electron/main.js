@@ -971,7 +971,7 @@ function explainGistError(err) {
 // 건드리지 않는다.
 // 팀 설정(teams)과 팀 공유 기록(teamRecords)도 여러 PC가 함께 쓰는 항목이다 — 각 팀원 PC가 자기 기록을
 // 올리고 서로의 것을 내려받는다.
-const COLLAB_KEYS = ['usagePoints', 'sops', 'sopTags', 'memberAccounts', 'teams', 'teamRecords', 'boardDone', 'boardNotes'];
+const COLLAB_KEYS = ['usagePoints', 'sops', 'sopTags', 'memberAccounts', 'teams', 'teamRecords', 'boardDone', 'boardNotes', 'waterPlan'];
 
 // 일반 PC가 올릴 내용을 만든다 — 원격(기준 PC가 올린 내용)을 그대로 두고,
 // 함께 쓰는 항목만 이 PC 내용을 합쳐 넣는다. 이렇게 해야 일반 PC가 사용점을
@@ -2429,6 +2429,68 @@ function registerHandlers() {
     recordDeletion(data, 'boardNotes', id);
     saveData(data);
     return { ok: true };
+  });
+
+  // 용수모니터링 일정(WFI·UF·PW·PS 사용점 채취 계획). 항목 하나하나를 관리자가 추가·수정·삭제하고 다른 PC와 항목 단위로 합쳐진다.
+  // 처음에는 첨부 엑셀에서 만든 기본 데이터를 관리자가 한 번 불러온다(seed). 항목 id가 고정이라 여러 PC가 동시에 불러와도 중복되지 않는다.
+  const WATER_TYPES = ['WFI', 'UF', 'PW', 'PS', '기타'];
+  const cleanWaterItem = (x, keepId) => {
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(x?.date || '')) ? x.date : '';
+    if (!date) return null;
+    const out = {
+      id: keepId || String(x?.id || '').slice(0, 60),
+      type: WATER_TYPES.includes(x?.type) ? x.type : '기타',
+      area: String(x?.area || '').trim().slice(0, 60),
+      points: String(x?.points || '').trim().slice(0, 1500),
+      count: Math.min(999, Math.max(0, parseInt(x?.count) || 0)),
+      repeat: ['weekly', 'monthly', 'once'].includes(x?.repeat) ? x.repeat : 'once',
+      date,
+      note: String(x?.note || '').trim().slice(0, 200),
+    };
+    return out.points || out.area ? out : null;
+  };
+  ipcMain.handle('waterPlan:list', () => {
+    const data = loadData();
+    return { items: Array.isArray(data.waterPlan) ? data.waterPlan : [], seeded: !!data.waterPlanSeeded };
+  });
+  ipcMain.handle('waterPlan:save', (_e, item = {}) => {
+    const data = loadData();
+    const me = (data.memberAccounts || []).find(m => m.id === currentMemberId);
+    if (!me?.isAdmin) return { ok: false, error: '용수모니터링 일정은 관리자만 수정할 수 있습니다' };
+    const list = Array.isArray(data.waterPlan) ? data.waterPlan : [];
+    const id = item.id && list.some(x => x.id === item.id) ? item.id : `wp${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const clean = cleanWaterItem(item, id);
+    if (!clean) return { ok: false, error: '날짜와 구역(또는 사용점)을 입력하세요' };
+    data.waterPlan = [...list.filter(x => x.id !== id), { ...clean, updatedAt: new Date().toISOString() }];
+    saveData(data);
+    return { ok: true, id };
+  });
+  ipcMain.handle('waterPlan:delete', (_e, { id } = {}) => {
+    const data = loadData();
+    const me = (data.memberAccounts || []).find(m => m.id === currentMemberId);
+    if (!me?.isAdmin) return { ok: false, error: '용수모니터링 일정은 관리자만 수정할 수 있습니다' };
+    data.waterPlan = (Array.isArray(data.waterPlan) ? data.waterPlan : []).filter(x => x.id !== id);
+    recordDeletion(data, 'waterPlan', id);
+    saveData(data);
+    return { ok: true };
+  });
+  ipcMain.handle('waterPlan:seed', (_e, items = []) => {
+    const data = loadData();
+    const me = (data.memberAccounts || []).find(m => m.id === currentMemberId);
+    if (!me?.isAdmin) return { ok: false, error: '관리자만 불러올 수 있습니다' };
+    if (data.waterPlanSeeded) return { ok: true, skipped: true };
+    const list = Array.isArray(data.waterPlan) ? data.waterPlan : [];
+    const have = new Set(list.map(x => x.id));
+    const now = new Date().toISOString();
+    for (const it of (Array.isArray(items) ? items : []).slice(0, 500)) {
+      if (!/^seed-[a-z]+-\d+$/.test(String(it?.id || '')) || have.has(it.id)) continue;
+      const clean = cleanWaterItem(it, it.id);
+      if (clean) list.push({ ...clean, updatedAt: now });
+    }
+    data.waterPlan = list;
+    data.waterPlanSeeded = true;
+    saveData(data);
+    return { ok: true, count: list.length };
   });
 
   ipcMain.handle('members:getAll', () => {
