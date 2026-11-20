@@ -423,7 +423,7 @@ export default function App() {
           )}
           {page === 'usagepoints' && <UsagePoints adminUnlocked={adminUnlocked} currentMember={currentMember} />}
           {page === 'water' && <WaterPlan adminUnlocked={adminUnlocked} />}
-          {page === 'test' && <TestBoard adminUnlocked={adminUnlocked} currentMember={currentMember} />}
+          {page === 'test' && <TestBoard adminUnlocked={adminUnlocked} currentMember={currentMember} onOpenPage={requestPageChange} />}
           {page === 'sop' && <Sop adminUnlocked={adminUnlocked} currentMember={currentMember} />}
             </ErrorBoundary>
           )}

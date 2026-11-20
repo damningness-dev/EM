@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { fetchWeeklyDuty, fetchWeeklyBoard, saveWeeklyBoard, syncAfterChange, fetchZones, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchTempSchedules, fetchTeamRecords, fetchBoardDone, setBoardDone, saveWeeklyDuty, fetchBoardNotes, saveBoardNote, deleteBoardNote, fetchBoardStages, setBoardStage, fetchMyTasks, saveMyTask, deleteMyTask } from '../lib/api';
+import { fetchWeeklyDuty, fetchWeeklyBoard, saveWeeklyBoard, syncAfterChange, fetchZones, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchTempSchedules, fetchTeamRecords, fetchBoardDone, setBoardDone, saveWeeklyDuty, fetchBoardNotes, saveBoardNote, deleteBoardNote, fetchBoardStages, setBoardStage, fetchMyTasks, saveMyTask, deleteMyTask, fetchUsagePoints } from '../lib/api';
 import { buildHolidayMap, setScheduleConfig, totalCount } from '../lib/schedule';
 import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, monitoringButtons } from '../lib/monitoringDay';
 import { boardTasksOn, scheduleLabel, ROTATION_UNITS, rotationState, rotationPool, rotationLabel, fmtDate } from '../lib/boardRotation';
@@ -88,7 +88,7 @@ function dueLabel(due, status) {
   return { text, cls: 'text-gray-500 bg-white/70 border-gray-300' };
 }
 
-export default function TestBoard({ adminUnlocked, currentMember }) {
+export default function TestBoard({ adminUnlocked, currentMember, onOpenPage }) {
   const [staff, setStaff] = useState(null);
   const [duty, setDuty] = useState(null);
   const [board, setBoard] = useState({ tasks: [], assignments: {}, progress: {}, monAssign: {}, emAssign: {}, order: {} });
@@ -105,6 +105,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
   const [doneOpen, setDoneOpen] = useState(true); // 완료 목록 펼침
   const [stages, setStages] = useState([]); // 진행 단계 [{ id:'업무|근무자', taskId, who, stage }]
   const [myTasks, setMyTasks] = useState([]); // 개인이 직접 추가한 업무 [{ id, who, name, cat, due, note }]
+  const [ups, setUps] = useState([]); // 업무별 진행상황 항목 — 담당자로 지정된 건을 근무자 칸의 '담당 업무'로 보여준다
   const [myDlg, setMyDlg] = useState(null); // { id|null, who, draft } — 개인 업무 추가/수정 창
   const [staffDlg, setStaffDlg] = useState(null); // { input } — 직원 관리 창
   const [kindMenu, setKindMenu] = useState(null); // { id, x, y } — 업무 버튼 구분 선택 메뉴
@@ -149,6 +150,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
     fetchBoardNotes().then(l => setNotes(Array.isArray(l) ? l : [])).catch(() => {});
     fetchBoardStages().then(l => setStages(Array.isArray(l) ? l : [])).catch(() => {});
     fetchMyTasks().then(l => setMyTasks(Array.isArray(l) ? l : [])).catch(() => {});
+    fetchUsagePoints().then(l => setUps(Array.isArray(l) ? l : [])).catch(() => {});
     fetchTeamRecords().then(r => setLeaves(Array.isArray(r?.records) ? r.records : [])).catch(() => {});
     Promise.all([fetchWeeklyDuty().catch(() => null), fetchWeeklyBoard().catch(() => null)]).then(([d, b]) => {
       setDuty(d || null);
@@ -882,8 +884,8 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
         <p className="text-sm text-gray-400 py-8 text-center">직원이 없습니다. 위의 '직원 관리'에서 근무자를 먼저 추가하세요.</p>
       ) : (
         <div className="overflow-x-auto pb-2">
-          {/* 근무자 칸은 위→아래로 [이름 / 환경모니터링 / 주기적 / 비주기적] 4개 행을 같이 쓴다 → 모든 근무자의 같은 구역 제목이 한 줄에 맞춰진다 */}
-          <div className="grid gap-x-4" style={{ gridTemplateColumns: `repeat(${staff.length}, minmax(240px, 1fr))`, gridTemplateRows: 'auto auto auto minmax(60px, 1fr)' }}>
+          {/* 근무자 칸은 위→아래로 [이름 / 환경모니터링 / 주기적 / 비주기적 / 담당 업무] 5개 행을 같이 쓴다 → 모든 근무자의 같은 구역 제목이 한 줄에 맞춰진다 */}
+          <div className="grid gap-x-4" style={{ gridTemplateColumns: `repeat(${staff.length}, minmax(240px, 1fr))`, gridTemplateRows: 'auto auto auto auto minmax(60px, 1fr)' }}>
             {staff.map(who => {
               const c = colorOf(who);
               const ids = orderIds(who, shownIds(who));
@@ -908,7 +910,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                   onDragOver={e => { if (adminUnlocked) { e.preventDefault(); setOverCol(who); } }}
                   onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setOverCol(null); }}
                   onDrop={e => dropOnStaff(e, who)}
-                  style={{ gridRow: 'span 4', gridTemplateRows: 'subgrid' }}
+                  style={{ gridRow: 'span 5', gridTemplateRows: 'subgrid' }}
                   className={`relative rounded-xl border-2 grid mb-4 transition-colors ${over ? c.over : c.col}`}>
                   {/* 연차인 근무자: 칸 전체에 큰 X */}
                   {away && (
@@ -942,7 +944,7 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                       { key: 'p', title: '🔁 주기적 업무', box: 'border-black/10 bg-white/50', head: 'text-sky-700', list: visIds.filter(id => taskById.get(id)?.kind), all: ids.filter(id => taskById.get(id)?.kind) },
                       { key: 'o', title: '📌 비주기적 업무', box: 'border-dashed border-black/20 bg-white/30', head: 'text-gray-600', list: visIds.filter(id => !taskById.get(id)?.kind), all: ids.filter(id => !taskById.get(id)?.kind) },
                     ].map(sec => (
-                    <div key={sec.key} className="px-2.5 pt-2 pb-0.5 last:pb-2.5">
+                    <div key={sec.key} className="px-2.5 pt-2 pb-0.5">
                     <div className={`relative overflow-hidden rounded-lg border p-1.5 space-y-2 h-full ${sec.box}`}>
                       <p className={`text-[11px] font-bold px-1 flex items-center ${sec.head}`}>{sec.title}
                         {sec.key === 'p' && adminUnlocked && (board.order?.[who] || []).length > 0 && (
@@ -1012,6 +1014,30 @@ export default function TestBoard({ adminUnlocked, currentMember }) {
                     </div>
                     </div>
                     ))}
+                    {/* 담당 업무 — 업무별 진행상황에서 이 사람이 담당자로 지정된 건(완료 전까지), 완료기한 D-day와 진행 단계 */}
+                    {(() => {
+                      const stageOfUp = (u) => ({ '진행중': '조치 중' }[u.progress] || u.progress || '신청');
+                      const assignees = (u) => (Array.isArray(u.assignees) ? u.assignees : u.assignee ? [u.assignee] : []);
+                      const UP_CLS = { '신청': 'bg-gray-100 text-gray-600', '접수': 'bg-sky-100 text-sky-700', '조사 중': 'bg-indigo-100 text-indigo-700', '조치 중': 'bg-amber-100 text-amber-700', '보류': 'bg-red-100 text-red-700' };
+                      const mine = ups.filter(u => assignees(u).includes(who) && stageOfUp(u) !== '완료')
+                        .sort((p, q) => String(p.due_date || '9999').localeCompare(String(q.due_date || '9999')) || String(p.title || '').localeCompare(String(q.title || '')));
+                      return (
+                        <div className="px-2.5 pt-2 pb-2.5">
+                          <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-1.5 space-y-1.5 h-full">
+                            <p className="text-[11px] font-bold px-1 text-indigo-700 flex items-center">📍 담당 업무 <span className="ml-1 font-normal text-gray-400">업무별 진행상황</span>{mine.length > 0 && <span className="ml-auto font-semibold">{mine.length}건</span>}</p>
+                            {mine.map(u => { const dl = u.due_date ? dueLabel(u.due_date, 'todo') : null; return (
+                              <div key={u.id} onClick={() => onOpenPage?.('usagepoints')} title="누르면 업무별 진행상황으로 이동합니다"
+                                className="rounded-lg border border-indigo-200 bg-white px-2.5 py-1.5 flex items-center gap-1.5 cursor-pointer hover:bg-indigo-50 select-none">
+                                <span className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded-full ${UP_CLS[stageOfUp(u)] || UP_CLS['신청']}`}>{stageOfUp(u)}</span>
+                                <span className="min-w-0 flex-1 text-sm font-medium text-gray-800 break-words">{u.title || '(제목 없음)'}</span>
+                                {dl && <span className={`shrink-0 text-[11px] leading-none font-bold px-1.5 py-1 rounded border ${dl.cls}`} title={`완료기한 ${u.due_date}`}>{dl.text}</span>}
+                              </div>
+                            ); })}
+                            {mine.length === 0 && <p className="text-[11px] text-gray-300 px-1 py-1">담당 업무 없음</p>}
+                          </div>
+                        </div>
+                      );
+                    })()}
                 </div>
               );
             })}
