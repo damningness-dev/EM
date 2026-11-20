@@ -177,7 +177,7 @@ function fileToBase64(file) {
   });
 }
 
-export default function UsagePoints({ adminUnlocked, currentMember }) {
+export default function UsagePoints({ adminUnlocked, currentMember, addFor }) {
   const [data, setData] = useState([]);
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
   const [memberNames, setMemberNames] = useState([]); // 담당자 체크박스 후보 = 등록된 계정 목록
@@ -187,12 +187,12 @@ export default function UsagePoints({ adminUnlocked, currentMember }) {
   // 기본값은 미완료 — 처리해야 할 건이 먼저 보이도록.
   // 'all'(전체) | 'open'(완료 제외 전체) | PROGRESS_OPTIONS 중 하나(그 단계만)
   const [doneFilter, setDoneFilter] = useState('open');
-  const [showForm, setShowForm] = useState(false);
+  const [showForm, setShowForm] = useState(!!addFor); // addFor: 다른 화면에서 '업무추가'로 넘어온 경우 바로 추가 창을 연다
   const [editingId, setEditingId] = useState(null);
   // null이면 평소처럼 수정 가능한 팝업. 항목이 들어있으면 "상세보기"로 열렸는데
   // 수정 권한이 없는 경우라, 입력칸을 잠그고 읽기 전용으로 보여준다.
   const [viewItem, setViewItem] = useState(null);
-  const [form, setForm] = useState(() => emptyForm(currentMember));
+  const [form, setForm] = useState(() => ({ ...emptyForm(currentMember), ...(addFor ? { assignees: [addFor] } : {}) }));
   const [saving, setSaving] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);

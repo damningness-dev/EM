@@ -90,7 +90,7 @@ function dueLabel(due, status) {
   return { text, cls: 'text-gray-500 bg-white/70 border-gray-300' };
 }
 
-export default function TestBoard({ adminUnlocked, currentMember, onOpenPage }) {
+export default function TestBoard({ adminUnlocked, currentMember, onOpenPage, onAddUsageTask }) {
   const [staff, setStaff] = useState(null);
   const [duty, setDuty] = useState(null);
   const [board, setBoard] = useState({ tasks: [], assignments: {}, progress: {}, monAssign: {}, emAssign: {}, order: {} });
@@ -1036,6 +1036,10 @@ export default function TestBoard({ adminUnlocked, currentMember, onOpenPage }) 
                               </div>
                             ); })}
                             {mine.length === 0 && <p className="text-[11px] text-gray-300 px-1 py-1">담당 업무 없음</p>}
+                            {(adminUnlocked || currentMember?.username === who) && (
+                              <button type="button" onClick={() => onAddUsageTask?.(who)} title="업무별 진행상황의 추가 창이 열리고, 담당자가 이 사람으로 지정됩니다"
+                                className="w-full py-1.5 text-xs font-medium text-gray-500 border border-dashed border-indigo-300 rounded-lg hover:bg-white hover:text-indigo-600 hover:border-indigo-400">+ 업무추가</button>
+                            )}
                           </div>
                         </div>
                       );

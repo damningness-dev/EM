@@ -59,9 +59,11 @@ export default function App() {
   // 그 초안이 그대로 사라지므로, 이동 전에 저장할지 물어본다.
   const calendarRef = useRef(null);
   const [pendingNav, setPendingNav] = useState(null); // 확인 대기 중인 이동 대상 메뉴 id
+  const [usageAddFor, setUsageAddFor] = useState(null); // 개인별 업무표의 '담당 업무 + 업무추가' → 업무별 진행상황 추가 창을 이 담당자로 열기
   const [leaveSaving, setLeaveSaving] = useState(false);
 
   function requestPageChange(id) {
+    setUsageAddFor(null);
     if (page === 'calendar' && id !== 'calendar' && calendarRef.current?.hasUnsavedChanges?.()) {
       setPendingNav(id);
       return;
@@ -421,9 +423,9 @@ export default function App() {
             <Calibration adminUnlocked={adminUnlocked}
               jumpTarget={calibJumpTarget} onJumpTargetConsumed={() => setCalibJumpTarget(null)} />
           )}
-          {page === 'usagepoints' && <UsagePoints adminUnlocked={adminUnlocked} currentMember={currentMember} />}
+          {page === 'usagepoints' && <UsagePoints adminUnlocked={adminUnlocked} currentMember={currentMember} addFor={usageAddFor} />}
           {page === 'water' && <WaterPlan adminUnlocked={adminUnlocked} />}
-          {page === 'test' && <TestBoard adminUnlocked={adminUnlocked} currentMember={currentMember} onOpenPage={requestPageChange} />}
+          {page === 'test' && <TestBoard adminUnlocked={adminUnlocked} currentMember={currentMember} onOpenPage={requestPageChange} onAddUsageTask={(who) => { requestPageChange('usagepoints'); setUsageAddFor(who); }} />}
           {page === 'sop' && <Sop adminUnlocked={adminUnlocked} currentMember={currentMember} />}
             </ErrorBoundary>
           )}
