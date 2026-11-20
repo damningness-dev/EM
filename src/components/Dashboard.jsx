@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react';
 import { calcDDay, getDDayLabel, getDDayColor } from '../utils/dateUtils';
 import { effectiveCalib } from '../utils/calibUtils';
-import { fetchCalibration, fetchZones, fetchAllMonitoringData, fetchAnnualPlan } from '../lib/api';
-import { GRADE_TARGETS, GRADE_COLORS } from '../data/initialData';
+import { fetchCalibration, fetchZones, fetchAnnualPlan, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchCompletions } from '../lib/api';
+import { GRADE_COLORS } from '../data/initialData';
+import { buildHolidayMap, setScheduleConfig } from '../lib/schedule';
+import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, buildMonitorRows } from '../lib/monitoringDay';
 
 import useDataVersion from '../hooks/useDataVersion';
 export default function Dashboard({ year }) {
   const dataVersion = useDataVersion(); // 공유 동기화 시 화면 자동 최신화
   const [calibration, setCalibration] = useState([]);
   const [zones, setZones] = useState([]);
-  const [monData, setMonData] = useState({});
+  // 월별 모니터링 일정(달력)과 같은 기준: 측정 일정(회차)과 완료 표시(더블클릭)로 진행률을 센다
+  const [monRows, setMonRows] = useState({}); // { 1: [{ zone, measurement, done }], ... 12 }
   const [plan, setPlan] = useState({});
   const [loading, setLoading] = useState(true);
 
@@ -20,12 +23,24 @@ export default function Dashboard({ year }) {
     Promise.all([
       fetchCalibration(),
       fetchZones(),
-      fetchAllMonitoringData(year),
       fetchAnnualPlan(year),
-    ]).then(([c, z, m, p]) => {
+      fetchHolidays().catch(() => []),
+      fetchBlockedDates().catch(() => []),
+      fetchScheduleConfig().catch(() => null),
+      fetchCompletions().catch(() => []),
+    ]).then(([c, z, p, holidayDefs, blocked, cfg, comps]) => {
+      setScheduleConfig(mergeScheduleConfig(cfg)); // 일정 계산 함수가 읽는 주기 설정
+      const zns = (z || []).map(zone => zone.category === '청정등급' ? { ...zone, category: '공조' } : zone);
+      const avoid = { ...buildHolidayMap(holidayDefs || [], year - 1, year + 1) };
+      (blocked || []).forEach(d => { if (!avoid[d]) avoid[d] = '일정비우기'; });
+      const rank = buildZoneOrderRank(zns);
+      const byDate = buildScheduleByDate(zns, avoid, rank);
+      const done = new Set((comps || []).map(x => `${x.zoneId}_${x.num}`));
+      const rows = {};
+      for (let m = 1; m <= 12; m++) rows[m] = buildMonitorRows(byDate, rank, year, m).map(r => ({ ...r, done: done.has(`${r.zone.id}_${r.measurement.num}`) }));
       setCalibration(c);
-      setZones(z);
-      setMonData(m);
+      setZones(zns);
+      setMonRows(rows);
       setPlan(p);
       setLoading(false);
     });
@@ -39,13 +54,8 @@ export default function Dashboard({ year }) {
     .sort((a, b) => a.dday - b.dday);
 
   function getMonthStat(month) {
-    let total = 0, done = 0;
-    zones.forEach(zone => {
-      const target = GRADE_TARGETS[zone.grade] || 1;
-      total += target;
-      const entry = monData[`${zone.id}_${month}`];
-      if (entry) done += Math.min(entry.count || 0, target);
-    });
+    const rows = monRows[month] || [];
+    const total = rows.length, done = rows.filter(r => r.done).length;
     return { total, done, pct: total > 0 ? Math.round((done / total) * 100) : 0 };
   }
 
@@ -120,13 +130,9 @@ export default function Dashboard({ year }) {
         </div>
         <div className="p-5 grid grid-cols-2 lg:grid-cols-4 gap-4">
           {['P1', 'P2', 'P3', '유지관리'].map(grade => {
-            const gradeZones = zones.filter(z => z.grade === grade);
-            const target = GRADE_TARGETS[grade] || 1;
-            let done = 0, total = gradeZones.length * target;
-            gradeZones.forEach(zone => {
-              const entry = monData[`${zone.id}_${currentMonth}`];
-              if (entry) done += Math.min(entry.count || 0, target);
-            });
+            const gradeRows = (monRows[currentMonth] || []).filter(r => r.zone.grade === grade);
+            const gradeZones = [...new Set(gradeRows.map(r => r.zone.id))];
+            const done = gradeRows.filter(r => r.done).length, total = gradeRows.length;
             const pct = total > 0 ? Math.round((done / total) * 100) : 0;
             return (
               <div key={grade} className="rounded-lg border border-gray-100 p-4">

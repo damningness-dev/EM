@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { fetchCalibration, fetchZones, fetchMonitoringData, fetchAnnualPlan, fetchTodos, upsertTodo, deleteTodo, toggleTodoDone, fetchHolidays, getTodoReminderInterval, setTodoReminderInterval } from '../lib/api';
+import { fetchCalibration, fetchAnnualPlan, fetchTodos, upsertTodo, deleteTodo, toggleTodoDone, fetchHolidays, getTodoReminderInterval, setTodoReminderInterval } from '../lib/api';
 import { effectiveCalib } from '../utils/calibUtils';
 import { buildHolidayMap } from '../lib/schedule';
 import { parseISO, differenceInDays } from 'date-fns';
@@ -507,8 +507,6 @@ export default function TodoToday({ currentMember }) {
   const dow = DOW[today.getDay()];
 
   const [calibration, setCalibration] = useState([]);
-  const [zones, setZones] = useState([]);
-  const [monitoring, setMonitoring] = useState({});
   const [annualPlan, setAnnualPlan] = useState({});
   const [loading, setLoading] = useState(true);
 
@@ -588,15 +586,11 @@ export default function TodoToday({ currentMember }) {
   useEffect(() => {
     Promise.all([
       fetchCalibration(),
-      fetchZones(),
-      fetchMonitoringData(year, month),
       fetchAnnualPlan(year),
       fetchTodos().catch(() => []),
       fetchHolidays().catch(() => []),
-    ]).then(([cal, zns, mon, plan, tds, hols]) => {
+    ]).then(([cal, plan, tds, hols]) => {
       setCalibration(cal);
-      setZones(zns);
-      setMonitoring(mon);
       setAnnualPlan(plan);
       setTodos(tds || []);
       setHolidayDefs(hols || []);
@@ -700,11 +694,6 @@ export default function TodoToday({ currentMember }) {
   const soonCalib = calibEff
     .filter(c => c.eff.next_calib_date && c.eff.next_calib_date !== '미사용' && dDay(c.eff.next_calib_date) >= 0 && dDay(c.eff.next_calib_date) <= 60)
     .sort((a, b) => dDay(a.eff.next_calib_date) - dDay(b.eff.next_calib_date));
-
-  // 모니터링 현황
-  const completedZones = zones.filter(z => monitoring[z.id]);
-  const pendingZones = zones.filter(z => !monitoring[z.id]);
-  const monRate = zones.length ? Math.round(completedZones.length / zones.length * 100) : 0;
 
   // AHU 이번달 계획
   const ahuTasks = Object.entries(annualPlan)
@@ -1041,7 +1030,7 @@ export default function TodoToday({ currentMember }) {
       })()}
 
       {/* 요약 카드 */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3">
         <div className={`rounded-xl p-4 border ${overdueCalib.length > 0 ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200'}`}>
           <p className="text-xs text-gray-500">교정 만료</p>
           <p className={`text-3xl font-bold mt-1 ${overdueCalib.length > 0 ? 'text-red-600' : 'text-gray-300'}`}>{overdueCalib.length}</p>
@@ -1051,11 +1040,6 @@ export default function TodoToday({ currentMember }) {
           <p className="text-xs text-gray-500">교정 임박 (60일내)</p>
           <p className={`text-3xl font-bold mt-1 ${soonCalib.length > 0 ? 'text-orange-500' : 'text-gray-300'}`}>{soonCalib.length}</p>
           <p className="text-xs text-gray-400 mt-0.5">건</p>
-        </div>
-        <div className="rounded-xl p-4 border bg-white border-gray-200">
-          <p className="text-xs text-gray-500">이번달 모니터링</p>
-          <p className={`text-3xl font-bold mt-1 ${monRate === 100 ? 'text-green-600' : monRate >= 50 ? 'text-blue-600' : 'text-gray-700'}`}>{monRate}%</p>
-          <p className="text-xs text-gray-400 mt-0.5">{completedZones.length}/{zones.length} 구역</p>
         </div>
       </div>
 
@@ -1100,43 +1084,6 @@ export default function TodoToday({ currentMember }) {
           <div className="px-5 py-4 text-sm text-gray-400">60일 이내 교정 예정 항목 없음</div>
         </Section>
       )}
-
-      {/* 이번달 모니터링 */}
-      <Section
-        title={`${MONTH_KR[month - 1]} 모니터링 현황`}
-        icon="📋"
-        count={`${completedZones.length}/${zones.length}`}
-        countColor={monRate === 100 ? 'text-green-600' : 'text-blue-600'}
-      >
-        {/* 진행률 바 */}
-        <div className="px-5 py-3 border-b border-gray-50">
-          <div className="flex items-center gap-3">
-            <div className="flex-1 bg-gray-100 rounded-full h-3 overflow-hidden">
-              <div
-                className={`h-3 rounded-full transition-all ${monRate === 100 ? 'bg-green-500' : 'bg-blue-500'}`}
-                style={{ width: `${monRate}%` }}
-              />
-            </div>
-            <span className="text-sm font-bold text-gray-700 w-10 text-right">{monRate}%</span>
-          </div>
-        </div>
-
-        {/* 미완료 구역 */}
-        {pendingZones.length > 0 ? (
-          <div className="px-5 py-3">
-            <p className="text-xs font-medium text-gray-500 mb-2">미완료 구역 ({pendingZones.length}개)</p>
-            <div className="flex flex-wrap gap-1.5">
-              {pendingZones.map(z => (
-                <span key={z.id} className="text-xs px-2 py-0.5 bg-gray-100 text-gray-600 rounded-full">
-                  {z.name}
-                </span>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="px-5 py-4 text-sm text-green-600 font-medium">✅ 이번달 모든 구역 모니터링 완료</div>
-        )}
-      </Section>
 
       {/* AHU 계획 */}
       {ahuTasks.length > 0 && (

@@ -1,7 +1,7 @@
 // 월별 모니터링 일정(구역별 측정 일정)을 날짜별로 계산하는 공용 함수.
 // 달력(CalendarView)과 TEST 업무 배치판의 [환경모니터링] 구역이 같은 규칙으로 같은 결과를 보게 하려고 한곳에 둔다.
 import { format } from 'date-fns';
-import { calcMeasurements, GRADE_PRIORITY, DEFAULT_SCHEDULE_SPECS, getMajorCat } from './schedule';
+import { calcMeasurements, GRADE_PRIORITY, DEFAULT_SCHEDULE_SPECS, getMajorCat, getDragBounds } from './schedule';
 
 // 저장된 주기 설정을 기본 설정 위에 합친다(기본 분류 + 사용자가 추가한 소분류, __major 같은 메타 키 보존).
 export function mergeScheduleConfig(backend) {
@@ -67,6 +67,27 @@ export function buildScheduleByDate(zones, scheduleAvoid, zoneOrderRank) {
     (zoneOrderRank[a.zone.id] ?? 1e9) - (zoneOrderRank[b.zone.id] ?? 1e9) || a.zone.name.localeCompare(b.zone.name)
   ));
   return map;
+}
+
+// 한 달의 모니터링 현황 목록 — 그 달에 측정일이 잡힌 회차 + 측정일은 다른 달이지만 그 달이 허용 기간(분기·반기·년 창) 안에 들어가는 회차.
+// 달력의 '모니터링 N/M' 칩·현황 팝업과 대시보드의 월별 진행률이 같은 기준을 쓰도록 한곳에 둔다.
+export function buildMonitorRows(scheduleByDate, zoneOrderRank, year, month) {
+  const prefix = `${year}-${String(month).padStart(2, '0')}-`;
+  const monthStart = new Date(year, month - 1, 1);
+  const monthEnd = new Date(year, month, 0, 23, 59, 59);
+  const rows = [];
+  Object.entries(scheduleByDate).forEach(([ds, arr]) => {
+    const inMonth = ds.startsWith(prefix);
+    arr.forEach(({ zone, measurement }) => {
+      if (inMonth) { rows.push({ ds, zone, measurement }); return; }
+      if (!(measurement.spanMonths > 1)) return;
+      const { min, max } = getDragBounds({ type: 'monthly', baseDate: measurement.baseDate, spanMonths: measurement.spanMonths });
+      if (min <= monthEnd && max >= monthStart) rows.push({ ds, zone, measurement, carried: true });
+    });
+  });
+  rows.sort((a, b) => a.ds.localeCompare(b.ds)
+    || (zoneOrderRank[a.zone.id] ?? 1e9) - (zoneOrderRank[b.zone.id] ?? 1e9));
+  return rows;
 }
 
 // 하루 일정을 버튼 목록으로: 구역(또는 임시일정) 하나가 측정 종류별로 나뉘고 측정포인트 수가 붙는다.

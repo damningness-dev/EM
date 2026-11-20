@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef, useImperativeHandle,
 import { fetchCalibration, fetchZones, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchScheduleAssignees, setScheduleAssignee, fetchMembers, fetchTempSchedules, addTempSchedule, deleteTempSchedule, updateTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload, exportScheduleExcelTable, printDoc } from '../lib/api';
 import { fetchWeeklyBoard, fetchWeeklyDuty } from '../lib/api';
 import { boardTasksOn, workerDot } from '../lib/boardRotation';
-import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate } from '../lib/monitoringDay';
+import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, buildMonitorRows } from '../lib/monitoringDay';
 import { publishTeamRecords, fetchTeamRecords, adminSetTeamRecord, fetchTeams, setCurrentMemberOnMain, syncAfterChange } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
@@ -897,24 +897,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   // 분기 측정은 그 분기 3개월 어느 달에 해도 되므로, 측정일이 다른 달에 있어도 이번 달
   // 현황에서 빠지면 누락처럼 보인다. 완료 여부는 회차 단위라, 어느 달에 측정했든 그 분기의
   // 모든 달에서 완료로 보인다. 표 보기·엑셀 내보내기는 중복 집계를 피하려고 monthTableRows를 그대로 쓴다.
-  const monitorRows = useMemo(() => {
-    const prefix = `${year}-${String(month).padStart(2, '0')}-`;
-    const monthStart = new Date(year, month - 1, 1);
-    const monthEnd = new Date(year, month, 0, 23, 59, 59);
-    const rows = [];
-    Object.entries(scheduleByDate).forEach(([ds, arr]) => {
-      const inMonth = ds.startsWith(prefix);
-      arr.forEach(({ zone, measurement }) => {
-        if (inMonth) { rows.push({ ds, zone, measurement }); return; }
-        if (!(measurement.spanMonths > 1)) return;
-        const { min, max } = getDragBounds({ type: 'monthly', baseDate: measurement.baseDate, spanMonths: measurement.spanMonths });
-        if (min <= monthEnd && max >= monthStart) rows.push({ ds, zone, measurement, carried: true });
-      });
-    });
-    rows.sort((a, b) => a.ds.localeCompare(b.ds)
-      || (zoneOrderRank[a.zone.id] ?? 1e9) - (zoneOrderRank[b.zone.id] ?? 1e9));
-    return rows;
-  }, [scheduleByDate, year, month, zoneOrderRank]);
+  const monitorRows = useMemo(() => buildMonitorRows(scheduleByDate, zoneOrderRank, year, month), [scheduleByDate, year, month, zoneOrderRank]);
 
   // 로그인한 사람 본인 이름 — 담당자 배정과 대조해 "내 일정"을 가려낸다.
   const myName = currentMember?.username || '';
