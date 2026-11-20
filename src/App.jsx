@@ -406,7 +406,7 @@ export default function App() {
             </div>
           ) : (
             <ErrorBoundary resetKey={page}>
-          {page === 'dashboard' && <Dashboard year={year} />}
+          {page === 'dashboard' && <Dashboard year={year} onJumpToCalibration={jumpToCalibration} />}
           {page === 'todo' && <TodoToday currentMember={currentMember} />}
           {page === 'calendar' && (
             <CalendarView ref={calendarRef} year={year} onYearChange={setYear} adminUnlocked={adminUnlocked}

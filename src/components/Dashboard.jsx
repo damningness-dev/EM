@@ -7,7 +7,7 @@ import { buildHolidayMap, setScheduleConfig } from '../lib/schedule';
 import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, buildMonitorRows, isWaterZone } from '../lib/monitoringDay';
 
 import useDataVersion from '../hooks/useDataVersion';
-export default function Dashboard({ year }) {
+export default function Dashboard({ year, onJumpToCalibration }) {
   const dataVersion = useDataVersion(); // 공유 동기화 시 화면 자동 최신화
   const [calibration, setCalibration] = useState([]);
   const [zones, setZones] = useState([]);
@@ -91,7 +91,9 @@ export default function Dashboard({ year }) {
           </div>
           <div className="divide-y divide-gray-50">
             {urgentCalib.map(item => (
-              <div key={item.id} className="px-5 py-3 flex items-center justify-between hover:bg-gray-50">
+              <div key={item.id} onClick={() => onJumpToCalibration?.(item.id)} role="button"
+                title="누르면 교정 관리에서 이 교정건으로 이동합니다"
+                className="px-5 py-3 flex items-center justify-between hover:bg-orange-50 cursor-pointer transition-colors">
                 <div>
                   <span className="font-medium text-gray-800">{item.no}</span>
                   {item.name && <span className="ml-2 text-sm text-gray-500">{item.name}</span>}
