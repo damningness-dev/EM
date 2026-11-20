@@ -55,7 +55,7 @@ const KIND_ORDER = ['daily', 'weekly', 'monthly', ''];
 const CAT_LABEL = { qual: '적격성평가', calib: '교정', bill: '청구서' };
 const CAT_BADGE = { qual: 'bg-indigo-100 text-indigo-700 border-indigo-300', calib: 'bg-teal-100 text-teal-700 border-teal-300', bill: 'bg-pink-100 text-pink-700 border-pink-300' };
 const CAT_STAGES = {
-  qual: ['계획서 작성', '계획서 완료', '시험 대기중', '보고서 작성', '보고서 완료'],
+  qual: ['대기', '계획서 작성', '계획서 작성 중', '계획서 완료', '시험 대기중', '보고서 작성', '보고서 작성 중', '보고서 완료'],
   bill: ['견적서 발행', '청구서 작성', '교정/발송 대기', '계산서 발행', '지불품의서 작성'],
 };
 const badgeShort = (t) => (t.kind ? KIND_SHORT[t.kind] : t.cat ? CAT_LABEL[t.cat] : KIND_SHORT['']);
