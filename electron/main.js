@@ -1400,7 +1400,8 @@ function showNextAlarm() {
       .btn-done{background:#16a34a;color:#fff}
       .btn-done:hover{background:#15803d}
     </style></head><body>
-      <div class="h">⏰ 할일 알람 ${reminder
+      ${todo.warn ? '<style>body{border-color:#eab308!important;background:#fefce8!important}.h{color:#a16207!important}.btn-ok{background:#eab308!important}.btn-ok:hover{background:#ca8a04!important}</style>' : ''}
+      <div class="h">${todo.warn ? '⚠ 일정 경고' : '⏰ 할일 알람'} ${reminder
         ? `· ${esc(firedHM || '')}<span class="r">리마인드${todo.time ? ` (원래 ${esc(todo.time)})` : ''}</span>`
         : (todo.time ? '· ' + esc(todo.time) : '')}${remain > 0 ? `<span class="q">대기 ${remain}건</span>` : ''}</div>
       <div class="t">${esc(todo.title)}${carried && occDay ? ` <span class="r">미완료 (${esc(occDay.slice(5).replace('-', '/'))} 일정)</span>` : ''}</div>
@@ -1577,7 +1578,7 @@ const boardStageIsFinal = (cat, stage) => !!BOARD_STAGES[cat] && stage === BOARD
 // 이 PC에 로그인해 있을 때 오전 8시와 오후 4시에 한 번씩 알린다. 정각을 놓쳤어도(절전·늦게 켠 경우·늦게 로그인) 3시간 안이면 그때 한 번 알린다.
 const BOARD_DDAY_SLOTS = ['08:00', '16:00'];
 const BOARD_DDAY_NOTICE_DAYS = [7, 1]; // 마감 며칠 전에 미리 알릴지(당일·지난 뒤는 항상 알림)
-function boardDdayItemsFor(username, today) {
+function boardDdayItemsFor(username, today, wide = false) {
   const data = loadData();
   const board = data.weeklyBoard;
   if (!board || !Array.isArray(board.tasks)) return [];
@@ -1596,7 +1597,7 @@ function boardDdayItemsFor(username, today) {
     if (e ? e.done : prog?.status === 'done') continue; // 이미 완료
     if (boardStageIsFinal(t.cat, stages.get(`${t.id}|${username}`))) continue; // 마지막 단계까지 끝낸 업무
     const diff = Math.round((new Date(due + 'T00:00:00') - new Date(today + 'T00:00:00')) / 86400000);
-    if (diff > 0 && !BOARD_DDAY_NOTICE_DAYS.includes(diff)) continue; // 7일 전·1일 전·당일·지남만
+    if (wide ? diff > 7 : (diff > 0 && !BOARD_DDAY_NOTICE_DAYS.includes(diff))) continue; // 기본: 7일 전·1일 전·당일·지남만 / wide: 7일 이내 전부
     out.push({ name: t.name, due, diff });
   }
   return out.sort((a, b) => a.diff - b.diff);
@@ -1630,6 +1631,63 @@ function checkBoardDdayAlarms() {
     } catch { /* ignore */ }
   }
 }
+// ─── 개인별 업무표 퇴근 전 경고(16:50) ───
+// 오늘 해야 하는 주기적(일일·주간·월간) 업무와 D-day(마감 7일 이내·지남) 업무 중 아직 완료하지 않은 것이 있으면 노란 경고 알람으로 건수를 알린다.
+const BOARD_EOD_SLOT = '16:50';
+function boardPeriodicTodayFor(username, todayStr, now) {
+  const data = loadData();
+  const board = data.weeklyBoard;
+  if (!board || !Array.isArray(board.tasks)) return [];
+  const holiday = !!currentHolidayMap()[todayStr];
+  const dow = now.getDay(), dom = now.getDate(), last = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const done = new Map((Array.isArray(data.boardDone) ? data.boardDone : []).map(x => [x.id, x]));
+  const out = [];
+  for (const t of board.tasks) {
+    if (!t.kind || t.rotation?.on) continue; // 주기적 업무만(로테이션은 제외)
+    if (!(board.assignments?.[username] || []).includes(t.id)) continue;
+    let scheduled = false;
+    if (t.kind === 'daily') scheduled = t.weekdaysOnly === false ? true : (dow >= 1 && dow <= 5 && !holiday);
+    else if (t.kind === 'weekly') scheduled = dow === (Number.isInteger(t.dow) ? t.dow : 1);
+    else if (t.kind === 'monthly') scheduled = t.monthDay === 'last' ? dom === last : Number.isInteger(t.monthDay) ? dom === Math.min(t.monthDay, last) : (dom === 1 || dom === last);
+    if (!scheduled) continue;
+    if (done.get(`${todayStr}|${t.id}|${username}`)?.done) continue; // 오늘 완료함
+    out.push({ name: t.name, kind: t.kind });
+  }
+  return out;
+}
+function checkBoardEndOfDayAlarm() {
+  const username = currentLoggedInUsername();
+  if (!username) return;
+  const now = new Date();
+  const today = ymd(now);
+  const [h, m] = BOARD_EOD_SLOT.split(':').map(Number);
+  const late = now.getHours() * 60 + now.getMinutes() - (h * 60 + m);
+  if (late < 0 || late > 60) return; // 16:50부터 1시간 안(늦게 켠 경우 포함)에 한 번만
+  const key = `eod|${today}|${username}`;
+  if (firedAlarms.has(key)) return;
+  firedAlarms.set(key, now.getTime());
+  persistFiredAlarms();
+  const periodic = boardPeriodicTodayFor(username, today, now);
+  const dday = boardDdayItemsFor(username, today, true).filter(x => x.diff <= 7);
+  const total = periodic.length + dday.length;
+  if (!total) return;
+  const KL = { daily: '일일', weekly: '주간', monthly: '월간' };
+  const lines = [
+    `주기적 업무 ${periodic.length}건 · D-day 업무 ${dday.length}건`,
+    ...periodic.slice(0, 4).map(x => `[${KL[x.kind]}] ${x.name}`),
+    ...dday.slice(0, 4).map(x => `${x.diff === 0 ? 'D-DAY' : x.diff > 0 ? `D-${x.diff}` : `D+${-x.diff}`} · ${x.name}`),
+    ...(periodic.length > 4 || dday.length > 4 ? ['…'] : []),
+  ].join('\n');
+  enqueueAlarm({ id: 'board-eod', title: `오늘 완료되지 않은 일정이 ${total}건 있습니다`, note: lines, time: BOARD_EOD_SLOT, noDone: true, warn: true }, key, today, { firedHM: hm(now) });
+  try { if (mainWin && !mainWin.isDestroyed()) mainWin.flashFrame(true); } catch { /* ignore */ }
+  try {
+    if (Notification.isSupported()) {
+      const n = new Notification({ title: '⚠ 오늘 완료되지 않은 일정', body: lines, silent: false });
+      n.on('click', () => { if (mainWin && !mainWin.isDestroyed()) { mainWin.show(); mainWin.focus(); } });
+      n.show();
+    }
+  } catch { /* ignore */ }
+}
 function startAlarmScheduler() {
   // 윈도우가 백그라운드 앱을 절전 스로틀링하면 타이머가 멈춰 알람이 밀린다.
   // prevent-app-suspension으로 스로틀링을 막아 실행 중에도 제때 울리게 한다.
@@ -1646,6 +1704,7 @@ function startAlarmScheduler() {
     try { maybeSyncWeeklyDutyTodos(); } catch { /* ignore */ }
     try { checkAlarms(); } catch { /* ignore */ }
     try { checkBoardDdayAlarms(); } catch { /* ignore */ }
+    try { checkBoardEndOfDayAlarm(); } catch { /* ignore */ }
     const msToNextMinute = 60000 - (Date.now() % 60000) + 200; // 다음 분 + 0.2초 여유
     alarmTimer = setTimeout(tick, Math.min(Math.max(msToNextMinute, 1000), 60200));
   };
@@ -1655,8 +1714,8 @@ function startAlarmScheduler() {
   try {
     powerMonitor.removeAllListeners('resume');
     powerMonitor.removeAllListeners('unlock-screen');
-    powerMonitor.on('resume', () => { try { checkAlarms(); checkBoardDdayAlarms(); } catch { /* ignore */ } });
-    powerMonitor.on('unlock-screen', () => { try { checkAlarms(); checkBoardDdayAlarms(); } catch { /* ignore */ } });
+    powerMonitor.on('resume', () => { try { checkAlarms(); checkBoardDdayAlarms(); checkBoardEndOfDayAlarm(); } catch { /* ignore */ } });
+    powerMonitor.on('unlock-screen', () => { try { checkAlarms(); checkBoardDdayAlarms(); checkBoardEndOfDayAlarm(); } catch { /* ignore */ } });
   } catch { /* ignore */ }
 }
 
