@@ -2561,7 +2561,7 @@ function registerHandlers() {
 
   // 용수모니터링 일정(WFI·UF·PW·PS 사용점 채취 계획). 항목 하나하나를 관리자가 추가·수정·삭제하고 다른 PC와 항목 단위로 합쳐진다.
   // 처음에는 첨부 엑셀에서 만든 기본 데이터를 관리자가 한 번 불러온다(seed). 항목 id가 고정이라 여러 PC가 동시에 불러와도 중복되지 않는다.
-  const WATER_TYPES = ['WFI', 'UF', 'PW', 'PS', '기타'];
+  const WATER_TYPES = ['WFI', 'HWFI', 'UF', 'PW', 'PS', '기타'];
   const cleanWaterItem = (x, keepId) => {
     const date = /^\d{4}-\d{2}-\d{2}$/.test(String(x?.date || '')) ? x.date : '';
     if (!date) return null;

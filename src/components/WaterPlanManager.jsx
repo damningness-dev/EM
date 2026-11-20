@@ -5,7 +5,7 @@ import { WATER_TYPES, DOW_KR, repeatLabel } from '../lib/waterPlan';
 // 탭은 첨부 엑셀의 시트 구성(주간용수 WFI·UF / PW / PS)을 따르고, 월별 모니터링에서 옮겨 온 '용수 구역'(구역별 주기로 계산되는
 // 일정)은 시작일·등급을 여기서 고친다. 맨 위 요약은 엑셀의 '하루 ○개'처럼 요일·날짜별 채취 개수를 보여준다.
 const TABS = [
-  { key: 'WFI', label: 'WFI·UF', types: ['WFI', 'UF'], color: 'bg-sky-600' },
+  { key: 'WFI', label: 'WFI·HWFI·UF', types: ['WFI', 'HWFI', 'UF'], color: 'bg-sky-600' },
   { key: 'PW', label: 'PW (정제수)', types: ['PW'], color: 'bg-lime-600' },
   { key: 'PS', label: 'PS (순수증기)', types: ['PS'], color: 'bg-pink-500' },
   { key: 'ETC', label: '기타', types: ['기타'], color: 'bg-gray-500' },

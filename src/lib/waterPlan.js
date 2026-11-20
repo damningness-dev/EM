@@ -3,6 +3,7 @@
 // 색은 배관 색상표를 따른다: WFI 하늘색, 정제수(PW) 연두색, 순수증기(PS) 분홍색 (UF는 색상표에 없어 청색으로 구분)
 export const WATER_TYPES = {
   WFI: { label: 'WFI', pipe: '하늘색', chip: 'bg-sky-100 text-sky-800 border-sky-300', dot: 'bg-sky-400' },
+  HWFI: { label: 'HWFI', pipe: '녹색', chip: 'bg-green-100 text-green-800 border-green-400', dot: 'bg-green-500' },
   UF: { label: 'UF', pipe: '청색', chip: 'bg-blue-100 text-blue-800 border-blue-400', dot: 'bg-blue-600' },
   PW: { label: 'PW', pipe: '연두색', chip: 'bg-lime-100 text-lime-800 border-lime-400', dot: 'bg-lime-400' },
   PS: { label: 'PS', pipe: '분홍색', chip: 'bg-pink-100 text-pink-800 border-pink-300', dot: 'bg-pink-400' },
@@ -10,17 +11,15 @@ export const WATER_TYPES = {
   // 월별 모니터링 일정에서 옮겨 온 용수 구역(구역별 측정 주기로 계산되는 일정)
   구역: { label: '용수구역', chip: 'bg-teal-100 text-teal-800 border-teal-300', dot: 'bg-teal-500' },
 };
-// 배관 색상표(참고용) — 용수 일정에 쓰는 것은 used로 표시
-export const PIPE_LEGEND = [
-  { name: 'WFI', color: '하늘색', hex: '#7dd3fc', used: 'WFI' }, { name: '정제수', color: '연두색', hex: '#a3e635', used: 'PW' }, { name: '상수', color: '청색', hex: '#2563eb', used: 'UF' },
-  { name: '냉각수', color: '연한 하늘색', hex: '#bae6fd' }, { name: '일반증기', color: '적색', hex: '#dc2626' }, { name: '순수증기', color: '분홍색', hex: '#f9a8d4', used: 'PS' },
-  { name: '압축공기', color: '노란색', hex: '#fde047' }, { name: 'LPG', color: '갈색', hex: '#92400e' }, { name: '산소', color: '백색', hex: '#ffffff' },
-  { name: '이산화탄소', color: '회색', hex: '#9ca3af' }, { name: 'HWFI', color: '녹색', hex: '#16a34a' }, { name: '알곤', color: '진회색', hex: '#4b5563' },
-  { name: '질소', color: '보라색', hex: '#7e22ce' }, { name: '진공', color: '검정색', hex: '#111827' }, { name: '청정 압축공기', color: '노란색', hex: '#fde047' }, { name: '약액', color: '백색', hex: '#ffffff' },
-];
-export const WATER_TYPE_KEYS = ['WFI', 'UF', 'PW', 'PS', '기타']; // 직접 입력하는 일정의 종류
+export const WATER_TYPE_KEYS = ['WFI', 'HWFI', 'UF', 'PW', 'PS', '기타']; // 직접 입력하는 일정의 종류
 export const WATER_FILTER_KEYS = [...WATER_TYPE_KEYS, '구역'];
 export const WATER_REPEATS = [['weekly', '매주'], ['monthly', '매월(같은 요일·주차)'], ['once', '한 번']];
+// 엑셀에서 가져온 사용점 앞의 기호로 종류를 나눈다: ♨ = HWFI, ▩ = WFI. 기호는 떼고 종류(type)로 옮긴다.
+export function normalizeWaterItem(it) {
+  const m = /^\s*([♨▩])\s*/.exec(it?.points || '');
+  if (!m) return it;
+  return { ...it, type: m[1] === '♨' ? 'HWFI' : 'WFI', points: it.points.slice(m[0].length) };
+}
 export const DOW_KR = ['일', '월', '화', '수', '목', '금', '토'];
 
 const parse = (ds) => new Date(`${ds}T00:00:00`);

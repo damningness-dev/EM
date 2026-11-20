@@ -4,7 +4,7 @@ import { buildHolidayMap, setScheduleConfig, totalCount, calcEndDate } from '../
 import WaterPlanManager from './WaterPlanManager';
 import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, isWaterZone } from '../lib/monitoringDay';
 import { WATER_PLAN_SEED } from '../data/waterPlanSeed';
-import { WATER_TYPES, WATER_TYPE_KEYS, WATER_FILTER_KEYS, PIPE_LEGEND, WATER_REPEATS, DOW_KR, fmt, occursOn, itemsOn, groupItems, repeatLabel, monthWeeks } from '../lib/waterPlan';
+import { WATER_TYPES, WATER_TYPE_KEYS, WATER_FILTER_KEYS, WATER_REPEATS, DOW_KR, fmt, occursOn, itemsOn, groupItems, repeatLabel, monthWeeks, normalizeWaterItem } from '../lib/waterPlan';
 
 // 용수모니터링 일정 — 첨부된 '용수 모니터링 계획' 엑셀(주간용수 WFI·UF / PW / PS / 용수 달력)을 달력으로 옮긴 화면.
 // 날짜 칸에 그 날 채취할 구역(종류별 색)과 개수가 보이고, 날짜를 누르면 사용점 번호까지 자세히 나온다.
@@ -24,7 +24,6 @@ export default function WaterPlan({ adminUnlocked }) {
   const [zoneEv, setZoneEv] = useState({ byDate: {}, done: new Set() });
   const [waterZones, setWaterZones] = useState([]); // [{ zone, end }] — 일정 관리 창의 '용수 구역' 탭용
   const [mgrOpen, setMgrOpen] = useState(false); // 일정 관리 창
-  const [legendOpen, setLegendOpen] = useState(false); // 배관 색상표
   const seeding = useRef(false);
   const monthSet = useRef(false);
   const weekStartMon = (() => { try { return localStorage.getItem('em-week-start') === 'mon'; } catch { return false; } })();
@@ -40,6 +39,13 @@ export default function WaterPlan({ adminUnlocked }) {
         seedWaterPlan(WATER_PLAN_SEED).then(() => { syncAfterChange().catch(() => {}); load(); }).catch(() => {});
         return;
       }
+      // 예전에 저장된 일정의 ♨/▩ 기호는 종류(HWFI/WFI)로 바꾼다 — 관리자는 바뀐 항목을 한 번 저장해 둔다
+      const fixed = list.map(normalizeWaterItem);
+      if (adminUnlocked) {
+        const changed = fixed.filter((x, i) => x !== list[i]);
+        if (changed.length) Promise.all(changed.map(x => saveWaterPlanItem(x))).then(() => syncAfterChange().catch(() => {})).catch(() => {});
+      }
+      list.splice(0, list.length, ...fixed);
       setItems(list);
       setLoaded(true);
       // 오늘이 속한 달에 일정이 없으면(예: 엑셀 일정이 다음 달부터) 가장 이른 일정의 달을 먼저 보여준다
@@ -172,27 +178,15 @@ export default function WaterPlan({ adminUnlocked }) {
         </div>
       </div>
 
-      {/* 색상 범례 — 배관 색상표의 색을 그대로 쓴다 */}
+      {/* 색상 범례 */}
       <div className="mb-3">
         <div className="flex items-center gap-2 flex-wrap text-xs">
           <span className="text-gray-500 font-semibold">색상</span>
-          {['WFI', 'PW', 'PS', 'UF'].map(t => (
+          {['WFI', 'HWFI', 'PW', 'PS', 'UF'].map(t => (
             <span key={t} className={`px-2 py-0.5 rounded border font-medium ${WATER_TYPES[t].chip}`}>{t === 'PW' ? 'PW(정제수)' : t === 'PS' ? 'PS(순수증기)' : t} · {WATER_TYPES[t].pipe}</span>
           ))}
           <span className={`px-2 py-0.5 rounded border font-medium ${WATER_TYPES['구역'].chip}`}>용수구역 · 청록</span>
-          <button type="button" onClick={() => setLegendOpen(o => !o)} className="text-gray-400 hover:text-blue-600 underline decoration-dotted">{legendOpen ? '배관 색상표 접기' : '배관 색상표 보기'}</button>
         </div>
-        {legendOpen && (
-          <div className="mt-2 bg-white border border-gray-200 rounded-xl p-3 grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-1.5 text-xs">
-            {PIPE_LEGEND.map((p, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <span className="inline-block w-7 h-3.5 rounded-sm border border-gray-300 shrink-0" style={{ background: p.hex, clipPath: 'polygon(0 20%, 70% 20%, 70% 0, 100% 50%, 70% 100%, 70% 80%, 0 80%)' }} />
-                <span className="text-gray-700">{p.name}</span><span className="text-gray-400">({p.color})</span>
-                {p.used && <span className="text-[10px] font-semibold text-blue-600" title="용수모니터링 일정에서 이 색으로 표시합니다">일정 {p.used}</span>}
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
       <div className="flex gap-4 items-start">
