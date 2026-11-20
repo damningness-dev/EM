@@ -4,7 +4,7 @@ import { effectiveCalib } from '../utils/calibUtils';
 import { fetchCalibration, fetchZones, fetchAnnualPlan, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchCompletions } from '../lib/api';
 import { GRADE_COLORS } from '../data/initialData';
 import { buildHolidayMap, setScheduleConfig } from '../lib/schedule';
-import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, buildMonitorRows } from '../lib/monitoringDay';
+import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, buildMonitorRows, isWaterZone } from '../lib/monitoringDay';
 
 import useDataVersion from '../hooks/useDataVersion';
 export default function Dashboard({ year }) {
@@ -30,14 +30,15 @@ export default function Dashboard({ year }) {
       fetchCompletions().catch(() => []),
     ]).then(([c, z, p, holidayDefs, blocked, cfg, comps]) => {
       setScheduleConfig(mergeScheduleConfig(cfg)); // 일정 계산 함수가 읽는 주기 설정
-      const zns = (z || []).map(zone => zone.category === '청정등급' ? { ...zone, category: '공조' } : zone);
+      // 용수 구역은 '용수모니터링 일정' 메뉴로 옮겨져 월별 모니터링 진행률에서는 뺀다
+      const zns = (z || []).map(zone => zone.category === '청정등급' ? { ...zone, category: '공조' } : zone).filter(zone => !isWaterZone(zone));
       const avoid = { ...buildHolidayMap(holidayDefs || [], year - 1, year + 1) };
       (blocked || []).forEach(d => { if (!avoid[d]) avoid[d] = '일정비우기'; });
       const rank = buildZoneOrderRank(zns);
       const byDate = buildScheduleByDate(zns, avoid, rank);
       const done = new Set((comps || []).map(x => `${x.zoneId}_${x.num}`));
       const rows = {};
-      for (let m = 1; m <= 12; m++) rows[m] = buildMonitorRows(byDate, rank, year, m).map(r => ({ ...r, done: done.has(`${r.zone.id}_${r.measurement.num}`) }));
+      for (let m = 1; m <= 12; m++) rows[m] = buildMonitorRows(byDate, rank, year, m).filter(r => !r.carried).map(r => ({ ...r, done: done.has(`${r.zone.id}_${r.measurement.num}`) }));
       setCalibration(c);
       setZones(zns);
       setMonRows(rows);

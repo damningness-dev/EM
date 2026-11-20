@@ -1407,7 +1407,7 @@ function showNextAlarm() {
       ${todo.note ? `<div class="n">${esc(todo.note)}</div>` : ''}
       <div class="btns">
         <button class="btn-ok" onclick="window.close()">확인</button>
-        <button class="btn-done" onclick="location.href='app-alarm://complete'">완료</button>
+        ${todo.noDone ? '' : '<button class="btn-done" onclick="location.href=\'app-alarm://complete\'">완료</button>'}
       </div>
     </body></html>`;
     win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
@@ -1563,6 +1563,60 @@ function checkAlarms() {
     }
   } catch { /* ignore */ }
 }
+// ─── 개인별 업무표 D-day 알람 ───
+// 아직 완료하지 않은 D-day 업무(비주기적 업무 중 마감기한이 7일 이내이거나 지난 것)가 있으면, 그 담당자가 이 PC에 로그인해 있을 때
+// 오전 8시와 오후 4시에 한 번씩 알린다. 정각을 놓쳤어도(절전·늦게 켠 경우·늦게 로그인) 3시간 안이면 그때 한 번 알린다.
+const BOARD_DDAY_SLOTS = ['08:00', '16:00'];
+const BOARD_DDAY_WINDOW_DAYS = 7;
+function boardDdayItemsFor(username, today) {
+  const data = loadData();
+  const board = data.weeklyBoard;
+  if (!board || !Array.isArray(board.tasks)) return [];
+  const done = new Map((Array.isArray(data.boardDone) ? data.boardDone : []).map(x => [x.id, x]));
+  const out = [];
+  for (const t of board.tasks) {
+    if (t.kind || t.rotation?.on) continue; // 마감기한이 있는 비주기(기타) 업무만, 로테이션은 제외
+    if (!(board.assignments?.[username] || []).includes(t.id)) continue;
+    const prog = board.progress?.[username]?.[t.id];
+    const due = t.due || prog?.due || '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) continue;
+    const e = done.get(`*|${t.id}|${username}`);
+    if (e ? e.done : prog?.status === 'done') continue; // 이미 완료
+    const diff = Math.round((new Date(due + 'T00:00:00') - new Date(today + 'T00:00:00')) / 86400000);
+    if (diff > BOARD_DDAY_WINDOW_DAYS) continue;
+    out.push({ name: t.name, due, diff });
+  }
+  return out.sort((a, b) => a.diff - b.diff);
+}
+function checkBoardDdayAlarms() {
+  const username = currentLoggedInUsername();
+  if (!username) return;
+  const now = new Date();
+  const today = ymd(now);
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  for (const slot of BOARD_DDAY_SLOTS) {
+    const [h, m] = slot.split(':').map(Number);
+    const late = nowMin - (h * 60 + m);
+    if (late < 0 || late > 180) continue;
+    const key = `dday|${today}|${slot}|${username}`;
+    if (firedAlarms.has(key)) continue;
+    firedAlarms.set(key, now.getTime()); // 목록이 비어 있어도 기록해 시각마다 한 번만 확인한다
+    persistFiredAlarms();
+    const list = boardDdayItemsFor(username, today);
+    if (!list.length) continue;
+    const label = (x) => `${x.diff === 0 ? 'D-DAY' : x.diff > 0 ? `D-${x.diff}` : `D+${-x.diff}`} · ${x.name} (마감 ${x.due.slice(5).replace('-', '/')})`;
+    const lines = list.slice(0, 6).map(label).join('\n') + (list.length > 6 ? `\n… 외 ${list.length - 6}건` : '');
+    enqueueAlarm({ id: 'board-dday', title: `완료하지 않은 D-day 업무 ${list.length}건`, note: lines, time: slot, noDone: true }, key, today, { firedHM: hm(now) });
+    try { if (mainWin && !mainWin.isDestroyed()) mainWin.flashFrame(true); } catch { /* ignore */ }
+    try {
+      if (Notification.isSupported()) {
+        const n = new Notification({ title: '⏰ 완료하지 않은 D-day 업무', body: lines, silent: false });
+        n.on('click', () => { if (mainWin && !mainWin.isDestroyed()) { mainWin.show(); mainWin.focus(); } });
+        n.show();
+      }
+    } catch { /* ignore */ }
+  }
+}
 function startAlarmScheduler() {
   // 윈도우가 백그라운드 앱을 절전 스로틀링하면 타이머가 멈춰 알람이 밀린다.
   // prevent-app-suspension으로 스로틀링을 막아 실행 중에도 제때 울리게 한다.
@@ -1578,6 +1632,7 @@ function startAlarmScheduler() {
   const tick = () => {
     try { maybeSyncWeeklyDutyTodos(); } catch { /* ignore */ }
     try { checkAlarms(); } catch { /* ignore */ }
+    try { checkBoardDdayAlarms(); } catch { /* ignore */ }
     const msToNextMinute = 60000 - (Date.now() % 60000) + 200; // 다음 분 + 0.2초 여유
     alarmTimer = setTimeout(tick, Math.min(Math.max(msToNextMinute, 1000), 60200));
   };
@@ -1587,8 +1642,8 @@ function startAlarmScheduler() {
   try {
     powerMonitor.removeAllListeners('resume');
     powerMonitor.removeAllListeners('unlock-screen');
-    powerMonitor.on('resume', () => { try { checkAlarms(); } catch { /* ignore */ } });
-    powerMonitor.on('unlock-screen', () => { try { checkAlarms(); } catch { /* ignore */ } });
+    powerMonitor.on('resume', () => { try { checkAlarms(); checkBoardDdayAlarms(); } catch { /* ignore */ } });
+    powerMonitor.on('unlock-screen', () => { try { checkAlarms(); checkBoardDdayAlarms(); } catch { /* ignore */ } });
   } catch { /* ignore */ }
 }
 

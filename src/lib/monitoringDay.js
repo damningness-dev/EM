@@ -69,6 +69,9 @@ export function buildScheduleByDate(zones, scheduleAvoid, zoneOrderRank) {
   return map;
 }
 
+// 용수 구역(대분류 '용수', 소분류 포함)은 월별 모니터링 일정이 아니라 '용수모니터링 일정' 메뉴에서 보고 관리한다.
+export const isWaterZone = (zone) => !!zone?.category && getMajorCat(zone.category) === '용수';
+
 // 한 달의 모니터링 현황 목록 — 그 달에 측정일이 잡힌 회차 + 측정일은 다른 달이지만 그 달이 허용 기간(분기·반기·년 창) 안에 들어가는 회차.
 // 달력의 '모니터링 N/M' 칩·현황 팝업과 대시보드의 월별 진행률이 같은 기준을 쓰도록 한곳에 둔다.
 export function buildMonitorRows(scheduleByDate, zoneOrderRank, year, month) {

@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef, useImperativeHandle,
 import { fetchCalibration, fetchZones, fetchAnnualPlan, upsertZone, fetchGroups, upsertGroup, deleteGroup, fetchHolidays, upsertHoliday, deleteHoliday, fetchCompletions, setCompletion, deleteCompletion, fetchScheduleAssignees, setScheduleAssignee, fetchMembers, fetchTempSchedules, addTempSchedule, deleteTempSchedule, updateTempSchedule, fetchScheduleConfig, saveScheduleConfig, backfillZonePointsFromMonitoring, fetchBlockedDates, setBlockedDate, fetchTodos, upsertTodo, deleteTodo, syncGetConfig, syncUpload, exportScheduleExcelTable, printDoc } from '../lib/api';
 import { fetchWeeklyBoard, fetchWeeklyDuty } from '../lib/api';
 import { boardTasksOn, workerDot } from '../lib/boardRotation';
-import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, buildMonitorRows } from '../lib/monitoringDay';
+import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, buildMonitorRows, isWaterZone } from '../lib/monitoringDay';
 import { publishTeamRecords, fetchTeamRecords, adminSetTeamRecord, fetchTeams, setCurrentMemberOnMain, syncAfterChange } from '../lib/api';
 import { parseISO, differenceInDays, format } from 'date-fns';
 import { calcEndDate, totalCount, getDragBounds, NEXT_GRADE, GRADE_PRIORITY, NTH_LABEL, DOW_LABEL, buildHolidayMap, computeCascadeSchedules, optimizeMonthSchedule, setScheduleConfig, DEFAULT_SCHEDULE_SPECS, MAJOR_CATS, getMajorCat, isCombinedCat } from '../lib/schedule';
@@ -173,6 +173,10 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   // 연달아 클릭해도 애니메이션이 다시 시작되도록 한 번 null로 비웠다가 다음
   // 프레임에 다시 켠다.
   function flashItem(occ) {
+    // 다른 달(분기 측정 등)의 일정이면 그 달로 달력을 옮긴다 — 안 그러면 우측 패널에만 나오고 달력은 그대로다
+    const oy = parseInt(occ.ds.slice(0, 4), 10), om = parseInt(occ.ds.slice(5, 7), 10);
+    if (oy !== year) { setYear(oy); onYearChange?.(oy); }
+    if (om !== month || oy !== year) setMonth(om);
     setSelectedDay(occ.ds);
     document.querySelector('main')?.scrollTo({ top: 0, behavior: 'smooth' });
     setFlashTarget(null);
@@ -869,7 +873,8 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   const zoneOrderRank = useMemo(() => buildZoneOrderRank(zones), [zones]);
 
   // Schedule events by date string (all dates, no month filter)
-  const scheduleByDate = useMemo(() => buildScheduleByDate(zones, scheduleAvoid, zoneOrderRank), [zones, scheduleAvoid, scheduleConfig, zoneOrderRank]);
+  // 용수 구역은 '용수모니터링 일정' 메뉴로 옮겨졌으므로 이 달력의 일정·진행률에서는 뺀다
+  const scheduleByDate = useMemo(() => buildScheduleByDate(zones.filter(z => !isWaterZone(z)), scheduleAvoid, zoneOrderRank), [zones, scheduleAvoid, scheduleConfig, zoneOrderRank]);
 
   // 특정 구역/회차가 (이동 전) 현재 어느 날짜에 배치돼 있는지 조회 — 변경 알람에 "이전 날짜"를 표시하기 위함
   function currentDateOf(zoneId, num) {
@@ -1122,9 +1127,11 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   const calibThisMonthCount = calibMonthItems.length;
 
   // 모니터링 현황 패널: 이번 달 측정 일정(회차 단위)을 완료/예정으로 나눠 탭으로 보여준다.
-  const monthDoneRows = monitorRows.filter(r => completions.has(`${r.zone.id}_${r.measurement.num}`));
-  const monthPendingRows = monitorRows.filter(r => !completions.has(`${r.zone.id}_${r.measurement.num}`));
-  const monCompleteRate = monitorRows.length ? Math.round(monthDoneRows.length / monitorRows.length * 100) : 0;
+  // 분기·반기·년 창으로 다른 달에서 넘어온 회차(carried)는 목록에는 보이지만 이번 달 일정 건수·진행률에는 세지 않는다.
+  const countedRows = monitorRows.filter(r => !r.carried);
+  const monthDoneRows = countedRows.filter(r => completions.has(`${r.zone.id}_${r.measurement.num}`));
+  const monthPendingRows = countedRows.filter(r => !completions.has(`${r.zone.id}_${r.measurement.num}`));
+  const monCompleteRate = countedRows.length ? Math.round(monthDoneRows.length / countedRows.length * 100) : 0;
 
   // 구역별로 묶어서 보여준다 — 같은 구역이 이번 달에 여러 번 측정되면(측정주기가
   // 짧은 구역) 이번 달 기준 순번/총회차를 "1/2"처럼 표시한다(전체 일정의 회차
@@ -2743,7 +2750,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                 title="클릭하면 모니터링 현황 목록이 열립니다"
                 className="w-36 px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors text-left">
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="text-xs text-gray-600 whitespace-nowrap">모니터링 {monthDoneRows.length}/{monitorRows.length}</span>
+                  <span className="text-xs text-gray-600 whitespace-nowrap">모니터링 {monthDoneRows.length}/{countedRows.length}</span>
                   <span className={`text-xs font-bold ${monCompleteRate === 100 ? 'text-green-600' : 'text-blue-600'}`}>{monCompleteRate}%</span>
                 </div>
                 <div className="mt-1 w-full h-2 rounded-full bg-gray-100 overflow-hidden">
@@ -3527,11 +3534,11 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
               <div className="w-full bg-gray-100 rounded-full h-2 mb-2 overflow-hidden">
                 <div className={`h-2 rounded-full ${monCompleteRate === 100 ? 'bg-green-500' : 'bg-blue-500'}`} style={{ width: `${monCompleteRate}%` }} />
               </div>
-              <p className="text-xs text-gray-500 mb-2">이번 달 {monitorRows.length}건 중 {monthDoneRows.length}건 완료</p>
+              <p className="text-xs text-gray-500 mb-2">이번 달 {countedRows.length}건 중 {monthDoneRows.length}건 완료{monitorRows.length > countedRows.length ? ` · 분기 등 다른 달 측정 ${monitorRows.length - countedRows.length}건은 건수에서 제외` : ''}</p>
             </div>
             <div className="flex border-b border-gray-100 shrink-0">
               {[
-                { key: 'all', label: `전체 ${monitorRows.length}` },
+                { key: 'all', label: `전체 ${countedRows.length}` },
                 { key: 'done', label: `측정완료 ${monthDoneRows.length}` },
                 { key: 'pending', label: `예정 ${monthPendingRows.length}` },
               ].map(t => (

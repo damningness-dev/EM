@@ -6,8 +6,11 @@ export const WATER_TYPES = {
   PW: { label: 'PW', chip: 'bg-emerald-100 text-emerald-800 border-emerald-300', dot: 'bg-emerald-500' },
   PS: { label: 'PS', chip: 'bg-amber-100 text-amber-800 border-amber-300', dot: 'bg-amber-500' },
   기타: { label: '기타', chip: 'bg-gray-100 text-gray-700 border-gray-300', dot: 'bg-gray-400' },
+  // 월별 모니터링 일정에서 옮겨 온 용수 구역(구역별 측정 주기로 계산되는 일정)
+  구역: { label: '용수구역', chip: 'bg-teal-100 text-teal-800 border-teal-300', dot: 'bg-teal-500' },
 };
-export const WATER_TYPE_KEYS = ['WFI', 'UF', 'PW', 'PS', '기타'];
+export const WATER_TYPE_KEYS = ['WFI', 'UF', 'PW', 'PS', '기타']; // 직접 입력하는 일정의 종류
+export const WATER_FILTER_KEYS = [...WATER_TYPE_KEYS, '구역'];
 export const WATER_REPEATS = [['weekly', '매주'], ['monthly', '매월(같은 요일·주차)'], ['once', '한 번']];
 export const DOW_KR = ['일', '월', '화', '수', '목', '금', '토'];
 
@@ -36,7 +39,7 @@ export function groupItems(list) {
     const g = map.get(key) || { key, type: it.type, area: it.area || '', count: 0, items: [] };
     g.count += Number(it.count) || 0; g.items.push(it); map.set(key, g);
   }
-  return [...map.values()].sort((x, y) => WATER_TYPE_KEYS.indexOf(x.type) - WATER_TYPE_KEYS.indexOf(y.type));
+  return [...map.values()].sort((x, y) => WATER_FILTER_KEYS.indexOf(x.type) - WATER_FILTER_KEYS.indexOf(y.type));
 }
 
 export function repeatLabel(it) {

@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import { fetchWaterPlan, saveWaterPlanItem, deleteWaterPlanItem, seedWaterPlan, syncAfterChange } from '../lib/api';
+import { fetchWaterPlan, saveWaterPlanItem, deleteWaterPlanItem, seedWaterPlan, syncAfterChange, fetchZones, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchCompletions, setCompletion, deleteCompletion } from '../lib/api';
+import { buildHolidayMap, setScheduleConfig, totalCount } from '../lib/schedule';
+import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, isWaterZone } from '../lib/monitoringDay';
 import { WATER_PLAN_SEED } from '../data/waterPlanSeed';
-import { WATER_TYPES, WATER_TYPE_KEYS, WATER_REPEATS, DOW_KR, fmt, occursOn, itemsOn, groupItems, repeatLabel, monthWeeks } from '../lib/waterPlan';
+import { WATER_TYPES, WATER_TYPE_KEYS, WATER_FILTER_KEYS, WATER_REPEATS, DOW_KR, fmt, occursOn, itemsOn, groupItems, repeatLabel, monthWeeks } from '../lib/waterPlan';
 
 // 용수모니터링 일정 — 첨부된 '용수 모니터링 계획' 엑셀(주간용수 WFI·UF / PW / PS / 용수 달력)을 달력으로 옮긴 화면.
 // 날짜 칸에 그 날 채취할 구역(종류별 색)과 개수가 보이고, 날짜를 누르면 사용점 번호까지 자세히 나온다.
@@ -17,6 +19,8 @@ export default function WaterPlan({ adminUnlocked }) {
   const [dlg, setDlg] = useState(null); // { id|null, draft }
   const [confirmDlg, setConfirmDlg] = useState(null);
   const [notice, setNotice] = useState(null);
+  // 월별 모니터링 일정에서 옮겨 온 용수 구역의 일정(구역별 측정 주기로 계산)과 완료 표시
+  const [zoneEv, setZoneEv] = useState({ byDate: {}, done: new Set() });
   const seeding = useRef(false);
   const monthSet = useRef(false);
   const weekStartMon = (() => { try { return localStorage.getItem('em-week-start') === 'mon'; } catch { return false; } })();
@@ -47,15 +51,43 @@ export default function WaterPlan({ adminUnlocked }) {
       }
     }).catch(() => setLoaded(true));
   }
+  function loadZones() {
+    Promise.all([fetchZones(), fetchHolidays().catch(() => []), fetchBlockedDates().catch(() => []), fetchScheduleConfig().catch(() => null), fetchCompletions().catch(() => [])]).then(([zones, holidayDefs, blocked, cfg, comps]) => {
+      setScheduleConfig(mergeScheduleConfig(cfg)); // 일정 계산 함수가 읽는 주기 설정
+      const water = (zones || []).map(z => z.category === '청정등급' ? { ...z, category: '공조' } : z).filter(isWaterZone);
+      const y = new Date().getFullYear();
+      const avoid = { ...buildHolidayMap(holidayDefs || [], y - 1, y + 2) };
+      (blocked || []).forEach(d => { if (!avoid[d]) avoid[d] = '일정비우기'; });
+      setZoneEv({ byDate: buildScheduleByDate(water, avoid, buildZoneOrderRank(water)), done: new Set((comps || []).map(c => `${c.zoneId}_${c.num}`)) });
+    }).catch(() => {});
+  }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); loadZones(); }, []);
   useEffect(() => {
     if (!window.electronAPI?.onDataChanged) return;
-    return window.electronAPI.onDataChanged(() => load());
+    return window.electronAPI.onDataChanged(() => { load(); loadZones(); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const shown = typeFilter === 'all' ? items : items.filter(it => it.type === typeFilter);
+  // 그 날의 일정 = 직접 입력한 일정 + 월별 모니터링 일정에서 옮겨 온 용수 구역 일정
+  const zoneItemsOn = (ds) => (zoneEv.byDate[ds] || []).map(({ zone, measurement }) => ({
+    id: `z${zone.id}_${measurement.num}`, zoneId: zone.id, num: measurement.num, type: '구역', area: zone.name,
+    points: `${zone.grade ? zone.grade + ' ' : ''}${measurement.num}/${totalCount(zone)}회차`,
+    count: ((zone.points_float || 0) + (zone.points_fall || 0) + (zone.points_surface || 0) + (zone.points_particle || 0)) || 1,
+    repeat: 'once', date: ds, done: zoneEv.done.has(`${zone.id}_${measurement.num}`),
+  }));
+  const dayItems = (ds) => [...itemsOn(shown, ds), ...(typeFilter === 'all' || typeFilter === '구역' ? zoneItemsOn(ds) : [])];
+  // 용수 구역 일정 완료/취소(월별 모니터링 일정의 완료 처리와 같은 기록)
+  async function toggleZoneDone(it) {
+    if (!adminUnlocked) { flash('관리자만 완료 표시를 할 수 있습니다.', true); return; }
+    const key = `${it.zoneId}_${it.num}`;
+    try {
+      if (it.done) await deleteCompletion(it.zoneId, it.num); else await setCompletion(it.zoneId, it.num);
+      setZoneEv(p => { const d = new Set(p.done); if (it.done) d.delete(key); else d.add(key); return { ...p, done: d }; });
+      syncAfterChange().catch(() => {});
+    } catch { flash('완료 표시를 저장하지 못했습니다', true); }
+  }
   const weeks = monthWeeks(ym.y, ym.m, weekStartMon);
   const dowHead = weekStartMon ? [1, 2, 3, 4, 5, 6, 0] : [0, 1, 2, 3, 4, 5, 6];
   const shiftMonth = (n) => { const d = new Date(ym.y, ym.m - 1 + n, 1); setYm({ y: d.getFullYear(), m: d.getMonth() + 1 }); };
@@ -96,10 +128,10 @@ export default function WaterPlan({ adminUnlocked }) {
   }
 
   // ── 화면 ──
-  const selList = itemsOn(shown, sel);
+  const selList = dayItems(sel);
   const selGroups = groupItems(selList);
   const selDate = new Date(`${sel}T00:00:00`);
-  const monthTotal = weeks.flat().filter(d => d.startsWith(`${ym.y}-${String(ym.m).padStart(2, '0')}`)).reduce((n, d) => n + itemsOn(shown, d).reduce((s, it) => s + (Number(it.count) || 0), 0), 0);
+  const monthTotal = weeks.flat().filter(d => d.startsWith(`${ym.y}-${String(ym.m).padStart(2, '0')}`)).reduce((n, d) => n + dayItems(d).reduce((s, it) => s + (Number(it.count) || 0), 0), 0);
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto">
@@ -119,10 +151,10 @@ export default function WaterPlan({ adminUnlocked }) {
         </div>
         <span className="text-xs text-gray-400">이 달 채취 {monthTotal}개</span>
         <div className="ml-auto flex items-center gap-1.5 flex-wrap">
-          {['all', ...WATER_TYPE_KEYS].map(t => (
+          {['all', ...WATER_FILTER_KEYS].map(t => (
             <button key={t} type="button" onClick={() => setTypeFilter(t)}
               className={`px-3 py-1 rounded-full text-xs font-medium border ${typeFilter === t ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50 bg-white'}`}>
-              {t === 'all' ? '전체' : t}
+              {t === 'all' ? '전체' : WATER_TYPES[t].label}
             </button>
           ))}
         </div>
@@ -138,7 +170,7 @@ export default function WaterPlan({ adminUnlocked }) {
             <div key={wi} className="grid grid-cols-7 border-b border-gray-100 last:border-b-0">
               {wk.map(ds => {
                 const inMonth = ds.startsWith(`${ym.y}-${String(ym.m).padStart(2, '0')}`);
-                const list = itemsOn(shown, ds);
+                const list = dayItems(ds);
                 const groups = groupItems(list);
                 const total = list.reduce((n, it) => n + (Number(it.count) || 0), 0);
                 const dow = new Date(`${ds}T00:00:00`).getDay();
@@ -154,7 +186,7 @@ export default function WaterPlan({ adminUnlocked }) {
                       {groups.slice(0, 5).map(g => (
                         <div key={g.key} title={`${g.type} ${g.area} ${g.count}개`}
                           className={`flex items-center justify-between gap-1 px-1 py-0.5 rounded border text-[10px] leading-tight ${WATER_TYPES[g.type]?.chip || WATER_TYPES['기타'].chip}`}>
-                          <span className="truncate"><b>{g.type}</b> {g.area}</span>
+                          <span className="truncate"><b>{WATER_TYPES[g.type]?.label || g.type}</b> {g.area}</span>
                           <span className="shrink-0 font-semibold tabular-nums">{g.count}</span>
                         </div>
                       ))}
@@ -183,12 +215,19 @@ export default function WaterPlan({ adminUnlocked }) {
               : selGroups.map(g => (
                 <div key={g.key} className="border-b border-gray-100 last:border-b-0">
                   <div className="px-4 pt-2.5 pb-1 flex items-center gap-2">
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${WATER_TYPES[g.type]?.chip || WATER_TYPES['기타'].chip}`}>{g.type}</span>
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${WATER_TYPES[g.type]?.chip || WATER_TYPES['기타'].chip}`}>{WATER_TYPES[g.type]?.label || g.type}</span>
                     <span className="text-sm font-semibold text-gray-800">{g.area || '(구역 없음)'}</span>
                     <span className="ml-auto text-xs font-semibold text-gray-500 tabular-nums">{g.count}개</span>
                   </div>
                   <div className="px-4 pb-2.5 space-y-1.5">
-                    {g.items.map(it => (
+                    {g.items.map(it => it.zoneId ? (
+                      // 월별 모니터링 일정에서 옮겨 온 용수 구역 일정 — 더블클릭으로 완료 표시(달력의 완료 처리와 같은 기록)
+                      <div key={it.id} onDoubleClick={() => toggleZoneDone(it)} title={adminUnlocked ? '더블클릭: 완료 표시/취소' : ''}
+                        className={`text-xs rounded-md px-2 py-1.5 select-none flex items-center gap-1.5 ${it.done ? 'bg-green-100 text-green-800 line-through' : 'bg-gray-50 text-gray-600'} ${adminUnlocked ? 'cursor-pointer' : ''}`}>
+                        <span className="flex-1">{it.points}</span>
+                        {it.done && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-green-600 text-white no-underline">✓ 완료</span>}
+                      </div>
+                    ) : (
                       <div key={it.id} className="text-xs text-gray-600 bg-gray-50 rounded-md px-2 py-1.5">
                         <div className="flex items-start gap-1.5">
                           <span className="flex-1 break-words">{it.points || '—'}</span>
