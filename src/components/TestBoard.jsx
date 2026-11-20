@@ -55,9 +55,11 @@ const KIND_ORDER = ['daily', 'weekly', 'monthly', ''];
 const CAT_LABEL = { qual: '적격성평가', calib: '교정', bill: '청구서' };
 const CAT_BADGE = { qual: 'bg-indigo-100 text-indigo-700 border-indigo-300', calib: 'bg-teal-100 text-teal-700 border-teal-300', bill: 'bg-pink-100 text-pink-700 border-pink-300' };
 const CAT_STAGES = {
-  qual: ['대기', '계획서 작성', '계획서 작성 중', '계획서 완료', '시험 대기중', '보고서 작성', '보고서 작성 중', '보고서 완료'],
+  qual: ['대기', '계획서 작성 중', '계획서 완료', '시험 대기중', '시험 진행 중', '보고서 작성 중', '보고서 완료'],
   bill: ['견적서 발행', '청구서 작성', '교정/발송 대기', '계산서 발행', '지불품의서 작성'],
 };
+// 단계 이름을 바꾸기 전에 저장된 값은 새 이름으로 읽는다
+const LEGACY_STAGE = { '계획서 작성': '계획서 작성 중', '보고서 작성': '보고서 작성 중' };
 const badgeShort = (t) => (t.kind ? KIND_SHORT[t.kind] : t.cat ? CAT_LABEL[t.cat] : KIND_SHORT['']);
 const badgeCls = (t) => (t.kind ? KIND_BADGE[t.kind] : t.cat ? CAT_BADGE[t.cat] : KIND_BADGE['']);
 const stFinalCls = (stage, cat) => (stage === CAT_STAGES[cat][CAT_STAGES[cat].length - 1] ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-700 border-gray-300');
@@ -374,7 +376,7 @@ export default function TestBoard({ adminUnlocked, currentMember, onOpenPage }) 
   }
   // ── 진행 단계(적격성평가·청구서)와 개인 업무 ──
   // 단계는 담당자 각자가 고른다(관리자는 누구 것이든). 마지막 단계에 이르면 끝난 것으로 보고 칩에 완료 표시(빗금)만 한다.
-  const stageOf = (taskId, who, cat) => stages.find(x => x.id === `${taskId}|${who}`)?.stage || CAT_STAGES[cat]?.[0] || '';
+  const stageOf = (taskId, who, cat) => { const raw = stages.find(x => x.id === `${taskId}|${who}`)?.stage; return (raw && (LEGACY_STAGE[raw] || raw)) || CAT_STAGES[cat]?.[0] || ''; };
   async function changeStage(who, taskId, stage) {
     if (!(adminUnlocked || currentMember?.username === who)) { flash('본인의 업무만 진행 단계를 바꿀 수 있습니다.', true); return; }
     const id = `${taskId}|${who}`;
