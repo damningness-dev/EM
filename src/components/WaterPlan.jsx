@@ -30,9 +30,13 @@ export default function WaterPlan({ adminUnlocked }) {
   // 달력 설정(주 시작 요일·공휴일)은 월별 모니터링 일정과 같은 값을 쓴다
   const [weekStart, setWeekStart] = useState(() => { try { return localStorage.getItem('em-week-start') || 'sun'; } catch { return 'sun'; } });
   const weekStartMon = weekStart === 'mon';
+  // 토·일 칸 폭을 절반으로 줄여 평일 칸을 넓게 보기 — 월별 모니터링 일정의 '주말폭'과 같은 설정을 쓴다
+  const [narrowWeekend, setNarrowWeekend] = useState(() => { try { return localStorage.getItem('em-narrow-weekend') === '1'; } catch { return false; } });
+  function toggleNarrowWeekend() { setNarrowWeekend(v => { const n = !v; try { localStorage.setItem('em-narrow-weekend', n ? '1' : '0'); } catch { /* 저장 못 해도 이번 화면에는 적용된다 */ } return n; }); }
   const [holidayDefs, setHolidayDefs] = useState([]);
   const [calSettingsOpen, setCalSettingsOpen] = useState(false);
   const holidays = useMemo(() => buildHolidayMap(holidayDefs, ym.y - 1, ym.y + 1), [holidayDefs, ym.y]);
+  const weekCols = { gridTemplateColumns: narrowWeekend ? (weekStartMon ? 'repeat(5, minmax(0, 1fr)) repeat(2, minmax(0, 0.5fr))' : 'minmax(0, 0.5fr) repeat(5, minmax(0, 1fr)) minmax(0, 0.5fr)') : 'repeat(7, minmax(0, 1fr))' };
   function changeWeekStart(value) { setWeekStart(value); try { localStorage.setItem('em-week-start', value); } catch { /* 저장 못 해도 이번 화면에는 적용된다 */ } }
 
   function flash(text, isError) { setNotice({ text, isError }); setTimeout(() => setNotice(null), 2500); }
@@ -175,6 +179,9 @@ export default function WaterPlan({ adminUnlocked }) {
           <span className="px-3 text-lg font-bold text-gray-800 tabular-nums">{ym.y}년 {ym.m}월</span>
           <button type="button" onClick={() => shiftMonth(1)} className="w-8 h-8 rounded-full border border-gray-300 bg-white text-lg leading-none text-gray-600 hover:bg-gray-50" title="다음 달">›</button>
           <button type="button" onClick={goToday} className="ml-1 px-2.5 py-1 text-xs rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-50">오늘</button>
+          <button type="button" onClick={toggleNarrowWeekend}
+            title={narrowWeekend ? '주말(토·일) 칸이 평일의 절반 폭입니다 — 누르면 같은 폭으로' : '토·일 칸 폭을 절반으로 줄여 평일 칸을 넓게 봅니다'}
+            className={`ml-1 whitespace-nowrap px-2.5 py-1 text-xs font-medium rounded border transition-colors ${narrowWeekend ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100' : 'bg-white text-gray-500 border-gray-300 hover:bg-gray-50'}`}>↔ 주말폭</button>
         </div>
         <span className="text-xs text-gray-400">이 달 채취 {monthTotal}개</span>
         <div className="ml-auto flex items-center gap-1.5 flex-wrap">
@@ -201,11 +208,11 @@ export default function WaterPlan({ adminUnlocked }) {
       <div className="flex gap-4 items-start">
         {/* 달력 */}
         <div className="flex-1 min-w-0 bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="grid grid-cols-7 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-center">
+          <div style={weekCols} className="grid bg-gray-50 border-b border-gray-200 text-xs font-semibold text-center">
             {dowHead.map(d => <div key={d} className={`py-2 ${d === 0 ? 'text-red-500' : d === 6 ? 'text-blue-500' : 'text-gray-600'}`}>{DOW_KR[d]}</div>)}
           </div>
           {weeks.map((wk, wi) => (
-            <div key={wi} className="grid grid-cols-7 border-b border-gray-100 last:border-b-0">
+            <div key={wi} style={weekCols} className="grid border-b border-gray-100 last:border-b-0">
               {wk.map(ds => {
                 const inMonth = ds.startsWith(`${ym.y}-${String(ym.m).padStart(2, '0')}`);
                 const list = dayItems(ds);
