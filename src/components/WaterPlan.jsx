@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { fetchWaterPlan, saveWaterPlanItem, deleteWaterPlanItem, seedWaterPlan, syncAfterChange, fetchZones, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchCompletions, setCompletion, deleteCompletion, upsertZone } from '../lib/api';
 import { buildHolidayMap, setScheduleConfig, totalCount, calcEndDate } from '../lib/schedule';
 import WaterPlanManager from './WaterPlanManager';
+import CalendarSettingsDialog from './CalendarSettingsDialog';
 import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, isWaterZone } from '../lib/monitoringDay';
 import { WATER_PLAN_SEED } from '../data/waterPlanSeed';
 import { WATER_TYPES, WATER_TYPE_KEYS, WATER_FILTER_KEYS, WATER_REPEATS, DOW_KR, fmt, occursOn, itemsOn, groupItems, repeatLabel, monthWeeks, normalizeWaterItem } from '../lib/waterPlan';
@@ -26,7 +27,13 @@ export default function WaterPlan({ adminUnlocked }) {
   const [mgrOpen, setMgrOpen] = useState(false); // 일정 관리 창
   const seeding = useRef(false);
   const monthSet = useRef(false);
-  const weekStartMon = (() => { try { return localStorage.getItem('em-week-start') === 'mon'; } catch { return false; } })();
+  // 달력 설정(주 시작 요일·공휴일)은 월별 모니터링 일정과 같은 값을 쓴다
+  const [weekStart, setWeekStart] = useState(() => { try { return localStorage.getItem('em-week-start') || 'sun'; } catch { return 'sun'; } });
+  const weekStartMon = weekStart === 'mon';
+  const [holidayDefs, setHolidayDefs] = useState([]);
+  const [calSettingsOpen, setCalSettingsOpen] = useState(false);
+  const holidays = useMemo(() => buildHolidayMap(holidayDefs, ym.y - 1, ym.y + 1), [holidayDefs, ym.y]);
+  function changeWeekStart(value) { setWeekStart(value); try { localStorage.setItem('em-week-start', value); } catch { /* 저장 못 해도 이번 화면에는 적용된다 */ } }
 
   function flash(text, isError) { setNotice({ text, isError }); setTimeout(() => setNotice(null), 2500); }
 
@@ -62,11 +69,12 @@ export default function WaterPlan({ adminUnlocked }) {
     }).catch(() => setLoaded(true));
   }
   function loadZones() {
-    Promise.all([fetchZones(), fetchHolidays().catch(() => []), fetchBlockedDates().catch(() => []), fetchScheduleConfig().catch(() => null), fetchCompletions().catch(() => [])]).then(([zones, holidayDefs, blocked, cfg, comps]) => {
+    Promise.all([fetchZones(), fetchHolidays().catch(() => []), fetchBlockedDates().catch(() => []), fetchScheduleConfig().catch(() => null), fetchCompletions().catch(() => [])]).then(([zones, holDefs, blocked, cfg, comps]) => {
+      setHolidayDefs(holDefs || []);
       setScheduleConfig(mergeScheduleConfig(cfg)); // 일정 계산 함수가 읽는 주기 설정
       const water = (zones || []).map(z => z.category === '청정등급' ? { ...z, category: '공조' } : z).filter(isWaterZone);
       const y = new Date().getFullYear();
-      const avoid = { ...buildHolidayMap(holidayDefs || [], y - 1, y + 2) };
+      const avoid = { ...buildHolidayMap(holDefs || [], y - 1, y + 2) };
       (blocked || []).forEach(d => { if (!avoid[d]) avoid[d] = '일정비우기'; });
       const fmtD = (d) => (d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '');
       setWaterZones(water.map(zone => { let end = ''; try { end = fmtD(calcEndDate(zone, avoid)); } catch { /* 종료일을 계산할 수 없으면 비워 둔다 */ } return { zone, end }; }));
@@ -156,6 +164,7 @@ export default function WaterPlan({ adminUnlocked }) {
         <h1 className="text-2xl font-bold text-gray-800">💧 용수모니터링 일정</h1>
         {adminUnlocked && <button type="button" onClick={() => openDlg(null, sel)} className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">+ 일정 추가</button>}
         <button type="button" onClick={() => setMgrOpen(true)} className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50" title="용수 일정을 표로 보고 추가·수정·삭제합니다">⚙ 일정 관리</button>
+        <button type="button" onClick={() => setCalSettingsOpen(true)} className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50" title="주 시작 요일·공휴일 (월별 모니터링 일정과 같은 설정)">🗓 달력 설정</button>
         {!adminUnlocked && <span className="text-xs text-gray-400">🔒 보기 전용 — 관리자로 로그인하면 일정을 수정할 수 있습니다</span>}
         {notice && <span className={`text-xs font-medium ${notice.isError ? 'text-red-500' : 'text-green-600'}`}>{notice.text}</span>}
       </div>
@@ -204,11 +213,13 @@ export default function WaterPlan({ adminUnlocked }) {
                 const total = list.reduce((n, it) => n + (Number(it.count) || 0), 0);
                 const dow = new Date(`${ds}T00:00:00`).getDay();
                 const isSel = ds === sel;
+                const holName = inMonth ? holidays[ds] : '';
                 return (
                   <div key={ds} onClick={() => setSel(ds)}
-                    className={`min-h-[7.5rem] p-1.5 border-r border-gray-100 last:border-r-0 cursor-pointer transition-colors ${isSel ? 'bg-blue-50 ring-2 ring-inset ring-blue-400' : 'hover:bg-gray-50'} ${inMonth ? '' : 'opacity-40'}`}>
+                    className={`min-h-[7.5rem] p-1.5 border-r border-gray-100 last:border-r-0 cursor-pointer transition-colors ${isSel ? 'bg-blue-50 ring-2 ring-inset ring-blue-400' : holName ? 'bg-red-50/60 hover:bg-red-50' : 'hover:bg-gray-50'} ${inMonth ? '' : 'opacity-40'}`}>
                     <div className="flex items-center justify-between mb-1">
-                      <span className={`text-xs font-semibold ${ds === todayStr ? 'bg-blue-600 text-white rounded-full w-5 h-5 inline-flex items-center justify-center' : dow === 0 ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-gray-700'}`}>{parseInt(ds.slice(8))}</span>
+                      <span className={`text-xs font-semibold ${ds === todayStr ? 'bg-blue-600 text-white rounded-full w-5 h-5 inline-flex items-center justify-center' : (dow === 0 || holName) ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-gray-700'}`}>{parseInt(ds.slice(8))}</span>
+                      {holName && <span className="mx-1 flex-1 min-w-0 truncate text-[9px] leading-none text-red-500" title={holName}>{holName}</span>}
                       {total > 0 && <span className="text-[10px] font-semibold text-gray-500 tabular-nums" title="이 날 채취 개수">{total}개</span>}
                     </div>
                     <div className="space-y-0.5">
@@ -234,6 +245,7 @@ export default function WaterPlan({ adminUnlocked }) {
             <div>
               <p className="text-xs text-sky-100">{selDate.getFullYear()}년 {selDate.getMonth() + 1}월 · {DOW_KR[selDate.getDay()]}요일</p>
               <p className="text-lg font-bold">{selDate.getDate()}일 용수 채취</p>
+              {holidays[sel] && <p className="text-xs text-red-200 font-semibold mt-0.5">🎌 {holidays[sel]}</p>}
               <p className="text-xs text-sky-100 mt-0.5">{selGroups.length}개 구역 · {selList.reduce((n, it) => n + (Number(it.count) || 0), 0)}개</p>
             </div>
             {adminUnlocked && <button type="button" onClick={() => openDlg(null, sel)} className="px-2.5 py-1 text-xs font-medium bg-white/20 hover:bg-white/30 rounded-lg whitespace-nowrap">+ 추가</button>}
@@ -277,6 +289,11 @@ export default function WaterPlan({ adminUnlocked }) {
         </div>
       </div>
 
+      {calSettingsOpen && (
+        <CalendarSettingsDialog weekStart={weekStart} onChangeWeekStart={changeWeekStart} holidayDefs={holidayDefs} setHolidayDefs={setHolidayDefs}
+          year={ym.y} onClose={() => setCalSettingsOpen(false)}
+          onChanged={() => { loadZones(); syncAfterChange().catch(() => {}); }} />
+      )}
       {mgrOpen && (
         <WaterPlanManager items={items} waterZones={waterZones} adminUnlocked={adminUnlocked}
           onAdd={(type) => openDlg(null, sel, type)} onEdit={(it) => openDlg(it)} onRemove={removeItem} onSaveZone={saveZone} onClose={() => setMgrOpen(false)} />
