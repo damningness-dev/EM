@@ -17,6 +17,7 @@ try { app.setAppUserModelId('com.em.monitoring'); } catch { /* ignore */ }
 // 업데이트 채널 — 'stable'(정식, 모든 PC 기본값) / 'test'(테스트, 이 PC 설정에서 켠 경우만).
 // 정식은 "latest" 릴리즈, 테스트는 작업 브랜치에 push할 때마다 덮어 올리는 고정 태그 'test' 릴리즈에서 받는다.
 const RELEASE_BASE = 'https://github.com/damningness-dev/EM/releases';
+function mainWindowTitle() { return `환경 모니터링 관리 시스템  v${app.getVersion()}${getUpdateChannel() === 'test' ? '  [테스트 버전]' : ''}`; }
 function getUpdateChannel() { try { return loadPrefs().updateChannel === 'test' ? 'test' : 'stable'; } catch { return 'stable'; } }
 function releaseFileUrl(name) { return getUpdateChannel() === 'test' ? `${RELEASE_BASE}/download/test/${name}` : `${RELEASE_BASE}/latest/download/${name}`; }
 const metaUrl = () => releaseFileUrl('app-meta.json');
@@ -1740,9 +1741,11 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
-    title: '환경 모니터링 관리 시스템',
+    title: mainWindowTitle(),
     backgroundColor: '#f3f4f6',
   });
+  // 창 제목 표시줄에 현재 버전(테스트 채널이면 표시)을 보여준다 — 페이지의 <title>이 덮어쓰지 못하게 막는다.
+  mainWin.on('page-title-updated', (e) => { e.preventDefault(); });
 
   if (isDev) {
     mainWin.loadURL('http://localhost:5173');
@@ -1868,6 +1871,7 @@ function registerHandlers() {
     try { fs.unlinkSync(getUpdatePath()); } catch { /* 받아 둔 파일이 없으면 그만 */ }
     try { fs.unlinkSync(getUpdateMetaPath()); } catch { /* 없으면 그만 */ }
     checkForUpdate({ manual: true }).catch(() => {});
+    try { mainWin?.setTitle(mainWindowTitle()); } catch { /* 창이 없으면 그만 */ }
     return { ok: true, channel: p.updateChannel };
   });
   ipcMain.handle('app:restart', () => { app.relaunch(); app.exit(0); });
@@ -2592,6 +2596,12 @@ function registerHandlers() {
       date,
       note: String(x?.note || '').trim().slice(0, 200),
     };
+    // 드래그로 옮긴 회차: { 원래날짜: 옮긴날짜 } (날짜 형식만, 최대 400개)
+    const D = /^\d{4}-\d{2}-\d{2}$/;
+    if (x?.moves && typeof x.moves === 'object') {
+      const mv = Object.entries(x.moves).filter(([k, v]) => D.test(k) && D.test(String(v)) && k !== v).slice(-400);
+      if (mv.length) out.moves = Object.fromEntries(mv);
+    }
     return out.points || out.area ? out : null;
   };
   ipcMain.handle('waterPlan:list', () => {

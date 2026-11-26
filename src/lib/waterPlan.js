@@ -39,6 +39,63 @@ export function occursOn(item, ds) {
 
 export const itemsOn = (items, ds) => (items || []).filter(it => occursOn(it, ds));
 
+// ── 일정 옮기기(드래그) · 공휴일 피하기 ─────────────────────────────────────────
+// 반복 일정의 한 회(원래 날짜 = base)는 그 주기 안에서만 옮길 수 있다.
+//   매주 → 그 주(월~일), 매월 → 그 달, 한 번 → 그 달.
+// 옮긴 날짜는 항목의 moves[base] = 'yyyy-MM-dd'로 저장한다.
+// 공휴일·일정비우기(avoid)에 걸리면 같은 주기 안의 가장 가까운 다음 평일로(없으면 앞 평일로) 자동으로 옮겨 보여준다.
+// 공휴일을 나중에 지정해도 화면을 그릴 때 계산하므로 그 회는 저절로 다른 날로 옮겨진다.
+const addD = (ds, n) => { const d = parse(ds); d.setDate(d.getDate() + n); return fmt(d); };
+export function cycleWindow(item, base) {
+  const d = parse(base);
+  if (item.repeat === 'weekly') {
+    const back = (d.getDay() + 6) % 7; // 월요일까지
+    const min = addD(base, -back);
+    return { min, max: addD(min, 6), label: '같은 주(월~일)' };
+  }
+  const min = fmt(new Date(d.getFullYear(), d.getMonth(), 1));
+  const max = fmt(new Date(d.getFullYear(), d.getMonth() + 1, 0));
+  return { min, max, label: '같은 달' };
+}
+const isWeekend = (ds) => { const g = parse(ds).getDay(); return g === 0 || g === 6; };
+// avoid에 걸린 날을 주기 안의 다른 평일로 옮긴다(다음 평일 우선, 없으면 앞 평일). 못 찾으면 그대로.
+export function shiftOffAvoid(ds, win, avoid = {}) {
+  if (!avoid[ds]) return ds;
+  for (let i = 1; i <= 31; i++) {
+    const f = addD(ds, i); if (f <= win.max && !avoid[f] && !isWeekend(f)) return f;
+  }
+  for (let i = 1; i <= 31; i++) {
+    const b = addD(ds, -i); if (b >= win.min && !avoid[b] && !isWeekend(b)) return b;
+  }
+  return ds;
+}
+// 화면에 보일 기간 [from, to]의 실제 일정 날짜 → [{ ...item, _base, _moved, _shifted }]
+export function buildOccurrenceMap(items, from, to, avoid = {}) {
+  const map = {};
+  const lo = addD(from, -40), hi = addD(to, 40); // 주기 밖으로는 못 옮기므로 앞뒤 한 달 남짓만 보면 된다
+  for (const it of items || []) {
+    if (!it?.date) continue;
+    const bases = [];
+    if (it.repeat === 'once') { if (it.date >= lo && it.date <= hi) bases.push(it.date); }
+    else {
+      let ds = it.date > lo ? it.date : lo;
+      // 시작 요일에 맞춰 7일씩 건너뛴다
+      const diff = ((parse(it.date).getDay() - parse(ds).getDay()) + 7) % 7;
+      ds = addD(ds, diff);
+      for (; ds <= hi; ds = addD(ds, 7)) if (occursOn(it, ds)) bases.push(ds);
+    }
+    for (const base of bases) {
+      const win = cycleWindow(it, base);
+      const mv = it.moves?.[base];
+      const want = mv && mv >= win.min && mv <= win.max ? mv : base;
+      const date = shiftOffAvoid(want, win, avoid);
+      if (date < from || date > to) continue;
+      (map[date] || (map[date] = [])).push({ ...it, _base: base, _moved: want !== base, _shifted: date !== want ? avoid[want] || '공휴일' : '' });
+    }
+  }
+  return map;
+}
+
 // 같은 종류·구역끼리 묶어 개수를 합친다(달력 칸에 짧게 보여주기 위함)
 export function groupItems(list) {
   const map = new Map();

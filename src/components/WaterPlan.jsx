@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { fetchWaterPlan, saveWaterPlanItem, deleteWaterPlanItem, seedWaterPlan, syncAfterChange, fetchZones, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchCompletions, setCompletion, deleteCompletion, upsertZone } from '../lib/api';
-import { buildHolidayMap, setScheduleConfig, totalCount, calcEndDate } from '../lib/schedule';
+import { buildHolidayMap, setScheduleConfig, totalCount, calcEndDate, getDragBounds } from '../lib/schedule';
 import WaterPlanManager from './WaterPlanManager';
 import CalendarSettingsDialog from './CalendarSettingsDialog';
 import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, isWaterZone } from '../lib/monitoringDay';
 import { WATER_PLAN_SEED } from '../data/waterPlanSeed';
-import { WATER_TYPES, WATER_TYPE_KEYS, WATER_FILTER_KEYS, WATER_REPEATS, DOW_KR, fmt, occursOn, itemsOn, groupItems, repeatLabel, monthWeeks, normalizeWaterItem } from '../lib/waterPlan';
+import { WATER_TYPES, WATER_TYPE_KEYS, WATER_FILTER_KEYS, WATER_REPEATS, DOW_KR, fmt, occursOn, groupItems, buildOccurrenceMap, cycleWindow, repeatLabel, monthWeeks, normalizeWaterItem } from '../lib/waterPlan';
 
 // 용수모니터링 일정 — 첨부된 '용수 모니터링 계획' 엑셀(주간용수 WFI·UF / PW / PS / 용수 달력)을 달력으로 옮긴 화면.
 // 날짜 칸에 그 날 채취할 구역(종류별 색)과 개수가 보이고, 날짜를 누르면 사용점 번호까지 자세히 나온다.
@@ -25,6 +25,10 @@ export default function WaterPlan({ adminUnlocked }) {
   const [zoneEv, setZoneEv] = useState({ byDate: {}, done: new Set() });
   const [waterZones, setWaterZones] = useState([]); // [{ zone, end }] — 일정 관리 창의 '용수 구역' 탭용
   const [mgrOpen, setMgrOpen] = useState(false); // 일정 관리 창
+  const [zoneList, setZoneList] = useState([]); // 용수 구역 원본(드래그로 회차를 옮길 때 저장용)
+  const [blocked, setBlocked] = useState([]); // 일정비우기 날짜
+  const [alertDlg, setAlertDlg] = useState(null); // { title, message } — 옮길 수 없을 때 알림창
+  const [dragOver, setDragOver] = useState(null); // 드래그 중 마우스가 올라간 날짜
   const seeding = useRef(false);
   const monthSet = useRef(false);
   // 달력 설정(주 시작 요일·공휴일)은 월별 모니터링 일정과 같은 값을 쓴다
@@ -36,6 +40,8 @@ export default function WaterPlan({ adminUnlocked }) {
   const [holidayDefs, setHolidayDefs] = useState([]);
   const [calSettingsOpen, setCalSettingsOpen] = useState(false);
   const holidays = useMemo(() => buildHolidayMap(holidayDefs, ym.y - 1, ym.y + 1), [holidayDefs, ym.y]);
+  // 일정을 피할 날 = 공휴일 + 일정비우기 (월별 모니터링 일정과 같은 기준)
+  const avoidMap = useMemo(() => { const m = { ...holidays }; blocked.forEach(d => { if (!m[d]) m[d] = '일정비우기'; }); return m; }, [holidays, blocked]);
   const weekCols = { gridTemplateColumns: narrowWeekend ? (weekStartMon ? 'repeat(5, minmax(0, 1fr)) repeat(2, minmax(0, 0.5fr))' : 'minmax(0, 0.5fr) repeat(5, minmax(0, 1fr)) minmax(0, 0.5fr)') : 'repeat(7, minmax(0, 1fr))' };
   function changeWeekStart(value) { setWeekStart(value); try { localStorage.setItem('em-week-start', value); } catch { /* 저장 못 해도 이번 화면에는 적용된다 */ } }
 
@@ -75,11 +81,19 @@ export default function WaterPlan({ adminUnlocked }) {
   function loadZones() {
     Promise.all([fetchZones(), fetchHolidays().catch(() => []), fetchBlockedDates().catch(() => []), fetchScheduleConfig().catch(() => null), fetchCompletions().catch(() => [])]).then(([zones, holDefs, blocked, cfg, comps]) => {
       setHolidayDefs(holDefs || []);
+      setBlocked(blocked || []);
       setScheduleConfig(mergeScheduleConfig(cfg)); // 일정 계산 함수가 읽는 주기 설정
-      const water = (zones || []).map(z => z.category === '청정등급' ? { ...z, category: '공조' } : z).filter(isWaterZone);
+      const raw = (zones || []).filter(z => isWaterZone(z.category === '청정등급' ? { ...z, category: '공조' } : z));
+      setZoneList(raw);
       const y = new Date().getFullYear();
       const avoid = { ...buildHolidayMap(holDefs || [], y - 1, y + 2) };
       (blocked || []).forEach(d => { if (!avoid[d]) avoid[d] = '일정비우기'; });
+      // 옮겨 둔 회차가 나중에 공휴일·일정비우기가 되면 그 옮김은 무시하고 자동 배치(공휴일을 피한 날)로 계산한다
+      const water = raw.map(z => {
+        const zz = z.category === '청정등급' ? { ...z, category: '공조' } : z;
+        const ov = Object.fromEntries(Object.entries(zz.schedule_overrides || {}).filter(([, d]) => !avoid[d]));
+        return { ...zz, schedule_overrides: ov };
+      });
       const fmtD = (d) => (d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '');
       setWaterZones(water.map(zone => { let end = ''; try { end = fmtD(calcEndDate(zone, avoid)); } catch { /* 종료일을 계산할 수 없으면 비워 둔다 */ } return { zone, end }; }));
       setZoneEv({ byDate: buildScheduleByDate(water, avoid, buildZoneOrderRank(water)), done: new Set((comps || []).map(c => `${c.zoneId}_${c.num}`)) });
@@ -99,9 +113,9 @@ export default function WaterPlan({ adminUnlocked }) {
     id: `z${zone.id}_${measurement.num}`, zoneId: zone.id, num: measurement.num, type: '구역', area: zone.name,
     points: `${zone.grade ? zone.grade + ' ' : ''}${measurement.num}/${totalCount(zone)}회차`,
     count: ((zone.points_float || 0) + (zone.points_fall || 0) + (zone.points_surface || 0) + (zone.points_particle || 0)) || 1,
-    repeat: 'once', date: ds, done: zoneEv.done.has(`${zone.id}_${measurement.num}`),
+    repeat: 'once', date: ds, done: zoneEv.done.has(`${zone.id}_${measurement.num}`), measurement,
   }));
-  const dayItems = (ds) => [...itemsOn(shown, ds), ...(typeFilter === 'all' || typeFilter === '구역' ? zoneItemsOn(ds) : [])];
+  const dayItems = (ds) => [...(occMap[ds] || []), ...(typeFilter === 'all' || typeFilter === '구역' ? zoneItemsOn(ds) : [])];
   // 용수 구역 일정 완료/취소(월별 모니터링 일정의 완료 처리와 같은 기록)
   async function toggleZoneDone(it) {
     if (!adminUnlocked) { flash('관리자만 완료 표시를 할 수 있습니다.', true); return; }
@@ -113,6 +127,85 @@ export default function WaterPlan({ adminUnlocked }) {
     } catch { flash('완료 표시를 저장하지 못했습니다', true); }
   }
   const weeks = monthWeeks(ym.y, ym.m, weekStartMon);
+  // 화면에 보이는 기간의 실제 일정(옮긴 회차·공휴일 자동 이동 반영)
+  const occMap = useMemo(() => buildOccurrenceMap(shown, weeks[0][0], weeks[weeks.length - 1][6], avoidMap),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, typeFilter, avoidMap, weeks[0][0], weeks.length]);
+
+  // ── 드래그로 일정 옮기기(관리자) ──
+  // 칩(같은 종류·구역 묶음) 또는 오른쪽 목록의 한 건을 다른 날짜로 끌어 놓는다.
+  // 주기(매주=같은 주, 매월·한 번=같은 달, 용수 구역=측정주기 창)를 벗어나거나 공휴일·일정비우기면 막고 알림창을 띄운다.
+  const md = (ds) => `${Number(ds.slice(5, 7))}/${Number(ds.slice(8, 10))}(${DOW_KR[new Date(`${ds}T00:00:00`).getDay()]})`;
+  const dragPayload = (from, list) => JSON.stringify({ from, members: list.map(it => (it.zoneId ? { kind: 'zone', zoneId: it.zoneId, num: it.num } : { kind: 'item', id: it.id, base: it._base })) });
+  function onDragStartItems(e, from, list) {
+    if (!adminUnlocked) { e.preventDefault(); return; }
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', dragPayload(from, list));
+  }
+  async function handleDrop(target, raw) {
+    setDragOver(null);
+    if (!adminUnlocked) { flash('관리자만 일정을 옮길 수 있습니다.', true); return; }
+    let data; try { data = JSON.parse(raw); } catch { return; }
+    if (!data?.members?.length || data.from === target) return;
+    if (avoidMap[target]) {
+      setAlertDlg({ title: '일정을 옮길 수 없습니다', message: `${md(target)}은(는) ${avoidMap[target] === '일정비우기' ? '일정비우기로 지정된 날' : `공휴일(${avoidMap[target]})`}이라 일정을 잡을 수 없습니다.` });
+      return;
+    }
+    const zoneLabel = (m) => (m.type === 'weekly' || m.type === 'biweekly') ? '같은 주(월~일)'
+      : m.type === 'daily' ? '측정 주간' : m.spanMonths === 3 ? '같은 분기' : m.spanMonths === 6 ? '같은 반기' : m.spanMonths === 12 ? '같은 해' : '같은 달';
+    const plan = [], bad = [];
+    for (const mem of data.members) {
+      if (mem.kind === 'item') {
+        const it = items.find(x => x.id === mem.id);
+        if (!it || !mem.base) continue;
+        const win = cycleWindow(it, mem.base);
+        const name = `${it.type} ${it.area || it.points?.slice(0, 15) || ''} (${repeatLabel(it)})`;
+        if (target < win.min || target > win.max) bad.push(`• ${name}: ${win.label} ${md(win.min)} ~ ${md(win.max)}`);
+        else plan.push({ kind: 'item', it, base: mem.base });
+      } else {
+        const ev = (zoneEv.byDate[data.from] || []).find(x => x.zone.id === mem.zoneId && x.measurement.num === mem.num);
+        const zone = zoneList.find(z => z.id === mem.zoneId);
+        if (!ev || !zone) continue;
+        if (zoneEv.done.has(`${mem.zoneId}_${mem.num}`)) { bad.push(`• 용수구역 ${zone.name}[${zone.grade}] ${mem.num}회차: 완료된 회차는 옮길 수 없습니다`); continue; }
+        const b = getDragBounds(ev.measurement, avoidMap);
+        const min = fmt(b.min), max = fmt(b.max);
+        const name = `용수구역 ${zone.name}[${zone.grade}] ${mem.num}회차`;
+        // 앞 회차보다 앞선 날로는 옮길 수 없다(측정 순서 유지)
+        let prevDs = null;
+        Object.entries(zoneEv.byDate).forEach(([ds, arr]) => { if (arr.some(x => x.zone.id === mem.zoneId && x.measurement.num === mem.num - 1)) prevDs = ds; });
+        if (target < min || target > max) bad.push(`• ${name}: ${zoneLabel(ev.measurement)} ${md(min)} ~ ${md(max)}`);
+        else if (prevDs && target <= prevDs) bad.push(`• ${name}: 앞 회차(${md(prevDs)})보다 뒤로만 옮길 수 있습니다`);
+        else plan.push({ kind: 'zone', zone, num: mem.num });
+      }
+    }
+    if (bad.length) {
+      setAlertDlg({ title: '주기에서 벗어난 날짜입니다', message: `${md(target)}(으)로는 옮길 수 없습니다. 아래 기간 안에서만 옮길 수 있습니다.\n\n${bad.join('\n')}` });
+      return;
+    }
+    if (!plan.length) return;
+    try {
+      const saved = [];
+      for (const p of plan) {
+        if (p.kind === 'item') {
+          const moves = { ...(p.it.moves || {}) };
+          if (target === p.base) delete moves[p.base]; else moves[p.base] = target;
+          const next = { ...p.it, moves };
+          const r = await saveWaterPlanItem(next);
+          if (r?.ok === false) throw new Error(r.error || '저장 실패');
+          saved.push(next);
+        } else {
+          const ov = { ...(p.zone.schedule_overrides || {}) };
+          ov[String(p.num)] = target;
+          Object.keys(ov).forEach(k => { if (Number(k) > p.num) delete ov[k]; }); // 뒤 회차는 새 날짜 기준으로 다시 배치
+          await upsertZone({ ...p.zone, schedule_overrides: ov });
+        }
+      }
+      if (saved.length) setItems(list => list.map(x => saved.find(y => y.id === x.id) || x));
+      if (plan.some(p => p.kind === 'zone')) loadZones();
+      syncAfterChange().catch(() => {});
+      flash(`${plan.length}건을 ${md(target)}(으)로 옮겼습니다.`);
+    } catch (err) { flash(`옮기지 못했습니다: ${err.message || ''}`, true); }
+  }
   const dowHead = weekStartMon ? [1, 2, 3, 4, 5, 6, 0] : [0, 1, 2, 3, 4, 5, 6];
   const shiftMonth = (n) => { const d = new Date(ym.y, ym.m - 1 + n, 1); setYm({ y: d.getFullYear(), m: d.getMonth() + 1 }); };
   const goToday = () => { setYm({ y: now.getFullYear(), m: now.getMonth() + 1 }); setSel(todayStr); };
@@ -223,20 +316,27 @@ export default function WaterPlan({ adminUnlocked }) {
                 const holName = inMonth ? holidays[ds] : '';
                 return (
                   <div key={ds} onClick={() => setSel(ds)}
-                    className={`min-h-[7.5rem] p-1.5 border-r border-gray-100 last:border-r-0 cursor-pointer transition-colors ${isSel ? 'bg-blue-50 ring-2 ring-inset ring-blue-400' : holName ? 'bg-red-50/60 hover:bg-red-50' : 'hover:bg-gray-50'} ${inMonth ? '' : 'opacity-40'}`}>
+                    onDragOver={adminUnlocked ? (e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (dragOver !== ds) setDragOver(ds); }) : undefined}
+                    onDragLeave={adminUnlocked ? (e => { if (!e.relatedTarget || !e.currentTarget.contains(e.relatedTarget)) setDragOver(null); }) : undefined}
+                    onDrop={adminUnlocked ? (e => { e.preventDefault(); handleDrop(ds, e.dataTransfer.getData('text/plain')); }) : undefined}
+                    className={`min-h-[7.5rem] p-1.5 border-r border-gray-100 last:border-r-0 cursor-pointer transition-colors ${dragOver === ds ? (avoidMap[ds] ? 'bg-red-100 ring-2 ring-inset ring-red-400' : 'bg-blue-100 ring-2 ring-inset ring-blue-500') : isSel ? 'bg-blue-50 ring-2 ring-inset ring-blue-400' : holName ? 'bg-red-50/60 hover:bg-red-50' : 'hover:bg-gray-50'} ${inMonth ? '' : 'opacity-40'}`}>
                     <div className="flex items-center justify-between mb-1">
                       <span className={`text-xs font-semibold ${ds === todayStr ? 'bg-blue-600 text-white rounded-full w-5 h-5 inline-flex items-center justify-center' : (dow === 0 || holName) ? 'text-red-500' : dow === 6 ? 'text-blue-500' : 'text-gray-700'}`}>{parseInt(ds.slice(8))}</span>
                       {holName && <span className="mx-1 flex-1 min-w-0 truncate text-[9px] leading-none text-red-500" title={holName}>{holName}</span>}
                       {total > 0 && <span className="text-[10px] font-semibold text-gray-500 tabular-nums" title="이 날 채취 개수">{total}개</span>}
                     </div>
                     <div className="space-y-0.5">
-                      {groups.slice(0, 5).map(g => (
-                        <div key={g.key} title={`${g.type} ${g.area} ${g.count}개`}
-                          className={`flex items-center justify-between gap-1 px-1 py-0.5 rounded border text-[10px] leading-tight ${WATER_TYPES[g.type]?.chip || WATER_TYPES['기타'].chip}`}>
-                          <span className="truncate"><b>{WATER_TYPES[g.type]?.label || g.type}</b> {g.area}</span>
+                      {groups.slice(0, 5).map(g => {
+                        const moved = g.items.some(it => it._moved || it._shifted);
+                        const tip = [`${g.type} ${g.area} ${g.count}개`, ...g.items.filter(it => it._shifted || it._moved).map(it => (it._shifted ? `↪ ${it._shifted}이라 ${md(it.moves?.[it._base] || it._base)}에서 자동으로 옮김` : `↪ ${md(it._base)}에서 옮김`)), adminUnlocked ? '끌어서 다른 날짜로 옮길 수 있습니다(주기 안에서만)' : ''].filter(Boolean).join('\n');
+                        return (
+                        <div key={g.key} title={tip} draggable={adminUnlocked} onDragStart={e => onDragStartItems(e, ds, g.items)} onDragEnd={() => setDragOver(null)}
+                          className={`flex items-center justify-between gap-1 px-1 py-0.5 rounded border text-[10px] leading-tight ${adminUnlocked ? 'cursor-grab active:cursor-grabbing' : ''} ${WATER_TYPES[g.type]?.chip || WATER_TYPES['기타'].chip}`}>
+                          <span className="truncate"><b>{WATER_TYPES[g.type]?.label || g.type}</b> {g.area}{moved && <span className="ml-0.5 text-amber-600 font-bold">↪</span>}</span>
                           <span className="shrink-0 font-semibold tabular-nums">{g.count}</span>
                         </div>
-                      ))}
+                        );
+                      })}
                       {groups.length > 5 && <div className="text-[10px] text-gray-400 px-1">+{groups.length - 5}건 더</div>}
                     </div>
                   </div>
@@ -270,13 +370,16 @@ export default function WaterPlan({ adminUnlocked }) {
                   <div className="px-4 pb-2.5 space-y-1.5">
                     {g.items.map(it => it.zoneId ? (
                       // 월별 모니터링 일정에서 옮겨 온 용수 구역 일정 — 더블클릭으로 완료 표시(달력의 완료 처리와 같은 기록)
-                      <div key={it.id} onDoubleClick={() => toggleZoneDone(it)} title={adminUnlocked ? '더블클릭: 완료 표시/취소' : ''}
+                      <div key={it.id} onDoubleClick={() => toggleZoneDone(it)} title={adminUnlocked ? '더블클릭: 완료 표시/취소 · 끌어서 달력의 다른 날짜로 옮기기' : ''}
+                        draggable={adminUnlocked && !it.done} onDragStart={e => onDragStartItems(e, sel, [it])} onDragEnd={() => setDragOver(null)}
                         className={`text-xs rounded-md px-2 py-1.5 select-none flex items-center gap-1.5 ${it.done ? 'bg-green-100 text-green-800 line-through' : 'bg-gray-50 text-gray-600'} ${adminUnlocked ? 'cursor-pointer' : ''}`}>
                         <span className="flex-1">{it.points}</span>
                         {it.done && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-green-600 text-white no-underline">✓ 완료</span>}
                       </div>
                     ) : (
-                      <div key={it.id} className="text-xs text-gray-600 bg-gray-50 rounded-md px-2 py-1.5">
+                      <div key={it.id} className={`text-xs text-gray-600 bg-gray-50 rounded-md px-2 py-1.5 ${adminUnlocked ? 'cursor-grab active:cursor-grabbing' : ''}`}
+                        draggable={adminUnlocked} onDragStart={e => onDragStartItems(e, sel, [it])} onDragEnd={() => setDragOver(null)}
+                        title={adminUnlocked ? '끌어서 달력의 다른 날짜로 옮길 수 있습니다(주기 안에서만)' : ''}>
                         <div className="flex items-start gap-1.5">
                           <span className="flex-1 break-words">{it.points || '—'}</span>
                           {adminUnlocked && (
@@ -287,6 +390,12 @@ export default function WaterPlan({ adminUnlocked }) {
                           )}
                         </div>
                         <div className="mt-0.5 text-[10px] text-gray-400">{it.count}개 · {repeatLabel(it)}{it.note ? ` · ${it.note}` : ''}</div>
+                        {it._shifted && <div className="mt-0.5 text-[10px] font-semibold text-amber-600">↪ {it._shifted}이라 {md(it.moves?.[it._base] || it._base)}에서 자동으로 옮김</div>}
+                        {!it._shifted && it._moved && (
+                          <div className="mt-0.5 text-[10px] font-semibold text-amber-600 flex items-center gap-1">↪ {md(it._base)}에서 옮김
+                            {adminUnlocked && <button type="button" onClick={() => handleDrop(it._base, dragPayload(sel, [it]))} className="text-blue-600 font-normal hover:underline">원래 날짜로</button>}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -359,6 +468,19 @@ export default function WaterPlan({ adminUnlocked }) {
           </div>
         );
       })()}
+
+      {/* 알림창 — 주기를 벗어나거나 공휴일로 옮기려 할 때 */}
+      {alertDlg && (
+        <div className="fixed inset-0 z-[410] flex items-center justify-center bg-black/40" onClick={() => setAlertDlg(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[26rem] max-w-[95vw] p-5 border-t-4 border-amber-400" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-amber-700 mb-2">⚠ {alertDlg.title}</h3>
+            <p className="text-sm text-gray-700 whitespace-pre-line mb-4">{alertDlg.message}</p>
+            <div className="flex justify-end">
+              <button type="button" autoFocus onClick={() => setAlertDlg(null)} className="px-4 py-2 text-sm font-semibold text-white bg-amber-500 rounded-lg hover:bg-amber-600">확인</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 확인 창(기본 confirm()은 Electron에서 입력칸이 먹통이 되는 일이 있어 화면 안 창을 쓴다) */}
       {confirmDlg && (

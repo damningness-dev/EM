@@ -29,6 +29,7 @@ const MENU = [
   // 개인별 업무표(예전 TEST 메뉴, id는 권한 호환을 위해 'test' 그대로) — 관리자는 허용 목록에 체크하지 않아도 항상 보이고, 다른 계정은 권한 설정에서 허용해야 보인다.
   // 예전 '주간근무' 메뉴는 없앴다(직원 관리와 업무 배치는 이 화면에서 한다).
   { id: 'test', label: '개인별 업무표', icon: '👥', adminAlways: true },
+  { id: 'usagepoints', label: '업무별 진행상황', icon: '📍' },
   { id: 'calendar', label: '월별 모니터링 일정', icon: '📆' },
   // 용수모니터링 일정(WFI·UF·PW·PS 채취 계획) — 관리자는 항상 보이고, 다른 계정은 권한 설정에서 허용해야 보인다.
   { id: 'water', label: '용수모니터링 일정', icon: '💧', adminAlways: true },
@@ -36,7 +37,6 @@ const MENU = [
   { id: 'gantt',  label: '간트 차트',  icon: '📊' },
   { id: 'annual', label: '연간 계획 (AHU)', icon: '🔧' },
   { id: 'calibration', label: '교정 관리', icon: '⚙️' },
-  { id: 'usagepoints', label: '업무별 진행상황', icon: '📍' },
   // requiresLogin: 게스트 메뉴 제한을 꺼둔(전체 공개) PC에서도 로그인하지 않으면
   // 절대 보이지 않는다 — 권한 설정의 "로그인하지 않았을 때" 허용 목록과 무관하게
   // 아래 visibleMenu에서 항상 걸러진다.
