@@ -251,6 +251,13 @@ export async function toggleTodoDone(id, dateStr) {
 
 // ─── 부팅 시 자동 시작 ────────────────────────────────────────────────────────
 
+// 업데이트 채널(이 PC에만 저장): 'stable' 정식 / 'test' 테스트 — { channel, version }
+export async function getUpdateChannel() {
+  return api.invoke('update:getChannel');
+}
+export async function setUpdateChannel(channel) {
+  return api.invoke('update:setChannel', channel);
+}
 export async function getAutoStart() {
   return api.invoke('app:getAutoStart');
 }

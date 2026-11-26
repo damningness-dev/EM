@@ -19,7 +19,7 @@ import BackupControl from './components/BackupControl';
 import Login from './components/Login';
 import MemberManager from './components/MemberManager';
 import ChangePasswordModal from './components/ChangePasswordModal';
-import { syncGetConfig, seedInitialData, fetchScheduleConfig, getAutoStart, setAutoStart, adminIsUnlocked, setCurrentMemberOnMain, fetchGuestAccess, memberChangePassword, fetchMembers, syncAfterChange, syncWarningText } from './lib/api';
+import { syncGetConfig, seedInitialData, fetchScheduleConfig, getAutoStart, setAutoStart, getUpdateChannel, setUpdateChannel, adminIsUnlocked, setCurrentMemberOnMain, fetchGuestAccess, memberChangePassword, fetchMembers, syncAfterChange, syncWarningText } from './lib/api';
 import { setScheduleConfig } from './lib/schedule';
 import { INITIAL_CALIBRATION, MONITORING_ZONES } from './data/initialData';
 
@@ -49,6 +49,7 @@ export default function App() {
   const [year, setYear] = useState(new Date().getFullYear());
   const [ready, setReady] = useState(false);
   const [autoStart, setAutoStartState] = useState(false);
+  const [updChannel, setUpdChannel] = useState(null); // { channel: 'stable'|'test', version } — 이 PC의 업데이트 채널
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [showMemberChangePassword, setShowMemberChangePassword] = useState(false);
   const [scheduleJumpTarget, setScheduleJumpTarget] = useState(null); // {date, zoneId, num} — 구역별 현황 등에서 특정 일정으로 이동
@@ -204,6 +205,7 @@ export default function App() {
 
   useEffect(() => {
     if (window.electronAPI) getAutoStart().then(setAutoStartState).catch(() => {});
+    if (window.electronAPI) getUpdateChannel().then(r => { if (r?.channel) setUpdChannel(r); }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -304,6 +306,16 @@ export default function App() {
           <label className="mx-4 mb-2 flex items-center gap-2 text-xs text-gray-400 cursor-pointer select-none">
             <input type="checkbox" checked={autoStart} onChange={e => toggleAutoStart(e.target.checked)} />
             부팅 시 자동 시작 (백그라운드 알람)
+          </label>
+        )}
+        {/* 테스트 채널 — 켠 PC만 작업 중인 버전(테스트 릴리즈)으로 업데이트된다. 다른 PC는 정식 배포만 받는다.
+            스위치는 관리자에게만 보이고, 테스트 채널인 PC에는 누구에게나 표시가 남는다. */}
+        {window.electronAPI && updChannel && (adminUnlocked || updChannel.channel === 'test') && (
+          <label className={`mx-4 mb-2 flex items-center gap-2 text-xs cursor-pointer select-none ${updChannel.channel === 'test' ? 'text-amber-300' : 'text-gray-400'}`}
+            title={updChannel.channel === 'test' ? '이 PC는 테스트 버전으로 업데이트됩니다. 끄면 다음 정식 배포부터 정식 버전을 받습니다.' : '켜면 이 PC만 작업 중인 테스트 버전으로 업데이트됩니다(다른 PC는 영향 없음).'}>
+            <input type="checkbox" checked={updChannel.channel === 'test'} disabled={!adminUnlocked}
+              onChange={async e => { const ch = e.target.checked ? 'test' : 'stable'; setUpdChannel(c => ({ ...c, channel: ch })); try { await setUpdateChannel(ch); } catch { /* 다음 실행 때 다시 읽는다 */ } }} />
+            🧪 테스트 버전 받기 <span className="text-[10px] text-gray-500">v{updChannel.version}</span>
           </label>
         )}
 

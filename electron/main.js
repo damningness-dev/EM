@@ -14,8 +14,13 @@ try { app.setAppUserModelId('com.em.monitoring'); } catch { /* ignore */ }
 
 // ─── ASAR 업데이터 ─────────────────────────────────────────────────────────────
 
-const META_URL = 'https://github.com/damningness-dev/EM/releases/latest/download/app-meta.json';
-const ASAR_URL = 'https://github.com/damningness-dev/EM/releases/latest/download/app-patch.asar';
+// 업데이트 채널 — 'stable'(정식, 모든 PC 기본값) / 'test'(테스트, 이 PC 설정에서 켠 경우만).
+// 정식은 "latest" 릴리즈, 테스트는 작업 브랜치에 push할 때마다 덮어 올리는 고정 태그 'test' 릴리즈에서 받는다.
+const RELEASE_BASE = 'https://github.com/damningness-dev/EM/releases';
+function getUpdateChannel() { try { return loadPrefs().updateChannel === 'test' ? 'test' : 'stable'; } catch { return 'stable'; } }
+function releaseFileUrl(name) { return getUpdateChannel() === 'test' ? `${RELEASE_BASE}/download/test/${name}` : `${RELEASE_BASE}/latest/download/${name}`; }
+const metaUrl = () => releaseFileUrl('app-meta.json');
+const asarUrl = () => releaseFileUrl('app-patch.asar');
 
 let mainWin = null;
 let orderManagerWin = null;
@@ -213,7 +218,7 @@ const QUIET_FAIL_LIMIT = 3; // 자동 확인이 이 횟수만큼 연달아 실�
 
 async function fetchMetaWithRetry() {
   for (let attempt = 1; ; attempt++) {
-    try { return await fetchJSON(META_URL); }
+    try { return await fetchJSON(metaUrl()); }
     catch (err) {
       if (attempt >= 3 || !isTransientErr(err)) throw err;
       await sleep(2000 * attempt);
@@ -274,8 +279,8 @@ async function downloadUpdate() {
         // meta.json도 매 시도마다 새로 받는다 — "latest" 릴리즈가 두 배포가 짧은
         // 간격으로 이어질 때(예: 커밋 두 개를 연달아 푸시) 도중에 바뀌면, meta는
         // 예전 것을 쓰고 asar만 새로 받아 체크섬이 계속 어긋나는 문제를 막는다.
-        const meta = await fetchJSON(META_URL);
-        const sha256 = await downloadAsar(ASAR_URL, dest);
+        const meta = await fetchJSON(metaUrl());
+        const sha256 = await downloadAsar(asarUrl(), dest);
         if (meta.sha256 && sha256 !== meta.sha256) {
           throw new Error(`파일 검증 실패 (체크섬 불일치)${attempt < DOWNLOAD_RETRIES ? ` — 재시도 중 (${attempt}/${DOWNLOAD_RETRIES})` : ''}`);
         }
@@ -308,7 +313,7 @@ async function downloadUpdate() {
 async function applyUpdateAndRestart() {
   if (downloadingUpdate) return; // 최신 버전을 받는 중에는 끝날 때까지 기다린다(완료 알림이 다시 뜸)
   try {
-    const meta = await fetchJSON(META_URL);
+    const meta = await fetchJSON(metaUrl());
     if (meta.version !== app.getVersion() && meta.version !== downloadedVersion) {
       await downloadUpdate();
       if (downloadedVersion !== meta.version) return; // 실패 시 오류 상태가 이미 전달됨
@@ -1853,6 +1858,18 @@ function registerHandlers() {
   ipcMain.handle('update:check', () => checkForUpdate({ manual: true }));
   ipcMain.handle('update:download', downloadUpdate);
   ipcMain.handle('update:install', applyUpdateAndRestart);
+  // 업데이트 채널(이 PC에만 저장) — 바꾸면 바로 그 채널에서 업데이트를 확인한다
+  ipcMain.handle('update:getChannel', () => ({ channel: getUpdateChannel(), version: app.getVersion() }));
+  ipcMain.handle('update:setChannel', (_e, channel) => {
+    const p = loadPrefs();
+    p.updateChannel = channel === 'test' ? 'test' : 'stable';
+    savePrefs(p);
+    downloadedVersion = null; // 다른 채널에서 받아 둔 업데이트는 쓰지 않는다
+    try { fs.unlinkSync(getUpdatePath()); } catch { /* 받아 둔 파일이 없으면 그만 */ }
+    try { fs.unlinkSync(getUpdateMetaPath()); } catch { /* 없으면 그만 */ }
+    checkForUpdate({ manual: true }).catch(() => {});
+    return { ok: true, channel: p.updateChannel };
+  });
   ipcMain.handle('app:restart', () => { app.relaunch(); app.exit(0); });
   ipcMain.handle('app:openExternal', (_e, url) => {
     try {
