@@ -2607,7 +2607,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
 
       <div className="flex gap-5">
         {/* Calendar */}
-        <div ref={printAreaRef} className={`flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden min-w-0 print-area ${focusKind && viewMode === 'calendar' ? `cal-focus cal-focus-${focusKind}` : ''} ${showDoneMarks ? '' : 'hide-done-marks'} ${narrowWeekend ? (weekStart === 'mon' ? 'narrow-weekend-mon' : 'narrow-weekend-sun') : ''}`}>
+        <div ref={printAreaRef} className={`flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden min-w-0 print-area ${viewMode === 'calendar' && (focusKind || flashTarget) ? `cal-focus ${focusKind ? `cal-focus-${focusKind}` : 'cal-focus-flash'}` : ''} ${showDoneMarks ? '' : 'hide-done-marks'} ${narrowWeekend ? (weekStart === 'mon' ? 'narrow-weekend-mon' : 'narrow-weekend-sun') : ''}`}>
           {/* 년/월 표시 + 이전/다음 (달력 테두리 안, 인쇄 시에도 표시) + 우측에 모니터링/교정/AHU
               요약(클릭하면 각각 팝업)을 함께 배치해 별도 줄 없이 한 줄로 보여준다. 요약은
               인쇄 대상이 아니므로 print:hidden. */}
@@ -2923,7 +2923,9 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                         return (
                           <div
                             key={`s${i}`}
-                            data-focus={focusKind ? (!isOther && (focusKind === 'start' ? measurement.isFirst : measurement.isLast) ? 'match' : 'dim') : undefined}
+                            data-focus={focusKind
+                              ? (!isOther && (focusKind === 'start' ? measurement.isFirst : measurement.isLast) ? 'match' : 'dim')
+                              : flashTarget ? (flashTarget.zoneId === zone.id && flashTarget.num === measurement.num ? 'match' : 'dim') : undefined}
                             draggable={!isDone && adminUnlocked}
                             onDragStart={(!isDone && adminUnlocked) ? (e) => {
                               e.stopPropagation(); setHoverTip(null); chipDraggingRef.current = true; setChipDragging(true);
