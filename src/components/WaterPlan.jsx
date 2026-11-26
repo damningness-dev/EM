@@ -326,9 +326,9 @@ export default function WaterPlan({ adminUnlocked }) {
                       {total > 0 && <span className="text-[10px] font-semibold text-gray-500 tabular-nums" title="이 날 채취 개수">{total}개</span>}
                     </div>
                     <div className="space-y-0.5">
-                      {groups.slice(0, 5).map(g => {
-                        const moved = g.items.some(it => it._moved || it._shifted);
-                        const tip = [`${g.type} ${g.area} ${g.count}개`, ...g.items.filter(it => it._shifted || it._moved).map(it => (it._shifted ? `↪ ${it._shifted}이라 ${md(it.moves?.[it._base] || it._base)}에서 자동으로 옮김` : `↪ ${md(it._base)}에서 옮김`)), adminUnlocked ? '끌어서 다른 날짜로 옮길 수 있습니다(주기 안에서만)' : ''].filter(Boolean).join('\n');
+                      {groups.map(g => {
+                        const moved = g.items.some(it => it._moved);
+                        const tip = [`${g.type} ${g.area} ${g.count}개`, ...g.items.filter(it => it._moved).map(it => `↪ ${md(it._base)}에서 옮김`), adminUnlocked ? '끌어서 다른 날짜로 옮길 수 있습니다(주기 안에서만)' : ''].filter(Boolean).join('\n');
                         return (
                         <div key={g.key} title={tip} draggable={adminUnlocked} onDragStart={e => onDragStartItems(e, ds, g.items)} onDragEnd={() => setDragOver(null)}
                           className={`flex items-center justify-between gap-1 px-1 py-0.5 rounded border text-[10px] leading-tight ${adminUnlocked ? 'cursor-grab active:cursor-grabbing' : ''} ${WATER_TYPES[g.type]?.chip || WATER_TYPES['기타'].chip}`}>
@@ -337,7 +337,6 @@ export default function WaterPlan({ adminUnlocked }) {
                         </div>
                         );
                       })}
-                      {groups.length > 5 && <div className="text-[10px] text-gray-400 px-1">+{groups.length - 5}건 더</div>}
                     </div>
                   </div>
                 );
@@ -390,8 +389,7 @@ export default function WaterPlan({ adminUnlocked }) {
                           )}
                         </div>
                         <div className="mt-0.5 text-[10px] text-gray-400">{it.count}개 · {repeatLabel(it)}{it.note ? ` · ${it.note}` : ''}</div>
-                        {it._shifted && <div className="mt-0.5 text-[10px] font-semibold text-amber-600">↪ {it._shifted}이라 {md(it.moves?.[it._base] || it._base)}에서 자동으로 옮김</div>}
-                        {!it._shifted && it._moved && (
+                        {it._moved && (
                           <div className="mt-0.5 text-[10px] font-semibold text-amber-600 flex items-center gap-1">↪ {md(it._base)}에서 옮김
                             {adminUnlocked && <button type="button" onClick={() => handleDrop(it._base, dragPayload(sel, [it]))} className="text-blue-600 font-normal hover:underline">원래 날짜로</button>}
                           </div>
