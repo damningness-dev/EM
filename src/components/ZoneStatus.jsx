@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
-import { fetchZones, fetchScheduleConfig, fetchHolidays, fetchCompletions } from '../lib/api';
+import { fetchZones, fetchGroups, fetchScheduleConfig, fetchHolidays, fetchCompletions } from '../lib/api';
 import { GRADE_COLORS } from '../data/initialData';
-import { calcMeasurements, calcEndDate, buildHolidayMap, setScheduleConfig, getScheduleSpec, computePhaseCount, GRADE_PRIORITY } from '../lib/schedule';
+import { calcMeasurements, calcEndDate, buildHolidayMap, setScheduleConfig, getScheduleSpec, computePhaseCount, GRADE_PRIORITY, MAJOR_CATS } from '../lib/schedule';
 
 import useDataVersion from '../hooks/useDataVersion';
 const DOW = ['일', '월', '화', '수', '목', '금', '토'];
@@ -62,10 +62,16 @@ export default function ZoneStatus({ year, onYearChange, onJumpToSchedule }) {
   const [search, setSearch] = useState('');
   const [gradeFilter, setGradeFilter] = useState('all');
   const [expanded, setExpanded] = useState(new Set());
+  const [namedGroups, setNamedGroups] = useState([]); // 일정 관리의 그룹(폴더) { id, name, zoneIds, sort_order }
+  // 그룹화 방식: 'none'(구역 목록 그대로) | 'category'(분류별) | 'folder'(일정 관리에서 만든 그룹별)
+  const [groupBy, setGroupBy] = useState(() => { try { return localStorage.getItem('em-zonestatus-groupby') || 'none'; } catch { return 'none'; } });
+  const [closedSecs, setClosedSecs] = useState(new Set()); // 접어 둔 그룹 제목
+  function changeGroupBy(v) { setGroupBy(v); setClosedSecs(new Set()); try { localStorage.setItem('em-zonestatus-groupby', v); } catch { /* 저장 못 해도 이번 화면에는 적용된다 */ } }
 
   useEffect(() => {
-    Promise.all([fetchZones(), fetchScheduleConfig(), fetchHolidays(), fetchCompletions()])
-      .then(([z, cfg, hols, comps]) => {
+    Promise.all([fetchZones(), fetchScheduleConfig(), fetchHolidays(), fetchCompletions(), fetchGroups().catch(() => [])])
+      .then(([z, cfg, hols, comps, grps]) => {
+        setNamedGroups(Array.isArray(grps) ? grps : []);
         if (cfg) setScheduleConfig(cfg);
         setZones(z);
         setHolidayDefs(hols || []);
@@ -105,6 +111,118 @@ export default function ZoneStatus({ year, onYearChange, onJumpToSchedule }) {
     return { measurements: ms, total: ms.length, done, endDate };
   }
 
+  // 구역(분류+이름) 하나의 카드 — 접고 펼치면 회차별 일정이 나온다
+  const renderGroup = (group) => {
+  const isExp = expanded.has(group.key);
+  // 그룹 헤더에 보여줄 "현재 진행 중인 구분" 하나만 고른다.
+  // 1) 오늘이 시작~종료 사이인 구역 우선, 2) 없으면 이미 시작된 것 중 가장
+  // 최근에 시작된 것(끝났어도), 3) 그마저 없으면 가장 빨리 시작될 예정인 것.
+  const withPlan = group.zones.filter(z => z.schedule_start).map(z => ({ zone: z, plan: zonePlan(z) }));
+  let current = withPlan.find(zp => zp.plan.endDate && new Date(zp.zone.schedule_start) <= todayMid && todayMid <= zp.plan.endDate);
+  if (!current && withPlan.length) {
+    const started = withPlan.filter(zp => new Date(zp.zone.schedule_start) <= todayMid)
+      .sort((a, b) => new Date(b.zone.schedule_start) - new Date(a.zone.schedule_start));
+    current = started[0] || [...withPlan].sort((a, b) => new Date(a.zone.schedule_start) - new Date(b.zone.schedule_start))[0];
+  }
+  return (
+    <div key={group.key} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <button
+        onClick={() => setExpanded(prev => { const s = new Set(prev); s.has(group.key) ? s.delete(group.key) : s.add(group.key); return s; })}
+        className="w-full flex items-center gap-2 px-4 py-3 hover:bg-gray-50 text-left"
+      >
+        <span className={`text-xs transition-transform ${isExp ? 'rotate-90 text-blue-500' : 'text-gray-400'}`}>▶</span>
+        <span className="font-semibold text-gray-800">{group.name}</span>
+        <span className="text-xs text-gray-400">{group.category}</span>
+        {group.zones.length > 0 && group.zones.every(z => z.closed_at) && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-medium" title="마감된 일정 — 마감일까지의 지난 일정만 남아 있습니다">마감 {group.zones[0].closed_at}</span>
+        )}
+        {current && (
+          <span className="text-[11px] text-gray-400 whitespace-nowrap">
+            시작 {current.zone.schedule_start} · 종료 {fmt(current.plan.endDate)} · {current.plan.done}/{current.plan.total}회
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-1.5">
+          {current && (
+            <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${GRADE_COLORS[current.zone.grade] || 'bg-gray-100 text-gray-600'}`}>{current.zone.grade}</span>
+          )}
+        </div>
+      </button>
+
+      {isExp && (
+        <div className="border-t border-gray-100 divide-y divide-gray-50">
+          {group.zones.map(zone => {
+            const plan = zonePlan(zone);
+            // 월별 그룹핑
+            const byMonth = {};
+            plan.measurements.forEach(m => {
+              const k = `${m.date.getFullYear()}-${String(m.date.getMonth() + 1).padStart(2, '0')}`;
+              (byMonth[k] || (byMonth[k] = [])).push(m);
+            });
+            const cycleLabel = zoneCycleLabel(zone);
+            return (
+              <div key={zone.id} className="px-4 py-3">
+                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                  <span className={`text-[11px] px-2 py-0.5 rounded font-bold ${GRADE_COLORS[zone.grade] || 'bg-gray-100 text-gray-600'}`}>{zone.grade}</span>
+                  {zone.closed_at && <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-medium">마감 {zone.closed_at}</span>}
+                  {zone.schedule_start ? (
+                    <>
+                      <span className="text-xs text-gray-500">시작 {zone.schedule_start} · 종료 {fmt(plan.endDate)}</span>
+                      {cycleLabel && <span className="text-xs px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 font-medium">{cycleLabel}</span>}
+                      <span className="text-xs font-semibold text-blue-600">총 {plan.total}회</span>
+                      <span className="text-xs text-gray-400">(경과 {plan.done}회)</span>
+                    </>
+                  ) : (
+                    <span className="text-xs text-gray-400">시작일 미지정 — 일정관리에서 시작일을 입력하세요</span>
+                  )}
+                </div>
+                {plan.total > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {plan.measurements.map(m => {
+                      const done = completions.has(`${zone.id}_${m.num}`) || m.date <= todayMid;
+                      return (
+                        <button key={m.num}
+                          onClick={() => onJumpToSchedule?.(fmt(m.date), zone.id, m.num)}
+                          className={`text-[11px] px-1.5 py-1 rounded border transition-colors ${done ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                          title={`${m.num}회차 · 월별 모니터링 일정에서 보기`}>
+                          <b className="text-gray-400 mr-1">{m.num}</b>{String(m.date.getFullYear()).slice(2)}/{m.date.getMonth() + 1}/{m.date.getDate()}({DOW[m.date.getDay()]})
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+  };
+
+  // 그룹화 — 분류별 / 일정 관리의 그룹별로 구역 카드를 묶는다
+  const sections = useMemo(() => {
+    if (groupBy === 'category') {
+      const m = {};
+      groups.forEach(g => { (m[g.category] || (m[g.category] = { key: `c:${g.category}`, title: g.category || '(분류 없음)', items: [] })).items.push(g); });
+      const rank = c => { const i = MAJOR_CATS.indexOf(c); return i < 0 ? 99 : i; };
+      return Object.entries(m).sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b)).map(([, v]) => v);
+    }
+    if (groupBy === 'folder') {
+      const ordered = [...namedGroups].sort((a, b) => (a.sort_order ?? 1e9) - (b.sort_order ?? 1e9));
+      const used = new Set();
+      const out = ordered.map(f => {
+        const ids = new Set(f.zoneIds || []);
+        const items = groups.filter(g => !used.has(g.key) && g.zones.some(z => ids.has(z.id)));
+        items.forEach(g => used.add(g.key));
+        return { key: `f:${f.id}`, title: f.name || '(이름 없음)', items };
+      }).filter(x => x.items.length > 0);
+      const rest = groups.filter(g => !used.has(g.key));
+      if (rest.length) out.push({ key: 'f:none', title: '그룹 없음', items: rest });
+      return out;
+    }
+    return [];
+  }, [groupBy, groups, namedGroups]);
+
   if (loading) return <LoadingSpinner />;
 
   return (
@@ -120,6 +238,18 @@ export default function ZoneStatus({ year, onYearChange, onJumpToSchedule }) {
 
       <div className="flex flex-wrap gap-3 items-center">
         <input type="text" placeholder="구역명 검색..." value={search} onChange={e => setSearch(e.target.value)} className="flex-1 min-w-48 px-3 py-2 border border-gray-200 rounded-lg text-sm" />
+        <label className="flex items-center gap-1.5 text-sm text-gray-600" title="구역 목록을 분류나 일정 관리에서 만든 그룹으로 묶어 봅니다">
+          그룹화
+          <select value={groupBy} onChange={e => changeGroupBy(e.target.value)} className="px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-white">
+            <option value="none">안 함</option>
+            <option value="category">분류별</option>
+            <option value="folder">그룹별 (일정 관리)</option>
+          </select>
+        </label>
+        {groupBy !== 'none' && sections.length > 0 && (
+          <button type="button" onClick={() => setClosedSecs(closedSecs.size === 0 ? new Set(sections.map(x => x.key)) : new Set())}
+            className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50">{closedSecs.size === 0 ? '모두 접기' : '모두 펼치기'}</button>
+        )}
         <div className="flex gap-2 flex-wrap">
           {['all', 'P1', 'P2', 'P3', '유지관리'].map(g => (
             <button key={g} onClick={() => setGradeFilter(g)} className={`px-3 py-1.5 rounded-lg text-sm border ${gradeFilter === g ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
@@ -131,89 +261,18 @@ export default function ZoneStatus({ year, onYearChange, onJumpToSchedule }) {
       <p className="text-xs text-gray-400">구역을 클릭하면 계획된 측정 일정(몇 회차가 언제인지)을 한눈에 볼 수 있습니다.</p>
 
       <div className="space-y-2">
-        {groups.map(group => {
-          const isExp = expanded.has(group.key);
-          // 그룹 헤더에 보여줄 "현재 진행 중인 구분" 하나만 고른다.
-          // 1) 오늘이 시작~종료 사이인 구역 우선, 2) 없으면 이미 시작된 것 중 가장
-          // 최근에 시작된 것(끝났어도), 3) 그마저 없으면 가장 빨리 시작될 예정인 것.
-          const withPlan = group.zones.filter(z => z.schedule_start).map(z => ({ zone: z, plan: zonePlan(z) }));
-          let current = withPlan.find(zp => zp.plan.endDate && new Date(zp.zone.schedule_start) <= todayMid && todayMid <= zp.plan.endDate);
-          if (!current && withPlan.length) {
-            const started = withPlan.filter(zp => new Date(zp.zone.schedule_start) <= todayMid)
-              .sort((a, b) => new Date(b.zone.schedule_start) - new Date(a.zone.schedule_start));
-            current = started[0] || [...withPlan].sort((a, b) => new Date(a.zone.schedule_start) - new Date(b.zone.schedule_start))[0];
-          }
+        {groups.length > 0 && groupBy === 'none' && groups.map(renderGroup)}
+        {groups.length > 0 && groupBy !== 'none' && sections.map(sec => {
+          const closed = closedSecs.has(sec.key);
           return (
-            <div key={group.key} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <button
-                onClick={() => setExpanded(prev => { const s = new Set(prev); s.has(group.key) ? s.delete(group.key) : s.add(group.key); return s; })}
-                className="w-full flex items-center gap-2 px-4 py-3 hover:bg-gray-50 text-left"
-              >
-                <span className={`text-xs transition-transform ${isExp ? 'rotate-90 text-blue-500' : 'text-gray-400'}`}>▶</span>
-                <span className="font-semibold text-gray-800">{group.name}</span>
-                <span className="text-xs text-gray-400">{group.category}</span>
-                {group.zones.length > 0 && group.zones.every(z => z.closed_at) && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-medium" title="마감된 일정 — 마감일까지의 지난 일정만 남아 있습니다">마감 {group.zones[0].closed_at}</span>
-                )}
-                {current && (
-                  <span className="text-[11px] text-gray-400 whitespace-nowrap">
-                    시작 {current.zone.schedule_start} · 종료 {fmt(current.plan.endDate)} · {current.plan.done}/{current.plan.total}회
-                  </span>
-                )}
-                <div className="ml-auto flex items-center gap-1.5">
-                  {current && (
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${GRADE_COLORS[current.zone.grade] || 'bg-gray-100 text-gray-600'}`}>{current.zone.grade}</span>
-                  )}
-                </div>
+            <div key={sec.key} className="space-y-2">
+              <button type="button" onClick={() => setClosedSecs(prev => { const n = new Set(prev); n.has(sec.key) ? n.delete(sec.key) : n.add(sec.key); return n; })}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-left">
+                <span className={`text-xs transition-transform ${closed ? 'text-gray-400' : 'rotate-90 text-blue-500'}`}>▶</span>
+                <span className="font-bold text-slate-800">{sec.title}</span>
+                <span className="text-xs text-slate-500">구역 {sec.items.length}개</span>
               </button>
-
-              {isExp && (
-                <div className="border-t border-gray-100 divide-y divide-gray-50">
-                  {group.zones.map(zone => {
-                    const plan = zonePlan(zone);
-                    // 월별 그룹핑
-                    const byMonth = {};
-                    plan.measurements.forEach(m => {
-                      const k = `${m.date.getFullYear()}-${String(m.date.getMonth() + 1).padStart(2, '0')}`;
-                      (byMonth[k] || (byMonth[k] = [])).push(m);
-                    });
-                    const cycleLabel = zoneCycleLabel(zone);
-                    return (
-                      <div key={zone.id} className="px-4 py-3">
-                        <div className="flex items-center gap-2 mb-2 flex-wrap">
-                          <span className={`text-[11px] px-2 py-0.5 rounded font-bold ${GRADE_COLORS[zone.grade] || 'bg-gray-100 text-gray-600'}`}>{zone.grade}</span>
-                          {zone.closed_at && <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-medium">마감 {zone.closed_at}</span>}
-                          {zone.schedule_start ? (
-                            <>
-                              <span className="text-xs text-gray-500">시작 {zone.schedule_start} · 종료 {fmt(plan.endDate)}</span>
-                              {cycleLabel && <span className="text-xs px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 font-medium">{cycleLabel}</span>}
-                              <span className="text-xs font-semibold text-blue-600">총 {plan.total}회</span>
-                              <span className="text-xs text-gray-400">(경과 {plan.done}회)</span>
-                            </>
-                          ) : (
-                            <span className="text-xs text-gray-400">시작일 미지정 — 일정관리에서 시작일을 입력하세요</span>
-                          )}
-                        </div>
-                        {plan.total > 0 && (
-                          <div className="flex flex-wrap gap-1.5">
-                            {plan.measurements.map(m => {
-                              const done = completions.has(`${zone.id}_${m.num}`) || m.date <= todayMid;
-                              return (
-                                <button key={m.num}
-                                  onClick={() => onJumpToSchedule?.(fmt(m.date), zone.id, m.num)}
-                                  className={`text-[11px] px-1.5 py-1 rounded border transition-colors ${done ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'}`}
-                                  title={`${m.num}회차 · 월별 모니터링 일정에서 보기`}>
-                                  <b className="text-gray-400 mr-1">{m.num}</b>{String(m.date.getFullYear()).slice(2)}/{m.date.getMonth() + 1}/{m.date.getDate()}({DOW[m.date.getDay()]})
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              {!closed && <div className="space-y-2 pl-3 border-l-2 border-slate-200">{sec.items.map(renderGroup)}</div>}
             </div>
           );
         })}

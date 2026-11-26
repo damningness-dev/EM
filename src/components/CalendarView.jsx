@@ -3436,7 +3436,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                       title="더블클릭하여 구역명 수정"
                       onDoubleClick={() => { if (requireAdmin()) { setEditingZoneNameId(g.zone.id); setEditingZoneName(g.zone.name); } }}
                     >
-                      <GradeBadge color={gradeBtnColor(g.zone.grade)} grade={g.zone.grade} />{g.zone.name}
+                      <GradeBadge color={gradeBtnColor(g.zone.grade)} grade={g.zone.grade} />{g.zone.name}<ZonePtBadges zone={g.zone} />
                     </p>
                   )}
                   <div className="flex flex-wrap gap-1.5">
@@ -3685,6 +3685,25 @@ function ptValue(zone, key) {
 }
 // 툴팁용 포인트 요약 — "부유균 3 · 낙하균 2 · 표면균 4 · 부유입자 1" (통합 대분류는 질소/압축 하나)
 const PT_FULL = { float: '부유균', fall: '낙하균', surface: '표면균', particle: '부유입자' };
+// 모니터링 현황 구역 이름 옆의 포인트 수 버튼 — 달력 칩과 같은 색(부=파랑, 낙=주황, 표=초록, 입자=분홍, 질소=보라, 압축=노랑)
+const PT_BADGE = { float: ['부', 'bg-blue-50 text-blue-700'], fall: ['낙', 'bg-orange-50 text-orange-700'], surface: ['표', 'bg-green-50 text-green-700'], particle: ['입자', 'bg-pink-50 text-pink-700'] };
+function ZonePtBadges({ zone }) {
+  let list;
+  if (isCombinedCat(zone.category)) {
+    const major = getMajorCat(zone.category);
+    const v = zone.points_float || 0;
+    const [ab, cls] = major === '질소가스' ? ['질소', 'bg-purple-100 text-purple-700'] : major === '압축공기' ? ['압축', 'bg-yellow-100 text-yellow-700'] : [major, 'bg-gray-100 text-gray-600'];
+    list = v > 0 ? [{ k: 'c', ab, cls, v }] : [];
+  } else {
+    list = Object.entries(PT_BADGE).map(([k, [ab, cls]]) => ({ k, ab, cls, v: zone[`points_${k}`] || 0 })).filter(x => x.v > 0);
+  }
+  if (list.length === 0) return <span className="ml-1.5 text-[10px] font-bold text-red-500" title="측정 포인트가 입력되지 않았습니다">포인트 미입력</span>;
+  return (
+    <span className="ml-1.5 inline-flex items-center gap-0.5 align-middle" title={zonePtTip(zone).trim()}>
+      {list.map(x => <span key={x.k} className={`text-[10px] leading-none font-semibold px-1 py-0.5 rounded tabular-nums ${x.cls}`}>{x.ab}{x.v}</span>)}
+    </span>
+  );
+}
 function zonePtTip(zone) {
   let parts;
   if (isCombinedCat(zone.category)) {
