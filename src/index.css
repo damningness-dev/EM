@@ -242,3 +242,12 @@ body {
 
 /* 인쇄에는 화면에서 선택한 날짜의 강조 테두리(링)가 나오지 않게 한다. */
 .print-portal .cal-day { box-shadow: none !important; }
+
+/* 월별 모니터링 일정 — '시작/끝나는 일정' 강조: 해당 일정만 또렷하게, 나머지는 연하게 흐린다(화면에서만, 인쇄 제외) */
+@media screen {
+  .cal-focus .cal-events > *,
+  .cal-focus .cal-pt-chip { opacity: 0.28; filter: blur(1.2px); transition: opacity .15s, filter .15s; }
+  .cal-focus .cal-events > [data-focus='match'] { opacity: 1; filter: none; position: relative; z-index: 1; }
+  .cal-focus-start .cal-events > [data-focus='match'] { box-shadow: 0 0 0 2px #22c55e, 0 2px 6px rgba(34, 197, 94, .35); }
+  .cal-focus-end .cal-events > [data-focus='match'] { box-shadow: 0 0 0 2px #ef4444, 0 2px 6px rgba(239, 68, 68, .35); }
+}

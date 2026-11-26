@@ -220,26 +220,30 @@ export default function UsagePoints({ adminUnlocked, currentMember, addFor }) {
     return {};
   });
   useEffect(() => { try { localStorage.setItem(UP_COL_STORE_KEY, JSON.stringify(colW)); } catch { /* ignore */ } }, [colW]);
-  const colWidth = k => colW[k] ?? UP_COL_DEFAULT_W[k];
+  // '간단히' 보기는 보이는 열만 따로 폭을 저장한다(키 앞에 c:) — 자세히 보기의 열 폭과 섞이지 않게
+  const UP_COMPACT_DEFAULT_W = { no: 56, progress: 96, title: 260, major: 150, assignee: 110, dueDate: 140, manage: 100 };
+  const wKey = k => (compact ? `c:${k}` : k);
+  const colWidth = k => colW[wKey(k)] ?? (compact ? UP_COMPACT_DEFAULT_W[k] : UP_COL_DEFAULT_W[k]) ?? 100;
   // 구분선을 끌면 이 열과 바로 다음 열이 폭을 서로 주고받는다(전체 합은 그대로) —
   // 표는 항상 컨테이너 폭의 100%로 그려지므로, 합이 바뀌지 않으면 다른 열들의
   // 비율도 안 바뀌어 가로 스크롤이 생기지 않으면서 이 두 열만 커지고 작아진다.
   const MIN_COL_W = 28;
   function startColResize(e, key) {
     e.preventDefault(); e.stopPropagation();
-    const idx = UP_COL_KEYS.indexOf(key);
-    const nextKey = UP_COL_KEYS[idx + 1];
+    // 바로 다음에 '보이는' 열과 폭을 주고받는다(간단히 보기에서는 숨은 열이 사이에 끼어 있다)
+    const vis = UP_COL_KEYS.filter(colVisible);
+    const nextKey = vis[vis.indexOf(key) + 1];
     const startX = e.clientX;
     const startW = colWidth(key);
     const startNextW = nextKey ? colWidth(nextKey) : null;
     const onMove = ev => {
       if (nextKey) {
         const delta = Math.max(MIN_COL_W - startW, Math.min(ev.clientX - startX, startNextW - MIN_COL_W));
-        setColW(prev => ({ ...prev, [key]: startW + delta, [nextKey]: startNextW - delta }));
+        setColW(prev => ({ ...prev, [wKey(key)]: startW + delta, [wKey(nextKey)]: startNextW - delta }));
       } else {
         // 맨 마지막(관리) 열은 넘겨줄 다음 열이 없어 자기 최소값까지만 줄어든다 —
         // 실제로는 handle이 없어(항상 nextKey가 있음) 호출되지 않는 경로.
-        setColW(prev => ({ ...prev, [key]: Math.max(MIN_COL_W, startW + ev.clientX - startX) }));
+        setColW(prev => ({ ...prev, [wKey(key)]: Math.max(MIN_COL_W, startW + ev.clientX - startX) }));
       }
     };
     const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
@@ -984,89 +988,89 @@ export default function UsagePoints({ adminUnlocked, currentMember, addFor }) {
             비율로 쓰인다 — 열 폭 합계와 무관하게 표는 항상 컨테이너 폭에 맞춰지므로
             칸을 조절해도 가로 스크롤이 생기지 않는다. */}
         <table className="text-sm" style={{ tableLayout: 'fixed', width: '100%' }}>
-          <colgroup>{UP_COL_KEYS.filter(colVisible).map(k => <col key={k} style={{ width: compact ? undefined : colWidth(k) }} />)}</colgroup>
+          <colgroup>{UP_COL_KEYS.filter(colVisible).map(k => <col key={k} style={{ width: colWidth(k) }} />)}</colgroup>
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200">
               {/* 펼치기 화살표(▶)는 별도 열 없이 No.와 한 열에서 번호 앞에 온다. */}
               <th className={`relative px-2 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('no')}`}>
                 No.
                 <span onMouseDown={e => startColResize(e, 'no')} draggable={false} onDragStart={e => e.preventDefault()}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                  className="absolute top-0 right-0 z-10 h-full w-2 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('progress')}`}>
                 진행상황
                 <span onMouseDown={e => startColResize(e, 'progress')} draggable={false} onDragStart={e => e.preventDefault()}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                  className="absolute top-0 right-0 z-10 h-full w-2 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('title')}`}>
                 제목
                 <span onMouseDown={e => startColResize(e, 'title')} draggable={false} onDragStart={e => e.preventDefault()}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                  className="absolute top-0 right-0 z-10 h-full w-2 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('major')}`}>
                 {compact ? '분류' : '대분류'}
                 <span onMouseDown={e => startColResize(e, 'major')} draggable={false} onDragStart={e => e.preventDefault()}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                  className="absolute top-0 right-0 z-10 h-full w-2 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('minor')}`}>
                 소분류
                 <span onMouseDown={e => startColResize(e, 'minor')} draggable={false} onDragStart={e => e.preventDefault()}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                  className="absolute top-0 right-0 z-10 h-full w-2 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('workDate')}`}>
                 작업일
                 <span onMouseDown={e => startColResize(e, 'workDate')} draggable={false} onDragStart={e => e.preventDefault()}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                  className="absolute top-0 right-0 z-10 h-full w-2 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('author')}`}>
                 작성자
                 <span onMouseDown={e => startColResize(e, 'author')} draggable={false} onDragStart={e => e.preventDefault()}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                  className="absolute top-0 right-0 z-10 h-full w-2 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('worker')}`}>
                 작업자
                 <span onMouseDown={e => startColResize(e, 'worker')} draggable={false} onDragStart={e => e.preventDefault()}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                  className="absolute top-0 right-0 z-10 h-full w-2 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('room')}`}>
                 실명
                 <span onMouseDown={e => startColResize(e, 'room')} draggable={false} onDragStart={e => e.preventDefault()}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                  className="absolute top-0 right-0 z-10 h-full w-2 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('roomNo')}`}>
                 실번호
                 <span onMouseDown={e => startColResize(e, 'roomNo')} draggable={false} onDragStart={e => e.preventDefault()}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                  className="absolute top-0 right-0 z-10 h-full w-2 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('point')}`}>
                 사용점번호
                 <span onMouseDown={e => startColResize(e, 'point')} draggable={false} onDragStart={e => e.preventDefault()}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                  className="absolute top-0 right-0 z-10 h-full w-2 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('reason')}`}>
                 내용
                 <span onMouseDown={e => startColResize(e, 'reason')} draggable={false} onDragStart={e => e.preventDefault()}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                  className="absolute top-0 right-0 z-10 h-full w-2 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('photo')}`}>
                 사진
                 <span onMouseDown={e => startColResize(e, 'photo')} draggable={false} onDragStart={e => e.preventDefault()}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                  className="absolute top-0 right-0 z-10 h-full w-2 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('note')}`}>
                 비고
                 <span onMouseDown={e => startColResize(e, 'note')} draggable={false} onDragStart={e => e.preventDefault()}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                  className="absolute top-0 right-0 z-10 h-full w-2 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('assignee')}`}>
                 담당자
                 <span onMouseDown={e => startColResize(e, 'assignee')} draggable={false} onDragStart={e => e.preventDefault()}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                  className="absolute top-0 right-0 z-10 h-full w-2 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className={`relative px-3 py-3 text-gray-500 font-medium text-center border-r border-gray-200 ${hc('dueDate')}`}>
                 완료기한
                 <span onMouseDown={e => startColResize(e, 'dueDate')} draggable={false} onDragStart={e => e.preventDefault()}
-                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
+                  className="absolute top-0 right-0 z-10 h-full w-2 cursor-col-resize hover:bg-blue-400/50" style={{ transform: 'translateX(50%)' }} title="드래그하여 너비 조절" />
               </th>
               <th className={`px-3 py-3 text-gray-500 font-medium text-center ${hc('manage')}`}>관리</th>
             </tr>

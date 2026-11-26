@@ -279,8 +279,6 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     if (!currentMember) { setTeamInfo({ team: null, records: [] }); return; }
     fetchTeamRecords().then(r => setTeamInfo(r || { team: null, records: [] })).catch(() => {});
   }
-  // 마지막 공유 결과 — 화면의 "👥 팀" 칩에 보여줘서 공유가 안 될 때 이유(팀 없음·토큰 없음 등)를 알 수 있게 한다.
-  const [teamStatus, setTeamStatus] = useState(null); // { reason, team, count, sync: 'ok'|'no-token'|'upload-failed'|null, at }
   function publishToTeam(map) {
     if (!currentMember) return;
     // 이 계정이 로그인했다는 것을 main이 확실히 알고 난 뒤에 올린다(로그인 직후에는 부모의 알림이 자식 화면의
@@ -288,11 +286,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     setCurrentMemberOnMain(currentMember.id).catch(() => {})
       .then(() => publishTeamRecords(map))
       .then(async (r) => {
-        let sync = null;
-        if (r?.changed) {
-          try { const s = await syncAfterChange(); sync = s.shared ? 'ok' : s.reason; } catch { sync = 'upload-failed'; }
-        }
-        setTeamStatus(prev => ({ reason: r?.reason || '', team: r?.team || '', count: r?.count || 0, sync: sync || prev?.sync || null, at: Date.now() }));
+        if (r?.changed) { try { await syncAfterChange(); } catch { /* 공유 업로드 실패는 다음 주기에 다시 시도된다 */ } }
         loadTeamInfo();
       }).catch(() => {});
   }
@@ -478,6 +472,8 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
     try { localStorage.setItem('em-show-done-marks', showDoneMarks ? '1' : '0'); } catch { /* ignore */ }
   }, [showDoneMarks]);
   // 화면 달력에서 토·일 칸의 폭을 절반으로 줄여 평일 칸을 넓게 보기(인쇄에는 영향 없음 — 인쇄는 인쇄 설정의 가로 비율).
+  // 이번 달에 '시작하는'(첫 측정) / '끝나는'(마지막 측정) 일정만 강조하고 나머지는 흐리게 — null이면 평소대로
+  const [focusKind, setFocusKind] = useState(null);
   const [narrowWeekend, setNarrowWeekend] = useState(() => {
     try { return localStorage.getItem('em-narrow-weekend') === '1'; } catch { return false; }
   });
@@ -1139,6 +1135,8 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
   // 모니터링 현황 패널: 이번 달 측정 일정(회차 단위)을 완료/예정으로 나눠 탭으로 보여준다.
   // 분기·반기·년 창으로 다른 달에서 넘어온 회차(carried)는 목록에는 보이지만 이번 달 일정 건수·진행률에는 세지 않는다.
   const countedRows = monitorRows.filter(r => !r.carried);
+  const startCount = countedRows.filter(r => r.measurement.isFirst).length; // 이번 달에 시작하는(첫 측정) 일정
+  const endCount = countedRows.filter(r => r.measurement.isLast).length; // 이번 달에 끝나는(마지막 측정) 일정
   const monthDoneRows = countedRows.filter(r => completions.has(`${r.zone.id}_${r.measurement.num}`));
   const monthPendingRows = countedRows.filter(r => !completions.has(`${r.zone.id}_${r.measurement.num}`));
   const monCompleteRate = countedRows.length ? Math.round(monthDoneRows.length / countedRows.length * 100) : 0;
@@ -2609,7 +2607,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
 
       <div className="flex gap-5">
         {/* Calendar */}
-        <div ref={printAreaRef} className={`flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden min-w-0 print-area ${showDoneMarks ? '' : 'hide-done-marks'} ${narrowWeekend ? (weekStart === 'mon' ? 'narrow-weekend-mon' : 'narrow-weekend-sun') : ''}`}>
+        <div ref={printAreaRef} className={`flex-1 bg-white rounded-xl border border-gray-200 overflow-hidden min-w-0 print-area ${focusKind && viewMode === 'calendar' ? `cal-focus cal-focus-${focusKind}` : ''} ${showDoneMarks ? '' : 'hide-done-marks'} ${narrowWeekend ? (weekStart === 'mon' ? 'narrow-weekend-mon' : 'narrow-weekend-sun') : ''}`}>
           {/* 년/월 표시 + 이전/다음 (달력 테두리 안, 인쇄 시에도 표시) + 우측에 모니터링/교정/AHU
               요약(클릭하면 각각 팝업)을 함께 배치해 별도 줄 없이 한 줄로 보여준다. 요약은
               인쇄 대상이 아니므로 print:hidden. */}
@@ -2630,26 +2628,17 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                     style={{ width: `${monCompleteRate}%` }} />
                 </div>
               </button>
-              {currentMember && (() => {
-                const bad = !teamInfo.team || teamStatus?.sync === 'no-token' || teamStatus?.sync === 'upload-failed';
-                const names = [['leave', '휴가'], ['early', '조출'], ['overtime', '연장'], ['special', '특근'], ['memo', '내용']]
-                  .filter(([k]) => teamInfo.team?.share?.[k]).map(([, l]) => l).join('·');
-                const lines = !teamInfo.team
-                  ? ['소속 팀이 없어 기록이 공유되지 않습니다.', '권한 설정 > 팀 설정에서 이 계정을 팀 인원으로 추가하세요.']
-                  : [
-                      `팀: ${teamInfo.team.name} (공유 내역: ${names || '없음'})`,
-                      `내가 공유 중인 기록: ${teamStatus?.count ?? 0}건`,
-                      `다른 팀원이 공유한 기록: ${teamInfo.records.length}건`,
-                      teamStatus?.sync === 'no-token' ? '⚠ 이 PC에 GitHub 토큰이 없어 공유 업로드가 안 됩니다.'
-                        : teamStatus?.sync === 'upload-failed' ? '⚠ 공유 업로드에 실패했습니다(잠시 후 자동 재시도).' : '',
-                    ].filter(Boolean);
-                return (
-                  <span title={lines.join('\n')}
-                    className={`whitespace-nowrap px-2 py-1 rounded-full border text-[11px] cursor-help ${bad ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-indigo-50 text-indigo-700 border-indigo-200'}`}>
-                    👥 {teamInfo.team ? teamInfo.records.length : '팀 없음'}
-                  </span>
-                );
-              })()}
+              {viewMode === 'calendar' && (
+                <div className="flex flex-col gap-1 w-[5.6rem]">
+                  {[['start', '시작 일정', startCount, 'bg-emerald-50 text-emerald-700 border-emerald-300', 'border-l-emerald-500'], ['end', '끝나는 일정', endCount, 'bg-red-50 text-red-700 border-red-300', 'border-l-red-500']].map(([k, label, n, on, bar]) => (
+                    <button key={k} type="button" onClick={() => setFocusKind(v => (v === k ? null : k))}
+                      title={focusKind === k ? '누르면 강조를 끕니다' : `이번 달 ${k === 'start' ? '시작하는(첫 측정)' : '끝나는(마지막 측정)'} 일정만 강조하고 나머지는 흐리게 합니다`}
+                      className={`flex items-center justify-between gap-1 whitespace-nowrap pl-1.5 pr-2 py-0.5 text-[10px] font-semibold rounded border border-l-[3px] transition-colors ${bar} ${focusKind === k ? on : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}>
+                      <span>{label}</span><span className="tabular-nums">{n}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="relative flex items-center justify-center gap-4">
               {/* 보기 설정 버튼 — 월 이동 ‹ 의 왼쪽에 붙여 두되(absolute), 년/월은 계속 정중앙에 있도록 흐름에서는 뺀다 */}
@@ -2934,6 +2923,7 @@ const CalendarView = forwardRef(function CalendarView({ year: initYear, onYearCh
                         return (
                           <div
                             key={`s${i}`}
+                            data-focus={focusKind ? (!isOther && (focusKind === 'start' ? measurement.isFirst : measurement.isLast) ? 'match' : 'dim') : undefined}
                             draggable={!isDone && adminUnlocked}
                             onDragStart={(!isDone && adminUnlocked) ? (e) => {
                               e.stopPropagation(); setHoverTip(null); chipDraggingRef.current = true; setChipDragging(true);
