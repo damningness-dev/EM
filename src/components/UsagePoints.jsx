@@ -23,6 +23,11 @@ function progressOf(item) {
   const v = item?.progress || '';
   return LEGACY_PROGRESS[v] || v || PROGRESS_OPTIONS[0];
 }
+// PDF 출력용 진행상황 배지 색(배경, 글자) — 화면 배지와 같은 색 계열
+const PRINT_PROGRESS_COLOR = {
+  '신청': ['#f3f4f6', '#4b5563'], '접수': ['#e0f2fe', '#0369a1'], '조사 중': ['#e0e7ff', '#4338ca'],
+  '조치 중': ['#fef3c7', '#b45309'], '완료': ['#d1fae5', '#047857'], '보류': ['#fee2e2', '#b91c1c'],
+};
 const PROGRESS_COLOR = {
   '신청': 'bg-gray-100 text-gray-600',
   '접수': 'bg-sky-100 text-sky-700',
@@ -676,6 +681,42 @@ export default function UsagePoints({ adminUnlocked, currentMember, addFor }) {
   // 현재 화면에 보이는 목록(검색·대분류 필터가 적용된 그대로)을 A4 가로 PDF로
   // 만들어 기본 뷰어로 연다 — 달력 인쇄와 같은 방식(Windows 인쇄 대화상자가
   // 방향 설정을 무시하는 문제를 피하려고 PDF로 만든 뒤 뷰어에서 인쇄).
+  // PDF 출력 직전에 카드 속 사진을 원본으로 바꾼다 — 저장된 미리보기는 긴 변 260px라 크게 인쇄하면 흐리다.
+  // 원본(최대 2000px)을 받아 인쇄에 충분한 크기(긴 변 1400px)로 줄여 넣어 PDF가 너무 커지지 않게 한다.
+  // 못 받은 사진은 미리보기를 그대로 쓴다. 동영상은 첫 장면(썸네일)만 인쇄한다.
+  async function loadPrintOriginals(root) {
+    const imgs = [...root.querySelectorAll('.up-ph img')].filter(img => img.dataset.kind !== 'video' && (img.dataset.fp || img.dataset.gk));
+    if (!imgs.length) return;
+    const shrink = (dataUrl) => new Promise(res => {
+      const im = new Image();
+      im.onload = () => {
+        const k = Math.min(1, 1400 / Math.max(im.naturalWidth, im.naturalHeight));
+        if (k >= 1) { res(dataUrl); return; }
+        const c = document.createElement('canvas');
+        c.width = Math.round(im.naturalWidth * k); c.height = Math.round(im.naturalHeight * k);
+        c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+        res(c.toDataURL('image/jpeg', 0.88));
+      };
+      im.onerror = () => res(null);
+      im.src = dataUrl;
+    });
+    let done = 0;
+    const queue = [...imgs];
+    const worker = async () => {
+      while (queue.length) {
+        const img = queue.shift();
+        try {
+          const r = await resolveCalibImage(img.dataset.fp || '', img.dataset.gk || '', img.dataset.fn || '', 'usagepoints');
+          const url = r?.ok ? await shrink(r.dataUrl) : null;
+          if (url) { img.src = url; try { await img.decode(); } catch { /* 디코딩 실패 시 그대로 둔다 */ } }
+        } catch { /* 미리보기 사진으로 인쇄 */ }
+        done += 1;
+        showNotice(`사진 원본 불러오는 중… ${done}/${imgs.length}`);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, imgs.length) }, worker));
+  }
+
   async function handlePrintPdf() {
     if (printing) return;
     if (!sorted.length) { showNotice('출력할 내용이 없습니다.', true); return; }
@@ -689,11 +730,10 @@ export default function UsagePoints({ adminUnlocked, currentMember, addFor }) {
     document.body.appendChild(portal);
     document.body.classList.add('is-printing');
 
-    // 열이 많아 세로 폭에 다 안 들어가므로 가로로 강제한다. 여러 페이지에 걸쳐
-    // 흐르는 건 그대로(달력처럼 한 페이지에 맞출 필요는 없음). @page는 선택자로
+    // 업무 1건 = 카드 1장, 세로 A4로 여러 페이지에 걸쳐 흐른다. @page는 선택자로
     // 조건부 지정이 안 되므로 덮어쓴다.
     const styleEl = document.createElement('style');
-    styleEl.textContent = '@page { size: A4 landscape; margin: 10mm; }';
+    styleEl.textContent = '@page { size: A4 portrait; margin: 10mm; }';
     document.head.appendChild(styleEl);
 
     const cleanup = () => {
@@ -704,8 +744,9 @@ export default function UsagePoints({ adminUnlocked, currentMember, addFor }) {
 
     try {
       if (isElectron) {
+        await loadPrintOriginals(portal); // 썸네일 대신 원본 사진(크게 인쇄해도 흐리지 않게)
         await new Promise(r => requestAnimationFrame(() => r())); // 렌더 안정화
-        const r = await printDoc({ landscape: true, pageSize: 'A4', fileName: '업무별진행상황' });
+        const r = await printDoc({ landscape: false, pageSize: 'A4', fileName: '업무별진행상황' });
         if (r?.ok) showNotice('PDF로 열었습니다. 뷰어에서 인쇄(Ctrl+P)하세요.');
         else showNotice('PDF 생성 실패: ' + (r?.error || ''), true);
       } else {
@@ -893,60 +934,45 @@ export default function UsagePoints({ adminUnlocked, currentMember, addFor }) {
             {majorFilter !== 'all' && ` · 대분류: ${majorFilter}`}
             {search.trim() && ` · 검색: "${search.trim()}"`}
           </p>
-          <table>
-            <colgroup>
-              <col style={{ width: '3%' }} /><col style={{ width: '10%' }} /><col style={{ width: '6%' }} /><col style={{ width: '8%' }} />
-              <col style={{ width: '7%' }} /><col style={{ width: '7%' }} /><col style={{ width: '6%' }} />
-              <col style={{ width: '6%' }} /><col style={{ width: '10%' }} /><col style={{ width: '6%' }} />
-              <col style={{ width: '8%' }} /><col style={{ width: '15%' }} /><col style={{ width: '6%' }} />
-            </colgroup>
-            <thead>
-              <tr>
-                <th>번호</th><th>제목</th><th>대분류</th><th>소분류</th><th>작성일</th><th>작업일</th>
-                <th>작성자</th><th>작업자</th><th>실명</th><th>실번호</th><th>사용점번호</th>
-                <th>내용</th><th>비고</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((u, i) => (
-                // 진행상황·조치사항은 열이 좁아 잘리기 쉬워서, 항목 아래에 한 줄로
-                // 펼쳐 전체 폭을 쓰게 한다. 두 행이 페이지 경계에서 떨어지지 않도록
-                // page-break-after/before로 서로 붙여둔다.
-                <FragmentRow key={u.id}>
-                  <tr style={{ pageBreakAfter: 'avoid', breakAfter: 'avoid' }}>
-                    <td className="up-center">{i + 1}</td>
-                    <td>{u.title || ''}</td>
-                    <td className="up-center">{u.major_category || ''}</td>
-                    <td className="up-center">{u.minor_category || ''}</td>
-                    <td className="up-center">{u.created_at || ''}</td>
-                    <td className="up-center">{u.created_date || ''}</td>
-                    <td className="up-center">{u.author_name || ''}</td>
-                    <td className="up-center">{u.worker_name || ''}</td>
-                    <td>{u.room_name || ''}</td>
-                    <td className="up-center">{u.room_number || ''}</td>
-                    <td className="up-center">{u.point_number || ''}</td>
-                    <td>{u.reason || ''}</td>
-                    <td>{u.note || ''}</td>
-                  </tr>
-                  <tr className="up-detail" style={{ pageBreakBefore: 'avoid', breakBefore: 'avoid' }}>
-                    <td colSpan={13}>
-                      <div>진행상황 : {progressOf(u)}</div>
-                      <div>담당자 : {assigneesOf(u).join(', ')}{u.due_date ? ` (완료기한 ${u.due_date})` : ''}</div>
-                      <div>조치사항 : {u.action_taken || ''}</div>
-                      {u.conclusion && <div>결론 : {u.conclusion}</div>}
-                      {/* 인쇄에는 썸네일만 나간다 — 동영상은 첫 장면이 대신 인쇄되고,
-                          썸네일을 만들지 못한 동영상은 인쇄할 그림이 없으므로 건너뛴다. */}
-                      {photosOf(u).some(p => p.thumb) && (
-                        <div className="up-print-photos">
-                          {photosOf(u).filter(p => p.thumb).map(p => <img key={p.id} src={p.thumb} alt="" />)}
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                </FragmentRow>
-              ))}
-            </tbody>
-          </table>
+          {/* 업무 1건 = 카드 1장(세로 A4). 사진은 한 줄에 2장씩 크게 — 출력할 때 handlePrintPdf가
+              data-* 정보로 원본 사진을 불러와 미리보기(썸네일) 대신 넣는다. */}
+          {sorted.map((u, i) => {
+            const [pbg, pfg] = PRINT_PROGRESS_COLOR[progressOf(u)] || PRINT_PROGRESS_COLOR['신청'];
+            const photos = photosOf(u).filter(p => p.thumb);
+            return (
+              <div key={u.id} className="up-card">
+                <div className="up-card-h">
+                  <span className="up-no">{i + 1}</span>
+                  <span className="up-ttl">{u.title || '(제목 없음)'}</span>
+                  <span className="up-cat">{[u.major_category, u.minor_category].filter(Boolean).join(' · ')}</span>
+                  <span className="up-badge" style={{ background: pbg, color: pfg }}>{progressOf(u)}</span>
+                </div>
+                <table className="up-kv">
+                  <tbody>
+                    <tr><th>작성일</th><td>{u.created_at || '—'}</td><th>작업일</th><td>{u.created_date || '—'}</td></tr>
+                    <tr><th>작성자</th><td>{u.author_name || '—'}</td><th>작업자</th><td>{u.worker_name || '—'}</td></tr>
+                    <tr><th>실명</th><td>{u.room_name || '—'}</td><th>실번호 · 사용점</th><td>{[u.room_number, u.point_number].filter(Boolean).join(' · ') || '—'}</td></tr>
+                    <tr><th>담당자</th><td>{assigneesOf(u).join(', ') || '—'}</td><th>완료기한</th><td>{u.due_date || '—'}</td></tr>
+                    <tr><th>내용</th><td colSpan={3}>{u.reason || '—'}</td></tr>
+                    <tr><th>조치사항</th><td colSpan={3}>{u.action_taken || '—'}</td></tr>
+                    {u.conclusion && <tr><th>결론</th><td colSpan={3}>{u.conclusion}</td></tr>}
+                    {u.note && <tr><th>비고</th><td colSpan={3}>{u.note}</td></tr>}
+                  </tbody>
+                </table>
+                {/* 동영상은 첫 장면(썸네일)이 대신 인쇄되고, 썸네일이 없는 동영상은 건너뛴다 */}
+                {photos.length > 0 ? (
+                  <div className="up-print-photos">
+                    {photos.map(p => (
+                      <div key={p.id} className="up-ph">
+                        <img src={p.thumb} alt="" data-fp={p.filePath || ''} data-gk={p.gistKey || ''} data-fn={p.fileName || ''} data-kind={p.kind || ''} />
+                        {p.kind === 'video' && <span className="up-ph-v">▶ 동영상</span>}
+                      </div>
+                    ))}
+                  </div>
+                ) : <div className="up-nophoto">첨부 사진 없음</div>}
+              </div>
+            );
+          })}
         </div>
       </div>
 
