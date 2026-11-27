@@ -363,9 +363,11 @@ export default function TestBoard({ adminUnlocked, currentMember, onOpenPage, on
   async function writeDone(date, taskId, who, done, meta = {}) {
     const id = `${date}|${taskId}|${who}`;
     const doneAt = todayStr(); // 완료 표시를 한 날짜 — 완료 목록에 남는다
-    setDoneList(list => [...list.filter(x => x.id !== id), { id, date, taskId, who, done, doneAt, name: meta.name || '', kind: meta.kind || '', updatedAt: new Date().toISOString() }]);
+    // 구분(적격성평가·교정·청구서)도 함께 남긴다 — 나중에 업무를 지워도 완료 목록에 원래 구분이 보이게
+    const cat = meta.cat ?? (taskById.get(taskId)?.cat || '');
+    setDoneList(list => [...list.filter(x => x.id !== id), { id, date, taskId, who, done, doneAt, name: meta.name || '', kind: meta.kind || '', cat, updatedAt: new Date().toISOString() }]);
     try {
-      const r = await setBoardDone({ date, taskId, who, done, doneAt, name: meta.name || '', kind: meta.kind || '' });
+      const r = await setBoardDone({ date, taskId, who, done, doneAt, name: meta.name || '', kind: meta.kind || '', cat });
       if (!r?.ok) { flash(r?.error || '완료 표시를 저장하지 못했습니다', true); fetchBoardDone().then(l => setDoneList(Array.isArray(l) ? l : [])).catch(() => {}); return; }
       syncAfterChange().catch(() => {});
     } catch { flash('완료 표시를 저장하지 못했습니다', true); }
@@ -1195,17 +1197,20 @@ export default function TestBoard({ adminUnlocked, currentMember, onOpenPage, on
                   </thead>
                   <tbody>
                     {rows.map(x => {
-                      const nm = x.name || taskById.get(x.taskId)?.name || x.taskId;
+                      const tk = taskById.get(x.taskId);
+                      const nm = x.name || tk?.name || x.taskId;
+                      // 구분 배지: 지금 업무의 구분 → 완료할 때 남긴 구분 → 없으면 '기타'
+                      const bt = { kind: '', cat: tk ? (tk.cat || '') : (x.cat || '') };
                       return (
                         <tr key={x.id} className="border-t border-gray-100 hover:bg-gray-50">
                           <td className="px-3 py-1.5 text-gray-700 tabular-nums">{x.doneAt || (x.updatedAt || '').slice(0, 10)}</td>
                           <td className="px-2 py-1.5">
-                            <span className={`mr-1.5 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${KIND_BADGE['']}`}>{KIND_SHORT['']}</span>
+                            <span className={`mr-1.5 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${badgeCls(bt)}`}>{badgeShort(bt)}</span>
                             <span className="text-gray-800">{nm}</span>
                           </td>
                           <td className="px-2 py-1.5"><span className="inline-flex items-center gap-1"><span className={`w-2 h-2 rounded-full ${colorOf(x.who).dot}`} />{x.who}</span></td>
                           <td className="px-2 py-1.5 text-right">
-                            <button type="button" onClick={() => toggleDone(x.who, '*', x.taskId, true, { name: nm, kind: '' })} className="text-[11px] px-2 py-0.5 rounded border border-gray-300 text-gray-500 hover:bg-white hover:text-blue-600" title="완료를 취소하고 표로 되돌립니다">되돌리기</button>
+                            <button type="button" onClick={() => toggleDone(x.who, '*', x.taskId, true, { name: nm, kind: '', cat: bt.cat })} className="text-[11px] px-2 py-0.5 rounded border border-gray-300 text-gray-500 hover:bg-white hover:text-blue-600" title="완료를 취소하고 표로 되돌립니다">되돌리기</button>
                           </td>
                         </tr>
                       );
