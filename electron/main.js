@@ -1573,7 +1573,7 @@ function checkAlarms() {
 // ─── 개인별 업무표: 비주기 업무 세부 구분(적격성평가·교정·청구서)과 진행 단계 ───
 const BOARD_CATS = ['qual', 'calib', 'bill'];
 const BOARD_STAGES = {
-  qual: ['대기', '계획서 작성 중', '계획서 완료', '시험 대기중', '시험 진행 중', '보고서 작성 중', '보고서 완료'],
+  qual: ['대기', '계획서 작성 중', '계획서 완료', '시험 예정', '보고서 작성 중', '보고서 완료'],
   bill: ['견적서 발행', '청구서 작성', '교정/발송 대기', '계산서 발행', '지불품의서 작성'],
 };
 // 마지막 단계에 이른 업무는 끝난 것으로 본다
@@ -2673,7 +2673,7 @@ function registerHandlers() {
     return t ? { cat: t.cat || '', owner: '' } : null;
   };
   ipcMain.handle('boardStage:list', () => (Array.isArray(loadData().boardStage) ? loadData().boardStage : []));
-  ipcMain.handle('boardStage:set', (_e, { taskId, who, stage } = {}) => {
+  ipcMain.handle('boardStage:set', (_e, { taskId, who, stage, testDate } = {}) => {
     const data = loadData();
     const me = (data.memberAccounts || []).find(m => m.id === currentMemberId);
     if (!me) return { ok: false, error: '로그인한 뒤에 입력할 수 있습니다' };
@@ -2683,7 +2683,9 @@ function registerHandlers() {
     if (!BOARD_STAGES[info.cat].includes(stage)) return { ok: false, error: '진행 단계가 올바르지 않습니다' };
     const id = `${taskId}|${who}`;
     const list = (Array.isArray(data.boardStage) ? data.boardStage : []).filter(x => x.id !== id);
-    list.push({ id, taskId: String(taskId).slice(0, 100), who: String(who).slice(0, 40), stage, by: me.username, updatedAt: new Date().toISOString() });
+    // '시험 예정' 단계는 시험 예정일(yyyy-MM-dd)을 함께 저장한다
+    const td = stage === '시험 예정' && /^\d{4}-\d{2}-\d{2}$/.test(String(testDate || '')) ? testDate : '';
+    list.push({ id, taskId: String(taskId).slice(0, 100), who: String(who).slice(0, 40), stage, ...(td ? { testDate: td } : {}), by: me.username, updatedAt: new Date().toISOString() });
     data.boardStage = list;
     saveData(data);
     return { ok: true };

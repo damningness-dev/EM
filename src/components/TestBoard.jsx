@@ -55,11 +55,13 @@ const KIND_ORDER = ['daily', 'weekly', 'monthly', ''];
 const CAT_LABEL = { qual: '적격성평가', calib: '교정', bill: '청구서' };
 const CAT_BADGE = { qual: 'bg-indigo-100 text-indigo-700 border-indigo-300', calib: 'bg-teal-100 text-teal-700 border-teal-300', bill: 'bg-pink-100 text-pink-700 border-pink-300' };
 const CAT_STAGES = {
-  qual: ['대기', '계획서 작성 중', '계획서 완료', '시험 대기중', '시험 진행 중', '보고서 작성 중', '보고서 완료'],
+  qual: ['대기', '계획서 작성 중', '계획서 완료', '시험 예정', '보고서 작성 중', '보고서 완료'],
   bill: ['견적서 발행', '청구서 작성', '교정/발송 대기', '계산서 발행', '지불품의서 작성'],
 };
 // 단계 이름을 바꾸기 전에 저장된 값은 새 이름으로 읽는다
-const LEGACY_STAGE = { '계획서 작성': '계획서 작성 중', '보고서 작성': '보고서 작성 중' };
+const LEGACY_STAGE = { '계획서 작성': '계획서 작성 중', '보고서 작성': '보고서 작성 중', '시험 대기중': '시험 예정', '시험 진행 중': '시험 예정' };
+const TEST_STAGE = '시험 예정'; // 이 단계를 고르면 시험 예정일을 입력받아 제목 옆에 빨간 글씨로 보여준다
+const testMd = (ds) => { const d = new Date(`${ds}T00:00:00`); return `${d.getMonth() + 1}/${d.getDate()}(${'일월화수목금토'[d.getDay()]})`; };
 const badgeShort = (t) => (t.kind ? KIND_SHORT[t.kind] : t.cat ? CAT_LABEL[t.cat] : KIND_SHORT['']);
 const badgeCls = (t) => (t.kind ? KIND_BADGE[t.kind] : t.cat ? CAT_BADGE[t.cat] : KIND_BADGE['']);
 const stFinalCls = (stage, cat) => (stage === CAT_STAGES[cat][CAT_STAGES[cat].length - 1] ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-700 border-gray-300');
@@ -108,6 +110,7 @@ export default function TestBoard({ adminUnlocked, currentMember, onOpenPage, on
   const [stages, setStages] = useState([]); // 진행 단계 [{ id:'업무|근무자', taskId, who, stage }]
   const [myTasks, setMyTasks] = useState([]); // 개인이 직접 추가한 업무 [{ id, who, name, cat, due, note }]
   const [ups, setUps] = useState([]); // 업무별 진행상황 항목 — 담당자로 지정된 건을 근무자 칸의 '담당 업무'로 보여준다
+  const [testDlg, setTestDlg] = useState(null); // { who, taskId, name, date } — '시험 예정' 단계의 시험 예정일 입력 창
   const [myDlg, setMyDlg] = useState(null); // { id|null, who, draft } — 개인 업무 추가/수정 창
   const [staffDlg, setStaffDlg] = useState(null); // { input } — 직원 관리 창
   const [kindMenu, setKindMenu] = useState(null); // { id, x, y } — 업무 버튼 구분 선택 메뉴
@@ -376,12 +379,20 @@ export default function TestBoard({ adminUnlocked, currentMember, onOpenPage, on
   // ── 진행 단계(적격성평가·청구서)와 개인 업무 ──
   // 단계는 담당자 각자가 고른다(관리자는 누구 것이든). 마지막 단계에 이르면 끝난 것으로 보고 칩에 완료 표시(빗금)만 한다.
   const stageOf = (taskId, who, cat) => { const raw = stages.find(x => x.id === `${taskId}|${who}`)?.stage; return (raw && (LEGACY_STAGE[raw] || raw)) || CAT_STAGES[cat]?.[0] || ''; };
-  async function changeStage(who, taskId, stage) {
+  // '시험 예정'일 때 입력한 시험 예정일(다른 단계로 넘어가면 표시하지 않는다)
+  const testDateOf = (taskId, who) => { const r = stages.find(x => x.id === `${taskId}|${who}`); return r && (LEGACY_STAGE[r.stage] || r.stage) === TEST_STAGE ? (r.testDate || '') : ''; };
+  async function changeStage(who, taskId, stage, testDate) {
     if (!(adminUnlocked || currentMember?.username === who)) { flash('본인의 업무만 진행 단계를 바꿀 수 있습니다.', true); return; }
+    // '시험 예정'은 날짜를 먼저 받는다 — 창에서 입력하면 그때 저장한다
+    if (stage === TEST_STAGE && !testDate) {
+      setTestDlg({ who, taskId, name: taskById.get(taskId)?.name || '', date: testDateOf(taskId, who) || '' });
+      return;
+    }
     const id = `${taskId}|${who}`;
-    setStages(list => [...list.filter(x => x.id !== id), { id, taskId, who, stage, updatedAt: new Date().toISOString() }]);
+    const td = stage === TEST_STAGE ? testDate : '';
+    setStages(list => [...list.filter(x => x.id !== id), { id, taskId, who, stage, ...(td ? { testDate: td } : {}), updatedAt: new Date().toISOString() }]);
     try {
-      const r = await setBoardStage({ taskId, who, stage });
+      const r = await setBoardStage({ taskId, who, stage, testDate: td });
       if (!r?.ok) { flash(r?.error || '진행 단계를 저장하지 못했습니다', true); fetchBoardStages().then(l => setStages(Array.isArray(l) ? l : [])).catch(() => {}); return; }
       syncAfterChange().catch(() => {});
     } catch { flash('진행 단계를 저장하지 못했습니다', true); }
@@ -981,6 +992,15 @@ export default function TestBoard({ adminUnlocked, currentMember, onOpenPage, on
                           <div className="flex items-center gap-1.5">
                             <span className={`shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border ${badgeCls(t)}`}>{badgeShort(t)}</span>
                             <span className={`min-w-0 text-sm font-medium break-words ${done ? 'line-through opacity-70' : ''}`}>{t.name}</span>
+                            {hasStages && testDateOf(id, who) && (
+                              <button type="button" disabled={!canStage} title={canStage ? '시험 예정일 — 누르면 날짜를 바꿉니다' : '시험 예정일'}
+                                onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); if (canStage) setTestDlg({ who, taskId: id, name: t.name, date: testDateOf(id, who) }); }} onDoubleClick={e => e.stopPropagation()}
+                                className={`shrink-0 text-xs font-bold text-red-600 tabular-nums ${canStage ? 'hover:underline' : 'cursor-default'}`}>{testMd(testDateOf(id, who))}</button>
+                            )}
+                            {hasStages && stage === TEST_STAGE && !testDateOf(id, who) && canStage && (
+                              <button type="button" onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setTestDlg({ who, taskId: id, name: t.name, date: '' }); }} onDoubleClick={e => e.stopPropagation()}
+                                className="shrink-0 text-[11px] font-semibold text-red-500 hover:underline">예정일 입력</button>
+                            )}
                             {subs[`${id}|${who}`] && <span className="shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded border bg-red-50 border-red-200 text-red-600" title={`${subs[`${id}|${who}`]}님(정)이 휴가라 대신 맡음${(taskById.get(id)?.backups || []).includes(who) ? ' — 부 담당' : ''}`}>{(taskById.get(id)?.backups || []).includes(who) ? '부' : '대신'}</span>}
                             <span className="flex-1" />
                             {done && <span className="shrink-0 text-[10px] leading-none font-bold px-1.5 py-1 rounded bg-green-600 text-white">✓ 완료</span>}
@@ -1238,6 +1258,7 @@ export default function TestBoard({ adminUnlocked, currentMember, onOpenPage, on
             )}
             {t.kind ? <Row label="주기">{scheduleLabel(t)}</Row> : <Row label="마감">{due ? <>{due}{dl && <span className={`ml-1.5 font-semibold ${dl.cls.includes('red') ? 'text-red-300' : dl.cls.includes('yellow') ? 'text-yellow-300' : 'text-gray-400'}`}>{dl.text}</span>}</> : <span className="text-gray-400">없음</span>}</Row>}
             {pr && <Row label="상태">{STATUS.find(x => x[0] === pr.status)?.[1]}</Row>}
+            {who && testDateOf(t.id, who) && <Row label="시험 예정일"><span className="text-red-300 font-semibold">{testDateOf(t.id, who)}</span></Row>}
             {rs && (
               <>
                 <Row label="로테이션">{rotationLabel(t.rotation)}</Row>
@@ -1278,6 +1299,25 @@ export default function TestBoard({ adminUnlocked, currentMember, onOpenPage, on
               {noteDlg.id && <button type="button" onClick={() => { const id = noteDlg.id; setNoteDlg(null); removeNoteItem(id); }} className="mr-auto px-3 py-2 text-sm text-red-600 bg-red-50 rounded-lg hover:bg-red-100">삭제</button>}
               <button type="button" onClick={() => setNoteDlg(null)} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>
               <button type="button" disabled={!noteDlg.text.trim()} onClick={saveNoteItem} className="px-4 py-2 text-sm font-semibold text-white bg-purple-600 rounded-lg hover:bg-purple-700 disabled:opacity-40">저장</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 시험 예정일 입력 창 — 적격성평가에서 '시험 예정'을 고르거나 제목 옆 날짜를 누르면 열린다 */}
+      {testDlg && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40" onClick={() => setTestDlg(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[22rem] max-w-[95vw] p-5" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-gray-900 mb-0.5">🧪 시험 예정일</h3>
+            <p className="text-sm text-gray-500 mb-3 break-words">{testDlg.name} · {testDlg.who}</p>
+            <input type="date" autoFocus value={testDlg.date} onChange={e => setTestDlg(d => ({ ...d, date: e.target.value }))}
+              onKeyDown={e => { if (e.key === 'Enter' && testDlg.date) { const d = testDlg; setTestDlg(null); changeStage(d.who, d.taskId, TEST_STAGE, d.date); } }}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-1" />
+            <p className="text-[11px] text-gray-400 mb-4">입력하면 진행 단계가 '시험 예정'으로 바뀌고, 제목 옆에 빨간 글씨로 날짜가 표시됩니다.</p>
+            <div className="flex gap-2 justify-end">
+              <button type="button" onClick={() => setTestDlg(null)} className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200">취소</button>
+              <button type="button" disabled={!testDlg.date} onClick={() => { const d = testDlg; setTestDlg(null); changeStage(d.who, d.taskId, TEST_STAGE, d.date); }}
+                className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-40">저장</button>
             </div>
           </div>
         </div>
