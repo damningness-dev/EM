@@ -368,9 +368,8 @@ export default function TestBoard({ adminUnlocked, currentMember, onOpenPage, on
     } catch { flash('완료 표시를 저장하지 못했습니다', true); }
   }
   function toggleDone(who, date, taskId, cur, meta) {
-    // 비주기적 업무의 완료 표시는 관리자만, 단 본인이 직접 추가한 개인 업무는 본인도 할 수 있다
-    const pt = taskById.get(taskId);
-    if (date === '*' && !adminUnlocked && !(pt?.personal && pt.owner === currentMember?.username)) { flash('비주기적 업무의 완료 표시는 관리자만 할 수 있습니다.', true); return; }
+    // 비주기적 업무(개인 업무 포함)의 완료 표시는 관리자만 한다 — 담당자가 더블클릭해도 아무 일도 일어나지 않는다
+    if (date === '*' && !adminUnlocked) return;
     if (!(adminUnlocked || currentMember?.username === who)) { flash('본인의 업무만 완료 표시할 수 있습니다.', true); return; }
     writeDone(date, taskId, who, !cur, meta);
   }
