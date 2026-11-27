@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { fetchWaterPlan, saveWaterPlanItem, deleteWaterPlanItem, seedWaterPlan, syncAfterChange, fetchZones, fetchHolidays, fetchBlockedDates, fetchScheduleConfig, fetchCompletions, setCompletion, deleteCompletion, upsertZone } from '../lib/api';
-import { buildHolidayMap, setScheduleConfig, totalCount, calcEndDate, getDragBounds } from '../lib/schedule';
+import { buildHolidayMap, setScheduleConfig, getDragBounds } from '../lib/schedule';
 import WaterPlanManager from './WaterPlanManager';
 import CalendarSettingsDialog from './CalendarSettingsDialog';
 import { mergeScheduleConfig, buildZoneOrderRank, buildScheduleByDate, isWaterZone } from '../lib/monitoringDay';
 import { WATER_PLAN_SEED } from '../data/waterPlanSeed';
-import { WATER_TYPES, WATER_TYPE_KEYS, WATER_FILTER_KEYS, WATER_REPEATS, DOW_KR, fmt, occursOn, groupItems, buildOccurrenceMap, cycleWindow, repeatLabel, monthWeeks, normalizeWaterItem } from '../lib/waterPlan';
+import { WATER_TYPES, WATER_TYPE_KEYS, WATER_FILTER_KEYS, WATER_REPEATS, DOW_KR, fmt, occursOn, groupItems, buildOccurrenceMap, cycleWindow, repeatLabel, monthWeeks, normalizeWaterItem, defaultRepeat } from '../lib/waterPlan';
 
 // 용수모니터링 일정 — 첨부된 '용수 모니터링 계획' 엑셀(주간용수 WFI·UF / PW / PS / 용수 달력)을 달력으로 옮긴 화면.
 // 날짜 칸에 그 날 채취할 구역(종류별 색)과 개수가 보이고, 날짜를 누르면 사용점 번호까지 자세히 나온다.
@@ -23,7 +23,6 @@ export default function WaterPlan({ adminUnlocked }) {
   const [notice, setNotice] = useState(null);
   // 월별 모니터링 일정에서 옮겨 온 용수 구역의 일정(구역별 측정 주기로 계산)과 완료 표시
   const [zoneEv, setZoneEv] = useState({ byDate: {}, done: new Set() });
-  const [waterZones, setWaterZones] = useState([]); // [{ zone, end }] — 일정 관리 창의 '용수 구역' 탭용
   const [mgrOpen, setMgrOpen] = useState(false); // 일정 관리 창
   const [zoneList, setZoneList] = useState([]); // 용수 구역 원본(드래그로 회차를 옮길 때 저장용)
   const [blocked, setBlocked] = useState([]); // 일정비우기 날짜
@@ -94,8 +93,6 @@ export default function WaterPlan({ adminUnlocked }) {
         const ov = Object.fromEntries(Object.entries(zz.schedule_overrides || {}).filter(([, d]) => !avoid[d]));
         return { ...zz, schedule_overrides: ov };
       });
-      const fmtD = (d) => (d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '');
-      setWaterZones(water.map(zone => { let end = ''; try { end = fmtD(calcEndDate(zone, avoid)); } catch { /* 종료일을 계산할 수 없으면 비워 둔다 */ } return { zone, end }; }));
       setZoneEv({ byDate: buildScheduleByDate(water, avoid, buildZoneOrderRank(water)), done: new Set((comps || []).map(c => `${c.zoneId}_${c.num}`)) });
     }).catch(() => {});
   }
@@ -108,14 +105,8 @@ export default function WaterPlan({ adminUnlocked }) {
   }, []);
 
   const shown = typeFilter === 'all' ? items : items.filter(it => it.type === typeFilter);
-  // 그 날의 일정 = 직접 입력한 일정 + 월별 모니터링 일정에서 옮겨 온 용수 구역 일정
-  const zoneItemsOn = (ds) => (zoneEv.byDate[ds] || []).map(({ zone, measurement }) => ({
-    id: `z${zone.id}_${measurement.num}`, zoneId: zone.id, num: measurement.num, type: '구역', area: zone.name,
-    points: `${zone.grade ? zone.grade + ' ' : ''}${measurement.num}/${totalCount(zone)}회차`,
-    count: ((zone.points_float || 0) + (zone.points_fall || 0) + (zone.points_surface || 0) + (zone.points_particle || 0)) || 1,
-    repeat: 'once', date: ds, done: zoneEv.done.has(`${zone.id}_${measurement.num}`), measurement,
-  }));
-  const dayItems = (ds) => [...(occMap[ds] || []), ...(typeFilter === 'all' || typeFilter === '구역' ? zoneItemsOn(ds) : [])];
+  // 그 날의 일정(직접 입력한 일정 — 옮긴 회차·공휴일 자동 이동 반영)
+  const dayItems = (ds) => occMap[ds] || [];
   // 용수 구역 일정 완료/취소(월별 모니터링 일정의 완료 처리와 같은 기록)
   async function toggleZoneDone(it) {
     if (!adminUnlocked) { flash('관리자만 완료 표시를 할 수 있습니다.', true); return; }
@@ -215,12 +206,7 @@ export default function WaterPlan({ adminUnlocked }) {
     if (!adminUnlocked) return;
     setDlg(it
       ? { id: it.id, draft: { type: it.type, area: it.area || '', points: it.points || '', count: String(it.count ?? ''), repeat: it.repeat || 'once', date: it.date, note: it.note || '' } }
-      : { id: null, draft: { type: type || 'WFI', area: '', points: '', count: '', repeat: type === 'PW' || type === 'PS' ? 'once' : 'weekly', date: date || sel, note: '' } });
-  }
-  // 용수 구역(월별 모니터링에서 옮겨 온 구역)의 등급·시작일 수정 — 달력 일정이 이 값으로 다시 계산된다
-  async function saveZone(zone, patch) {
-    if (!adminUnlocked) return;
-    try { await upsertZone({ ...zone, ...patch }); loadZones(); syncAfterChange().catch(() => {}); flash('용수 구역을 수정했습니다.'); } catch { flash('저장하지 못했습니다', true); }
+      : { id: null, draft: { type: type || 'WFI', area: '', points: '', count: '', repeat: defaultRepeat(type || 'WFI'), date: date || sel, note: '' } });
   }
   async function saveDlg() {
     const { id, draft } = dlg;
@@ -294,7 +280,6 @@ export default function WaterPlan({ adminUnlocked }) {
           {['WFI', 'HWFI', 'PW', 'PS', 'UF'].map(t => (
             <span key={t} className={`px-2 py-0.5 rounded border font-medium ${WATER_TYPES[t].chip}`}>{t === 'PW' ? 'PW(정제수)' : t === 'PS' ? 'PS(순수증기)' : t} · {WATER_TYPES[t].pipe}</span>
           ))}
-          <span className={`px-2 py-0.5 rounded border font-medium ${WATER_TYPES['구역'].chip}`}>용수구역 · 청록</span>
         </div>
       </div>
 
@@ -409,8 +394,8 @@ export default function WaterPlan({ adminUnlocked }) {
           onChanged={() => { loadZones(); syncAfterChange().catch(() => {}); }} />
       )}
       {mgrOpen && (
-        <WaterPlanManager items={items} waterZones={waterZones} adminUnlocked={adminUnlocked}
-          onAdd={(type) => openDlg(null, sel, type)} onEdit={(it) => openDlg(it)} onRemove={removeItem} onSaveZone={saveZone} onClose={() => setMgrOpen(false)} />
+        <WaterPlanManager items={items} adminUnlocked={adminUnlocked}
+          onAdd={(type) => openDlg(null, sel, type)} onEdit={(it) => openDlg(it)} onRemove={removeItem} onClose={() => setMgrOpen(false)} />
       )}
 
       {/* 일정 추가/수정 창 */}
@@ -424,7 +409,7 @@ export default function WaterPlan({ adminUnlocked }) {
               <div className="flex gap-3 mb-3">
                 <div className="w-28">
                   <label className="block text-xs text-gray-500 mb-1">종류</label>
-                  <select value={d.type} onChange={e => set({ type: e.target.value })} className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm">
+                  <select value={d.type} onChange={e => set(dlg.id ? { type: e.target.value } : { type: e.target.value, repeat: defaultRepeat(e.target.value) })} className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm">
                     {WATER_TYPE_KEYS.map(t => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </div>

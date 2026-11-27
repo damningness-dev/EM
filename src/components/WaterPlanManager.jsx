@@ -2,18 +2,15 @@ import { useState } from 'react';
 import { WATER_TYPES, DOW_KR, repeatLabel } from '../lib/waterPlan';
 
 // 용수모니터링 '일정 관리' 창 — 월별 모니터링 일정의 일정 관리 창처럼, 용수 일정을 표로 보면서 추가·수정·삭제한다.
-// 탭은 첨부 엑셀의 시트 구성(주간용수 WFI·UF / PW / PS)을 따르고, 월별 모니터링에서 옮겨 온 '용수 구역'(구역별 주기로 계산되는
-// 일정)은 시작일·등급을 여기서 고친다. 맨 위 요약은 엑셀의 '하루 ○개'처럼 요일·날짜별 채취 개수를 보여준다.
+// 탭은 첨부 엑셀의 시트 구성(주간용수 WFI·UF / PW / PS)을 따른다. 맨 위 요약은 엑셀의 '하루 ○개'처럼 요일·날짜별 채취 개수를 보여준다.
 const TABS = [
   { key: 'WFI', label: 'WFI·HWFI·UF', types: ['WFI', 'HWFI', 'UF'], color: 'bg-sky-600' },
   { key: 'PW', label: 'PW (정제수)', types: ['PW'], color: 'bg-lime-600' },
   { key: 'PS', label: 'PS (순수증기)', types: ['PS'], color: 'bg-pink-500' },
   { key: 'ETC', label: '기타', types: ['기타'], color: 'bg-gray-500' },
-  { key: 'ZONE', label: '용수 구역', types: [], color: 'bg-teal-600' },
 ];
-const GRADES = ['P1', 'P2', 'P3', '유지관리'];
 
-export default function WaterPlanManager({ items, waterZones, adminUnlocked, onAdd, onEdit, onRemove, onSaveZone, onClose }) {
+export default function WaterPlanManager({ items, adminUnlocked, onAdd, onEdit, onRemove, onClose }) {
   const [tab, setTab] = useState('WFI');
   const [q, setQ] = useState('');
   const cur = TABS.find(t => t.key === tab);
@@ -42,7 +39,7 @@ export default function WaterPlanManager({ items, waterZones, adminUnlocked, onA
         </div>
         <div className="px-5 pt-3 flex items-center gap-1.5 flex-wrap">
           {TABS.map(t => {
-            const n = t.key === 'ZONE' ? waterZones.length : items.filter(it => t.types.includes(it.type)).length;
+            const n = items.filter(it => t.types.includes(it.type)).length;
             return (
               <button key={t.key} type="button" onClick={() => setTab(t.key)}
                 className={`px-3.5 py-1.5 rounded-lg text-sm font-medium border ${tab === t.key ? `${t.color} text-white border-transparent` : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
@@ -50,7 +47,7 @@ export default function WaterPlanManager({ items, waterZones, adminUnlocked, onA
               </button>
             );
           })}
-          {tab !== 'ZONE' && (
+          {(
             <div className="ml-auto flex items-center gap-2">
               <input value={q} onChange={e => setQ(e.target.value)} placeholder="구역·사용점 검색" spellCheck={false} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-48" />
               {adminUnlocked && <button type="button" onClick={() => onAdd(cur.types[0])} className="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">+ {cur.label} 일정 추가</button>}
@@ -58,8 +55,7 @@ export default function WaterPlanManager({ items, waterZones, adminUnlocked, onA
           )}
         </div>
 
-        {tab !== 'ZONE' ? (
-          <>
+        <>
             <div className="px-5 py-2.5 flex items-center gap-1.5 flex-wrap text-xs">
               <span className="text-gray-500 font-semibold">채취 개수</span>
               {sums.length === 0 ? <span className="text-gray-300">일정 없음</span> : sums.map(s => (
@@ -102,37 +98,7 @@ export default function WaterPlanManager({ items, waterZones, adminUnlocked, onA
                 </tbody>
               </table>
             </div>
-          </>
-        ) : (
-          <div className="flex-1 min-h-0 overflow-y-auto px-5 py-3">
-            <p className="text-xs text-gray-400 mb-2">월별 모니터링 일정에서 옮겨 온 용수 구역입니다. 구역별 측정 주기(등급)와 시작일로 달력 일정이 계산됩니다.</p>
-            <table className="w-full text-sm border border-gray-200 rounded-lg overflow-hidden">
-              <thead className="bg-gray-50 text-xs text-gray-500">
-                <tr><th className="text-left font-medium px-3 py-2 w-24">분류</th><th className="text-left font-medium px-3 py-2">구역명</th><th className="font-medium px-2 py-2 w-32">등급</th><th className="font-medium px-2 py-2 w-40">시작일</th><th className="font-medium px-2 py-2 w-32">종료 예정일</th></tr>
-              </thead>
-              <tbody>
-                {waterZones.length === 0 && <tr><td colSpan={5} className="px-3 py-8 text-center text-gray-300">용수 구역이 없습니다.</td></tr>}
-                {waterZones.map(({ zone, end }) => (
-                  <tr key={zone.id} className="border-t border-gray-100 hover:bg-gray-50">
-                    <td className="px-3 py-1.5 text-gray-500 text-xs">{zone.category}</td>
-                    <td className="px-3 py-1.5 font-medium text-gray-800">{zone.name}</td>
-                    <td className="px-2 py-1.5 text-center">
-                      <select value={zone.grade || ''} disabled={!adminUnlocked} onChange={e => onSaveZone(zone, { grade: e.target.value })} className="border border-gray-200 rounded px-1.5 py-1 text-sm disabled:bg-transparent disabled:border-transparent">
-                        {!GRADES.includes(zone.grade) && <option value={zone.grade || ''}>{zone.grade || '—'}</option>}
-                        {GRADES.map(g => <option key={g} value={g}>{g}</option>)}
-                      </select>
-                    </td>
-                    <td className="px-2 py-1.5 text-center">
-                      <input type="date" defaultValue={zone.schedule_start || ''} disabled={!adminUnlocked} onBlur={e => { if (e.target.value && e.target.value !== zone.schedule_start) onSaveZone(zone, { schedule_start: e.target.value }); }}
-                        className="border border-gray-200 rounded px-1.5 py-1 text-sm disabled:bg-transparent disabled:border-transparent" />
-                    </td>
-                    <td className="px-2 py-1.5 text-center text-xs text-gray-500 tabular-nums">{end || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        </>
       </div>
     </div>
   );

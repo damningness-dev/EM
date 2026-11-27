@@ -1,6 +1,6 @@
 // 용수모니터링 일정 기본 데이터 — 첨부된 '용수 모니터링 계획' 엑셀(주간용수(WFI,UF)·PW·PS 시트)에서 가져온 것.
 // 처음 열 때 관리자가 한 번 저장되고, 이후에는 화면에서 추가·수정·삭제한다. id가 고정이라 여러 PC에서 동시에 불러와도 중복되지 않는다.
-//   WFI: 첫 주 날짜 기준으로 매주 같은 요일에 반복(월·화·수), PW·PS: 엑셀에 적힌 날짜의 1회 일정.
+//   WFI·HWFI: 첫 주 날짜 기준으로 매주 같은 요일에 반복(월·화·수), PW·PS: 엑셀에 적힌 날짜 기준으로 매월 같은 요일·주차에 반복.
 export const WATER_PLAN_SEED = [
  {
   "id": "seed-wfi-001",
@@ -348,7 +348,7 @@ export const WATER_PLAN_SEED = [
   "area": "1동조제실",
   "points": "1533-PW-01,1534-PW-01,1539-PW-01,1540-PW-01",
   "count": 4,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-03",
   "note": "22.03~25.02"
  },
@@ -358,7 +358,7 @@ export const WATER_PLAN_SEED = [
   "area": "1동조제실",
   "points": "1541-PW-01,1542-PW-01",
   "count": 2,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-03",
   "note": "22.03~25.02"
  },
@@ -368,7 +368,7 @@ export const WATER_PLAN_SEED = [
   "area": "1동조제실",
   "points": "1545-PW-01,1546-PW-01,1547-PW-01,1431-PW-01",
   "count": 4,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-03",
   "note": "22.03~25.02"
  },
@@ -378,7 +378,7 @@ export const WATER_PLAN_SEED = [
   "area": "1동조제실",
   "points": "1431-PW-02,1431-PW-03,1431-PW-04,1431-PW-05",
   "count": 4,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-03",
   "note": "22.03~25.02"
  },
@@ -388,7 +388,7 @@ export const WATER_PLAN_SEED = [
   "area": "5과",
   "points": "1438-PW-01,1439-PW-01,1440-PW-01,1434-PW-01",
   "count": 4,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-03",
   "note": "22.04~25.03"
  },
@@ -398,7 +398,7 @@ export const WATER_PLAN_SEED = [
   "area": "5과",
   "points": "1452-PW-01,1453-PW-01,1462-PW-01,1462-PW-02",
   "count": 4,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-03",
   "note": ""
  },
@@ -408,7 +408,7 @@ export const WATER_PLAN_SEED = [
   "area": "1과",
   "points": "2439-PW-01,2435-PW-01,2435-PW-02,2434-PW-01",
   "count": 4,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-03",
   "note": ""
  },
@@ -418,7 +418,7 @@ export const WATER_PLAN_SEED = [
   "area": "1과",
   "points": "2460-PW-01,2457-PW-01,2457-PW-02",
   "count": 3,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-03",
   "note": "22.04~25.03"
  },
@@ -428,7 +428,7 @@ export const WATER_PLAN_SEED = [
   "area": "1과",
   "points": "2461-PW-01,2438-PW-01,2459-PW-01",
   "count": 3,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-03",
   "note": ""
  },
@@ -438,7 +438,7 @@ export const WATER_PLAN_SEED = [
   "area": "2동 1,3층 조제실",
   "points": "2140-PW-02,2140-PW-03,2140-PW-04,2140-PW-05",
   "count": 4,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-04",
   "note": ""
  },
@@ -448,7 +448,7 @@ export const WATER_PLAN_SEED = [
   "area": "2동 1,3층 조제실",
   "points": "2139-PW-01,2141-PW-01,2140-PW-01",
   "count": 3,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-04",
   "note": ""
  },
@@ -458,7 +458,7 @@ export const WATER_PLAN_SEED = [
   "area": "2동 1,3층 조제실",
   "points": "2140-PW-06,2140-PW-07,2140-PW-08,2140-PW-09",
   "count": 4,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-04",
   "note": ""
  },
@@ -468,7 +468,7 @@ export const WATER_PLAN_SEED = [
   "area": "생산3과",
   "points": "2334-PW-01, 2326-PW-01, 2337-PW-01,2341-PW-01, 2341-PW-02",
   "count": 5,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-04",
   "note": ""
  },
@@ -478,7 +478,7 @@ export const WATER_PLAN_SEED = [
   "area": "1동3층",
   "points": "1543-PW-01, 1544-PW-01, 1431-PW-06",
   "count": 3,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-04",
   "note": ""
  },
@@ -488,7 +488,7 @@ export const WATER_PLAN_SEED = [
   "area": "1동3층",
   "points": "1331-PW-01,1332-PW-01~~~~1346-PW-01(10개)",
   "count": 10,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-04",
   "note": ""
  },
@@ -498,7 +498,7 @@ export const WATER_PLAN_SEED = [
   "area": "QA",
   "points": "1549-PW-01 D PW-01",
   "count": 2,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-03",
   "note": "22.03~25.02"
  },
@@ -508,7 +508,7 @@ export const WATER_PLAN_SEED = [
   "area": "QA",
   "points": "2510-PW-01 2516-PW-01 2144-PW-01",
   "count": 3,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-24",
   "note": ""
  },
@@ -518,7 +518,7 @@ export const WATER_PLAN_SEED = [
   "area": "QA",
   "points": "1122-PW-01 02 03 04 05 06 07 08 09 10 11-유지관리(PH)",
   "count": 11,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-24",
   "note": ""
  },
@@ -528,7 +528,7 @@ export const WATER_PLAN_SEED = [
   "area": "QA",
   "points": "공업용수 R/O (PH)",
   "count": 2,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-24",
   "note": ""
  },
@@ -538,7 +538,7 @@ export const WATER_PLAN_SEED = [
   "area": "QA",
   "points": "2510-QCWFI-01 2518-QCWFI-01 2516-QCWFI-01",
   "count": 3,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-24",
   "note": ""
  },
@@ -548,7 +548,7 @@ export const WATER_PLAN_SEED = [
   "area": "PS",
   "points": "1549-PS-01, 1539-PS-01, 1540-PS-01, 1541-PS-01, 1542-PS-01, 1545-PS-01, 1546-PS-01, 1547-PS-01",
   "count": 8,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-10",
   "note": ""
  },
@@ -558,7 +558,7 @@ export const WATER_PLAN_SEED = [
   "area": "PS",
   "points": "1427-PS-01, 1428-PS-02, 1431-PS-01, 1431-PS-02, 1431-PS-03, 1431-PS-04, 1431-PS-05, 1434-PS-01, 1462-PS-01, 1462-PS-02",
   "count": 10,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-11",
   "note": ""
  },
@@ -568,7 +568,7 @@ export const WATER_PLAN_SEED = [
   "area": "PS",
   "points": "D PS-01",
   "count": 1,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-11",
   "note": ""
  },
@@ -578,7 +578,7 @@ export const WATER_PLAN_SEED = [
   "area": "PS",
   "points": "1543-PS-01, 1544-PS-01, 1431-PS-06",
   "count": 3,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-11",
   "note": ""
  },
@@ -588,7 +588,7 @@ export const WATER_PLAN_SEED = [
   "area": "PS",
   "points": "2316-PS-01, 2316-PS-02, 2341-PS-01, 2341-PS-02, 2337-PS-01, 2334-PS-01",
   "count": 6,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-10",
   "note": ""
  },
@@ -598,7 +598,7 @@ export const WATER_PLAN_SEED = [
   "area": "PS",
   "points": "2464-PS-01, 2436-PS-01, 2434-PS-01, 2434-PS-02",
   "count": 4,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-24",
   "note": ""
  },
@@ -608,7 +608,7 @@ export const WATER_PLAN_SEED = [
   "area": "PS",
   "points": "2438-PS-01, 2438-PS-02, 2438-PS-03, 2460-PS-01, 2460-PS-02, 2461-PS-01, 2461-PS-02, 2461-PS-03",
   "count": 8,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-17",
   "note": ""
  },
@@ -618,7 +618,7 @@ export const WATER_PLAN_SEED = [
   "area": "PS",
   "points": "2457-PS-01, 2457-PS-02, 2435-PS-01, 2435-PS-02, 2459-PS-01, 2459-PS-02",
   "count": 6,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-17",
   "note": ""
  },
@@ -628,7 +628,7 @@ export const WATER_PLAN_SEED = [
   "area": "PS",
   "points": "2141-PS-01, 2140-PS-01, 2140-PS-02, 2140-PS-03, 2140-PS-04",
   "count": 5,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-18",
   "note": ""
  },
@@ -638,7 +638,7 @@ export const WATER_PLAN_SEED = [
   "area": "PS",
   "points": "2140-PS-05, 2140-PS-06, 2140-PS-07, 2140-PS-08",
   "count": 4,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-18",
   "note": ""
  },
@@ -648,7 +648,7 @@ export const WATER_PLAN_SEED = [
   "area": "PS",
   "points": "2434-PS-03, 2459-PS-03",
   "count": 2,
-  "repeat": "once",
+  "repeat": "monthly",
   "date": "2026-12-18",
   "note": ""
  }

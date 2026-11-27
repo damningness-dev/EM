@@ -12,7 +12,9 @@ export const WATER_TYPES = {
   구역: { label: '용수구역', chip: 'bg-teal-100 text-teal-800 border-teal-300', dot: 'bg-teal-500' },
 };
 export const WATER_TYPE_KEYS = ['WFI', 'HWFI', 'UF', 'PW', 'PS', '기타']; // 직접 입력하는 일정의 종류
-export const WATER_FILTER_KEYS = [...WATER_TYPE_KEYS, '구역'];
+export const WATER_FILTER_KEYS = [...WATER_TYPE_KEYS];
+// 종류별 기본 주기 — PW·PS는 월 1회, WFI·HWFI·UF는 주 1회 (새 일정 추가 창에 미리 채워진다)
+export const defaultRepeat = (type) => (type === 'PW' || type === 'PS' ? 'monthly' : ['WFI', 'HWFI', 'UF'].includes(type) ? 'weekly' : 'once');
 export const WATER_REPEATS = [['weekly', '매주'], ['monthly', '매월(같은 요일·주차)'], ['once', '한 번']];
 // 엑셀에서 가져온 사용점 앞의 기호로 종류를 나눈다: ♨ = HWFI, ▩ = WFI. 기호는 떼고 종류(type)로 옮긴다.
 export function normalizeWaterItem(it) {

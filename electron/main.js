@@ -2603,8 +2603,24 @@ function registerHandlers() {
     }
     return out.points || out.area ? out : null;
   };
+  // 한 번만: 종류별 주기를 맞춘다 — PW·PS는 매월, WFI·HWFI·UF는 매주(엑셀에서 가져온 PW·PS는 1회 일정이었다).
+  // 바꾼 항목의 updatedAt은 '지금'이 아니라 고정 시각(WATER_REPEAT_FIX_AT)으로 맞춘다 — 어느 PC가 언제 바꾸든 결과가 같아
+  // 동기화 때 아직 안 바뀐 예전 사본보다는 이기고, 이 시각 이후에 사람이 고친 내용에는 진다.
+  const WATER_REPEAT_FIX_AT = '2026-11-27T00:00:00.000Z';
+  function fixWaterRepeatsOnce(data) {
+    if (data.waterPlanRepeatFix1 || !Array.isArray(data.waterPlan)) return false;
+    const want = (t) => (t === 'PW' || t === 'PS' ? 'monthly' : ['WFI', 'HWFI', 'UF'].includes(t) ? 'weekly' : null);
+    data.waterPlan = data.waterPlan.map(x => {
+      const w = want(x?.type);
+      if (!w || x.repeat === w) return x;
+      return { ...x, repeat: w, updatedAt: (x.updatedAt || '') > WATER_REPEAT_FIX_AT ? x.updatedAt : WATER_REPEAT_FIX_AT };
+    });
+    data.waterPlanRepeatFix1 = true;
+    return true;
+  }
   ipcMain.handle('waterPlan:list', () => {
     const data = loadData();
+    if (fixWaterRepeatsOnce(data)) saveData(data);
     return { items: Array.isArray(data.waterPlan) ? data.waterPlan : [], seeded: !!data.waterPlanSeeded };
   });
   ipcMain.handle('waterPlan:save', (_e, item = {}) => {
